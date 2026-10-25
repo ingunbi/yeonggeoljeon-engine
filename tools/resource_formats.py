@@ -16,6 +16,24 @@ class ResourceError(ValueError):
 
 
 @dataclass(frozen=True)
+class SettlementMap:
+    background_tiles: bytes
+    walk_cells: bytes
+    objects: tuple[tuple[int, int, int], ...]
+    walk_markers: tuple[tuple[int, int, int], ...]
+
+
+def settlement_map(payload: bytes) -> SettlementMap:
+    """Own the shared original SMAP/PMAP tile, staggered-walk and prop layout."""
+    if len(payload) < 1261 or len(payload) != 1261 + payload[1260] * 3:
+        raise ResourceError("settlement map does not match its source tile/walk/object extent")
+    walk = payload[640:1260]
+    return SettlementMap(payload[:640], walk,
+                         tuple(tuple(payload[at:at + 3]) for at in range(1261, len(payload), 3)),
+                         tuple((value, at % 31, at // 31) for at, value in enumerate(walk) if value < 0x7F))
+
+
+@dataclass(frozen=True)
 class ArchiveMember:
     data: bytes
     index: int

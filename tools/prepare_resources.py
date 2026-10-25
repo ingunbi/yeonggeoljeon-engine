@@ -14,7 +14,7 @@ from pathlib import Path
 import struct
 import sys
 
-from resource_formats import Archive, IndexedImage, ResourceError, npk_picture, planar_image, png_bytes
+from resource_formats import Archive, IndexedImage, ResourceError, npk_picture, planar_image, png_bytes, settlement_map
 
 EXAMINED_MAIN = "731c8d26a39fcd4e9fa41b142db9bd5913a496a2da5eaa1db798b7867850815f"
 EXAMINED_OPEN = "97f5f00fee2b340243bda76166e3d989740d8723a20f72a6b38545f848c18a01"
@@ -127,6 +127,14 @@ def object_bank(payload: bytes) -> tuple[list[IndexedImage], list[dict]]:
     return images, origins
 
 
+def town_neighbors() -> dict:
+    """Shared staggered town/palace route geometry, in source tie order."""
+    return {"neighborsEven": [{"dx": -1, "dy": 0, "direction": 2}, {"dx": -1, "dy": -1, "direction": 3},
+                              {"dx": 1, "dy": 0, "direction": 1}, {"dx": 1, "dy": -1, "direction": 0}],
+            "neighborsOdd": [{"dx": -1, "dy": 1, "direction": 2}, {"dx": -1, "dy": 0, "direction": 3},
+                             {"dx": 1, "dy": 1, "direction": 1}, {"dx": 1, "dy": 0, "direction": 0}]}
+
+
 def palace_maps(game_dir: Path, main: bytes, write_image) -> dict[str, dict]:
     """Decode palace maps; MAIN owns the two-stage prop-bank selection tables.
 
@@ -148,10 +156,9 @@ def palace_maps(game_dir: Path, main: bytes, write_image) -> dict[str, dict]:
     for index in range(len(maps)):
         member = maps.decode(index)
         raw = member.data
-        if len(raw) < 1261 or len(raw) != 1261 + raw[1260] * 3:
-            raise ResourceError(f"PMAP{index} does not match the source tile/walk/object format")
+        layout = settlement_map(raw)
         background = bytearray(512 * 320)
-        for offset, tile in enumerate(raw[:640]):
+        for offset, tile in enumerate(layout.background_tiles):
             if tile >= len(tiles):
                 raise ResourceError(f"PMAP{index} references an absent background cell")
             paint(background, 512, 320, tiles[tile], offset % 32 * 16, offset // 32 * 16)
@@ -165,9 +172,8 @@ def palace_maps(game_dir: Path, main: bytes, write_image) -> dict[str, dict]:
             banks[bank] = (prop_member, props, origins)
         prop_member, props, origins = banks[bank]
         placed = []
-        for ordinal in range(raw[1260]):
+        for ordinal, (pattern, x, y) in enumerate(layout.objects):
             at = 1261 + ordinal * 3
-            pattern, x, y = raw[at:at + 3]
             if pattern >= len(props):
                 raise ResourceError(f"PMAP{index} references an absent prop pattern")
             picture = props[pattern]
@@ -180,17 +186,18 @@ def palace_maps(game_dir: Path, main: bytes, write_image) -> dict[str, dict]:
                            "source": {"resource": "PMAP.R3", "member": index, "decodedOffset": at,
                                       "ordinal": ordinal, "bank": bank, "sprite": prop_member.provenance(),
                                       "pattern": pattern, "patternSource": origins[pattern]}})
-        walk = list(raw[640:1260])
+        walk = list(layout.walk_cells)
         result[str(0x2000 + index)] = {
             "image": write_image(f"palace-{index}.png", IndexedImage(512, 320, bytes(background))),
             "width": 512, "height": 320, "viewport": [16, 16, 512, 320],
             "walkWidth": 31, "walkHeight": 20, "walkBytes": walk,
             "walkGrid": ["".join("#" if c & 128 else "." for c in walk[y * 31:(y + 1) * 31]) for y in range(20)],
-            "neighborsEven": [{"dx": -1, "dy": 0, "direction": 2}, {"dx": -1, "dy": -1, "direction": 3},
-                              {"dx": 1, "dy": 0, "direction": 1}, {"dx": 1, "dy": -1, "direction": 0}],
-            "neighborsOdd": [{"dx": -1, "dy": 1, "direction": 2}, {"dx": -1, "dy": 0, "direction": 3},
-                             {"dx": 1, "dy": 1, "direction": 1}, {"dx": 1, "dy": 0, "direction": 0}],
+            **town_neighbors(),
             "objects": placed,
+            "destinations": [{"marker": marker, "x": x, "y": y,
+                              "source": {"resource": "PMAP.R3", "member": index,
+                                         "decodedOffset": 640 + y * 31 + x}}
+                             for marker, x, y in layout.walk_markers],
             "source": {"tiles": member.provenance(), "tileBank": tile_member.provenance(),
                        "walkDecodedOffset": 640, "objectsDecodedOffset": 1260,
                        "propBankSelector": {"resource": "MAIN.EXE", "groupOffset": group_base + index,

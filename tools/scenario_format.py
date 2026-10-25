@@ -123,27 +123,27 @@ def record_directory(data: bytes, start: int, end: int, resource: str, member: i
 
 
 def text_sections(data: bytes, expected_count: int, resource: str) -> tuple[list[tuple[int, int]], dict]:
-    """Retain wrapped 16-bit starts while deriving bounded monotonic file spans.
+    """Own the examined MAIN1B480 reader's explicit 16-bit base exceptions.
 
-    The single observed rollover is structural derivation, not a claim of a
-    verified original seek implementation. Every derived span must fit and be
-    less than 64 KiB; ambiguous extra wrap counts are not invented.
+    MAIN1B4B4..1B4D1 adds one 64KiB epoch for either of its two immediate
+    base values. Other values are zero-extended. This is source-derived static
+    execution meaning, not a general guess that every descending value wraps.
     """
     first = word(data, 0, resource)
     if first != expected_count * 2 or first > len(data):
         raise SceneError(f"{resource}: text group count differs from script member count")
     raw = [word(data, at, resource) for at in range(0, first, 2)]
-    starts, epoch = [], 0
+    starts, wrapped = [], 0
     for value in raw:
-        candidate = epoch + value
-        if starts and candidate <= starts[-1]:
-            epoch += 0x10000
-            candidate = epoch + value
-        if candidate < first or candidate >= len(data):
+        candidate = value + (0x10000 if value in (0x1029, 0x59D0) else 0)
+        if candidate >= 0x10000:
+            wrapped += 1
+        if candidate < first or candidate >= len(data) or (starts and candidate <= starts[-1]):
             raise SceneError(f"{resource}: unwrapped text group start exceeds the file")
         starts.append(candidate)
     bounds = list(zip(starts, starts[1:] + [len(data)]))
     if any(not 0 < end - start < 0x10000 for start, end in bounds):
         raise SceneError(f"{resource}: text group span has ambiguous 16-bit wrap ownership")
-    return bounds, {"rawDirectory": raw, "fileStarts": starts, "rollovers": epoch // 0x10000,
-                    "status": "monotonic span derivation; original seek implementation not verified"}
+    return bounds, {"rawDirectory": raw, "fileStarts": starts, "rollovers": int(wrapped > 0),
+                    "wrappedMembers": wrapped, "source": "MAIN.EXE:0x1B480..0x1B4F8",
+                    "status": "static original reader: explicit base exceptions and 32-bit relative addition; no original execution"}

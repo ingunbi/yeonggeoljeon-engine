@@ -68,12 +68,12 @@ class ScenarioFramingTests(unittest.TestCase):
 
     def test_text_wrap_preserves_raw_directory_and_derived_file_span(self):
         data = bytearray(70010)
-        struct.pack_into("<3H", data, 0, 6, 60000, 1000)
+        struct.pack_into("<3H", data, 0, 6, 60000, 0x1029)
         bounds, fact = text_sections(bytes(data), 3, "synthetic")
-        self.assertEqual(bounds, [(6, 60000), (60000, 66536), (66536, 70010)])
-        self.assertEqual(fact["rawDirectory"], [6, 60000, 1000])
+        self.assertEqual(bounds, [(6, 60000), (60000, 0x11029), (0x11029, 70010)])
+        self.assertEqual(fact["rawDirectory"], [6, 60000, 0x1029])
         self.assertEqual(fact["rollovers"], 1)
-        self.assertIn("not verified", fact["status"])
+        self.assertIn("explicit base exceptions", fact["status"])
 
     def test_ambiguous_or_outside_text_wrap_is_rejected(self):
         for data, count in [(b"\x06\x00x", 3), (struct.pack("<2H", 4, 2) + bytes(12), 2),

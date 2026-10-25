@@ -44,6 +44,9 @@ struct MapResource: Codable {
     var walkBytes: [Int]?
     var neighborsEven: [Neighbor]?; var neighborsOdd: [Neighbor]?
     var objects: [MapObject]?
+    var geometry:String? = nil
+    var stepMicroseconds:Int64? = nil
+    var placementDirections:[Int]? = nil
 }
 struct ActorResource: Codable {
     var image: String; var frameWidth: Int; var frameHeight: Int; var frames: Int
@@ -175,6 +178,9 @@ struct TraceEntry: Codable {
     var microseconds: Int64; var command: Int; var operation: String
     var source: JSONValue?; var textSource: JSONValue?; var details: String
 }
+struct SourceCommandFailure:Error {
+    var index:Int;var command:Command;var reason:String
+}
 struct Snapshot: Codable, Equatable {
     var mode: String; var microseconds: Int64; var nextCommand: Int
     var map: Int?; var camera: [Int]; var blackAlpha: Double
@@ -182,6 +188,12 @@ struct Snapshot: Codable, Equatable {
     var endReason: String?; var inputCount: Int
     var visible: Bool; var caption: String?
     var termination: Termination?
+    var followPerson:Int? = nil
+    var storyPanel:OriginalStoryPanel? = nil
+    var palette:Int? = nil
+}
+struct OriginalStoryPanel:Codable,Equatable {
+    var image:String; var mode:Int; var source:JSONValue?
 }
 enum Termination: String, Codable { case sourceBoundary, unsupportedBoundary, runtimeFailure, unexpectedEOF }
 struct CommandSnapshot: Codable, Equatable {
@@ -217,17 +229,95 @@ final class Runtime {
     private var fadeDuration: Int64 = 0
     private var fadeStart = 0.0
     private var fadeTarget = 0.0
+    private var commands:[Command]
+    let hostDriven:Bool
+    private var hostMaps:[Int:MapResource] = [:]
+    private var hostActors:[String:ActorResource]?
+    private var followPerson:Int?
+    private(set) var storyPanel:OriginalStoryPanel?
+    private(set) var palette = 0 // Original new-game store MAIN1E49A/1E628.
 
-    init(_ data: DataSet) { self.data = data }
+    init(_ data: DataSet,hostDriven:Bool = false) {
+        self.data = data; self.hostDriven = hostDriven
+        commands = hostDriven ? [] : data.scene.commands
+    }
+    var hostWaiting:Bool { hostDriven && mode == "scene" && !busy && dialogue == nil && cursor == commands.count }
+    /// Campaign VM supplies source batches to one persistent stage. Exhaustion
+    /// suspends the stage, retaining actors, camera, clock and source map state.
+    func enqueue(_ batch:[Command]) throws {
+        guard hostDriven, mode != "ended", commands.count+batch.count <= 1_000_000 else {
+            throw EngineError.invalid("Campaign stage queue is unavailable or exceeds its retained command bound")
+        }
+        commands.append(contentsOf:batch)
+        if mode == "scene" { pump() }
+    }
     var busy: Bool { batch != nil || waitRemaining > 0 || fadeRemaining > 0 }
-    var currentMap: MapResource? { mapID.flatMap { data.resources.maps[String($0)] } }
+    var currentMap: MapResource? { mapID.flatMap { hostMaps[$0] ?? data.resources.maps[String($0)] } }
+    func actorResource(_ person:Int) -> ActorResource? { (hostActors ?? data.resources.actors)[String(person)] }
+    func configureMap(_ id:Int,resource:MapResource,actors:[String:ActorResource]?) throws {
+        guard hostDriven,(1...4096).contains(resource.width),(1...4096).contains(resource.height),
+              let w = resource.walkWidth,let h = resource.walkHeight,w > 0,h > 0,w*h <= 65536,
+              resource.geometry == nil || resource.geometry == "world" else {
+            throw EngineError.invalid("Original host stage map geometry is invalid")
+        }
+        _ = try data.containedFile(resource.image)
+        if let actors = actors {
+            for actor in actors.values {
+                guard actor.frameWidth > 0,actor.frameHeight > 0,actor.frames > 0,
+                      let directions = actor.directions,!directions.isEmpty,
+                      directions.allSatisfy({$0.frame >= 0 && $0.frame+1 < actor.frames}) else {
+                    throw EngineError.invalid("Original host actor geometry is invalid")
+                }
+                _ = try data.containedFile(actor.image)
+            }
+        }
+        hostMaps[id] = resource; hostActors = actors
+    }
+    func clearActors() throws {
+        guard hostWaiting else { throw EngineError.invalid("Cannot clear a running campaign stage") }
+        actors.removeAll(); registration = 0
+    }
+    /// MAIN2255A doubles source logical coordinates as bytes, then211C2
+    /// clamps the half-grid origin against the original32×20-cell viewport.
+    func worldCamera(x:Int,y:Int,source:JSONValue?) throws {
+        guard hostDriven,(0...255).contains(x),(0...255).contains(y),currentMap?.geometry == "world" else {
+            throw EngineError.invalid("Original world camera requires its source world map and byte coordinates")
+        }
+        try centerWorldCamera(GridPoint(x:Int(UInt8(truncatingIfNeeded:2*x)),y:Int(UInt8(truncatingIfNeeded:2*y))))
+        followPerson = nil
+        var command = Command("world-camera",x:x,y:y);command.source = source;record(cursor,command)
+    }
+    func worldFollow(person:Int,source:JSONValue?) throws {
+        guard hostDriven,currentMap?.geometry == "world" else { throw EngineError.invalid("Original world follow requires its world map") }
+        // MAIN2259C leaves the previous follow identity unchanged on lookup failure.
+        if actors[person] != nil { followPerson = person }
+        var command = Command("world-follow",person:person);command.source = source;record(cursor,command)
+    }
+    func setPalette(_ value:Int) throws {
+        guard (0...3).contains(value) else { throw EngineError.invalid("Original palette context is unsupported") }
+        palette = value
+    }
+    func beginStory(image:String,mode:Int,source:JSONValue?) throws {
+        guard hostDriven,[0,1].contains(mode) else { throw EngineError.invalid("Original story mode is outside the restored layout") }
+        _ = try data.containedFile(image)
+        if mode == 0 { visible = false }
+        storyPanel = OriginalStoryPanel(image:image,mode:mode,source:source)
+    }
+    func closeStory() { storyPanel = nil }
+    private func centerWorldCamera(_ point:GridPoint) throws {
+        guard let map = currentMap,map.width/16 >= 32,map.height/16 >= 20 else { throw EngineError.invalid("Original world viewport exceeds its picture dimensions") }
+        let w = map.width/16,h = map.height/16
+        let x = point.x < 15 ? 0 : point.x > w-17 ? w-32 : point.x-15
+        let y = point.y < 10 ? 0 : point.y > h-10 ? h-20 : point.y-10
+        camera = [x*16,y*16]
+    }
     var viewport: [Int] { currentMap?.viewport ?? data.scene.viewport ?? [16,16,512,320] }
     func snapshot() -> Snapshot {
         Snapshot(mode: mode, microseconds: clock, nextCommand: cursor, map: mapID,
                  camera: camera, blackAlpha: blackAlpha,
                  actors: actors.values.sorted { $0.registration < $1.registration },
                  dialogue: dialogue, batch: batch, endReason: endReason, inputCount: inputCount,
-                 visible: visible, caption: caption, termination: termination)
+                 visible: visible, caption: caption, termination: termination,followPerson:followPerson,storyPanel:storyPanel,palette:palette)
     }
     private func record(_ index: Int, _ command: Command, _ details: String = "") {
         trace.append(TraceEntry(microseconds: clock, command: index, operation: command.op, source: command.source, textSource: command.textSource, details: details))
@@ -254,22 +344,26 @@ final class Runtime {
     }
     private func point(_ command: Command) throws -> GridPoint {
         let p = GridPoint(x: try required(command.x, "x"), y: try required(command.y, "y"))
-        guard p.x >= 0 && p.y >= 0 else { throw EngineError.invalid("Negative source coordinate") }; return p
+        guard p.x >= 0 && p.y >= 0 else { throw EngineError.invalid("Negative source coordinate") }
+        return currentMap?.geometry == "world" ? GridPoint(x:p.x*2,y:p.y*2) : p
     }
     private func facing(_ command: Command, fallback: Int = 0) throws -> Int {
         let d = command.facing ?? fallback
-        guard (0..<4).contains(d) else { throw EngineError.invalid("Invalid raw facing") }; return d
+        guard (0..<4).contains(d) else { throw EngineError.invalid("Invalid raw facing") }
+        return currentMap?.placementDirections?[d] ?? d
     }
     private func pump() {
         guard mode == "scene", dialogue == nil, !busy else { return }
-        while cursor < data.scene.commands.count && mode == "scene" && dialogue == nil && !busy {
-            let index = cursor, c = data.scene.commands[cursor]; cursor += 1
+        while cursor < commands.count && mode == "scene" && dialogue == nil && !busy {
+            let index = cursor, c = commands[cursor]; cursor += 1
             do {
                 switch c.op {
+                case "close-story": closeStory();record(index,c)
                 case "map":
                     let id = try required(c.map, "map")
-                    guard data.resources.maps[String(id)] != nil else { throw EngineError.invalid("Map resource is unavailable: \(id)") }
-                    mapID = id; actors.removeAll(); camera = [0,0]; registration = 0
+                    guard hostMaps[id] != nil || data.resources.maps[String(id)] != nil else { throw EngineError.invalid("Map resource is unavailable: \(id)") }
+                    mapID = id; actors.removeAll(); camera = [0,0]; registration = 0;followPerson = nil
+                    try setPalette(id>>12)
                     visible = false; caption = nil; record(index,c)
                 case "show": visible = true; record(index,c)
                 case "caption":
@@ -279,26 +373,29 @@ final class Runtime {
                 case "place":
                     guard currentMap != nil else { throw EngineError.invalid("Place without a map") }
                     let person = try required(c.person,"person"), p = try point(c)
-                    guard data.resources.actors[String(person)] != nil else { throw EngineError.invalid("Actor resource is unavailable: \(person)") }
+                    guard actorResource(person) != nil else { throw EngineError.invalid("Actor resource is unavailable: \(person)") }
                     try validateGridPosition(p)
                     let slot = actors[person]?.registration ?? registration
                     if actors[person] == nil { registration += 1 }
                     actors[person] = ActorState(person: person, position: p, facing: try facing(c), phase: 0, registration: slot, walking: false)
                     record(index,c,"grid=\(p.x),\(p.y)")
                 case "move":
-                    var commands = [(index,c)]
-                    while cursor < data.scene.commands.count && data.scene.commands[cursor].op == "move" {
-                        commands.append((cursor,data.scene.commands[cursor])); cursor += 1
+                    var moves = [(index,c)]
+                    while cursor < commands.count && commands[cursor].op == "move" {
+                        moves.append((cursor,commands[cursor])); cursor += 1
                     }
                     var motions: [Motion] = [], people = Set<Int>()
-                    for (at, move) in commands {
+                    for (at, move) in moves {
+                        do {
                         let person = try required(move.person,"person")
                         guard people.insert(person).inserted, let actor = actors[person] else { throw EngineError.invalid("Move actor is missing or repeated in its batch: \(person)") }
                         let target = try point(move), route = try route(from: actor, to: target)
                         motions.append(Motion(person: person, route: route, finalFacing: try facing(move, fallback: actor.facing), source: move.source))
                         record(at,move,"source route nodes=\(route.count)")
+                        } catch { throw SourceCommandFailure(index:at,command:move,reason:"\(error)") }
                     }
-                    let timing = data.scene.timing ?? Timing(stepMicroseconds: 99_488,terminalMicroseconds: 99_488)
+                    let timing = currentMap?.stepMicroseconds.map { Timing(stepMicroseconds:$0,terminalMicroseconds:0) }
+                        ?? data.scene.timing ?? Timing(stepMicroseconds: 99_488,terminalMicroseconds: 99_488)
                     let hops = motions.map { $0.route.count - 1 }.max() ?? 0
                     let (travel, overflow) = timing.stepMicroseconds.multipliedReportingOverflow(by: Int64(hops))
                     let (total, overflow2) = travel.addingReportingOverflow(timing.terminalMicroseconds)
@@ -331,10 +428,12 @@ final class Runtime {
                 default: throw EngineError.invalid("Unsupported source command: \(c.op)")
                 }
             } catch {
-                record(index,c,"ERROR: \(error)"); finish("\(error)",kind:.runtimeFailure)
+                if let failed = error as? SourceCommandFailure {
+                    record(failed.index,failed.command,"ERROR: \(failed.reason)");finish(failed.reason,kind:.runtimeFailure)
+                } else { record(index,c,"ERROR: \(error)"); finish("\(error)",kind:.runtimeFailure) }
             }
         }
-        if cursor == data.scene.commands.count && !busy && dialogue == nil && mode == "scene" {
+        if !hostDriven && cursor == commands.count && !busy && dialogue == nil && mode == "scene" {
             finish("Command stream ended without an explicit source boundary",kind:.unexpectedEOF)
         }
     }
@@ -378,6 +477,10 @@ final class Runtime {
             actor.phase = actor.walking ? stepIndex & 1 : 0
             actors[motion.person] = actor
         }
+        if let person = followPerson,let actor = actors[person] {
+            do { try centerWorldCamera(actor.position) }
+            catch { finish("\(error)",kind:.runtimeFailure) }
+        }
     }
     private func settleBatch() {
         guard let b = batch else { return }
@@ -391,7 +494,7 @@ final class Runtime {
     }
     private func validateGridPosition(_ p: GridPoint) throws {
         guard let map = currentMap, let width = map.walkWidth, let height = map.walkHeight,
-              p.x < width, p.y < height else { throw EngineError.invalid("Source coordinate lies outside the walk grid") }
+              p.x < width*(map.geometry == "world" ? 2 : 1), p.y < height*(map.geometry == "world" ? 2 : 1) else { throw EngineError.invalid("Source coordinate lies outside the walk grid") }
     }
     /// Destination flood followed by source-ordered strict-lower selection.
     /// Geometry, blocked bits and neighbor directions are resource-owner facts.
@@ -400,16 +503,18 @@ final class Runtime {
         guard let map = currentMap, let width = map.walkWidth, let height = map.walkHeight,
               let grid = map.walkGrid, grid.count == height,
               let even = map.neighborsEven, let odd = map.neighborsOdd,
-              even.count == 4, odd.count == 4 else { throw EngineError.invalid("Source walk facts are unavailable") }
+              even.count == (map.geometry == "world" ? 8 : 4), odd.count == even.count else { throw EngineError.invalid("Source walk facts are unavailable") }
+        if map.geometry == "world" { return try worldRoute(from:actor,to:target,map:map) }
         let cells = grid.map { Array($0) }
         guard cells.allSatisfy({ $0.count == width && $0.allSatisfy { $0 == "." || $0 == "#" } }),
               (even+odd).allSatisfy({ (-1...1).contains($0.dx) && (-1...1).contains($0.dy) && (0..<4).contains($0.direction) }) else {
             throw EngineError.invalid("Invalid source walk facts")
         }
         if actor.position == target { return [RouteNode(position: target,facing: actor.facing)] }
-        let occupied = Set(actors.values.filter { $0.person != actor.person }.map { $0.position })
         func passable(_ p: GridPoint) -> Bool {
-            p.x >= 0 && p.y >= 0 && p.x < width && p.y < height && cells[p.y][p.x] == "." && !occupied.contains(p)
+            // MAIN256BC..256D4 gates only source walk-byte bit80. Dynamic
+            // actor IDs below80 are not obstacles, including queued movers.
+            p.x >= 0 && p.y >= 0 && p.x < width && p.y < height && cells[p.y][p.x] == "."
         }
         guard passable(target) else { throw EngineError.invalid("Movement destination is blocked") }
         var distances = [GridPoint: Int](), queue = [target], at = 0
@@ -435,6 +540,40 @@ final class Runtime {
             }
             guard let node = chosen else { throw EngineError.invalid("Source route reconstruction failed") }
             result.append(node); point = node.position
+        }
+        return result
+    }
+    private func worldRoute(from actor:ActorState,to target:GridPoint,map:MapResource) throws -> [RouteNode] {
+        guard let w = map.walkWidth,let h = map.walkHeight,let rows = map.walkGrid,
+              rows.count == h,rows.allSatisfy({$0.count == w}),let neighbors = map.neighborsEven,
+              actor.position.x&1 == 0,actor.position.y&1 == 0,target.x&1 == 0,target.y&1 == 0 else {
+            throw EngineError.invalid("Original world grid/halfstep state is invalid")
+        }
+        let grid = rows.map(Array.init),start = GridPoint(x:actor.position.x/2,y:actor.position.y/2),goal = GridPoint(x:target.x/2,y:target.y/2)
+        func passable(_ p:GridPoint) -> Bool { p.x >= 0 && p.y >= 0 && p.x < w && p.y < h && grid[p.y][p.x] == "." }
+        guard passable(goal) else { throw EngineError.invalid("Original world destination is blocked") }
+        var queue = [goal],distances = [goal:0],cursor = 0
+        while cursor < queue.count {
+            let p = queue[cursor]; cursor += 1
+            for n in neighbors {
+                let next = GridPoint(x:p.x+n.dx,y:p.y+n.dy)
+                if distances[next] == nil && (passable(next) || next == start) {
+                    distances[next] = distances[p]!+1; queue.append(next)
+                }
+            }
+        }
+        guard distances[start] != nil else { throw EngineError.invalid("Original world destination is unreachable") }
+        var p = start,result = [RouteNode(position:actor.position,facing:actor.facing)]
+        while p != goal {
+            var best = distances[p]!,chosen:Neighbor?
+            for n in neighbors {
+                let next = GridPoint(x:p.x+n.dx,y:p.y+n.dy)
+                if let distance = distances[next],distance < best { best = distance;chosen = n }
+            }
+            guard let n = chosen else { throw EngineError.invalid("Original world route lost strict descent") }
+            result.append(RouteNode(position:GridPoint(x:p.x*2+n.dx,y:p.y*2+n.dy),facing:n.direction))
+            p = GridPoint(x:p.x+n.dx,y:p.y+n.dy)
+            result.append(RouteNode(position:GridPoint(x:p.x*2,y:p.y*2),facing:n.direction))
         }
         return result
     }

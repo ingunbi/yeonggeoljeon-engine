@@ -27,14 +27,19 @@ struct BattleDefinition: Codable {
     var coordinateSystem: String? = nil
     var tiles: [Int]? = nil
     var image: String? = nil
+    var pictureColumns:Int? = nil
+    var pictureRows:Int? = nil
+    var pictureTiles:[Int]? = nil
     var units: [BattleUnitDefinition] = []
     var conditionalUnits: [BattleUnitDefinition]? = nil
+    var placementProgramRefs:[OriginalPlacementReference]? = nil
     var rosterScope: String? = nil
     var originalRosterComplete: Bool? = nil
     var source: JSONValue? = nil
     var rules: JSONValue? = nil
     var limitations: [String]? = nil
 }
+struct OriginalPlacementReference:Codable { var chapter:Int; var member:Int; var offset:Int }
 
 struct BattleUnitDefinition: Codable {
     // Export-local placement identity. It is neither a person ID nor a
@@ -77,7 +82,7 @@ enum BattlePolicy: String, Codable {
 
     var label: String {
         switch self {
-        case .original: return "Original rules (not implemented)"
+        case .original: return "Original rules (use the source-backed session)"
         case .experimentalV1: return "Experimental engine rules v1 — not original combat rules"
         }
     }

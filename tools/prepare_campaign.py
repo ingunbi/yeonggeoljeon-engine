@@ -22,6 +22,7 @@ from prepare_scene import (MAIN_SHA256, SceneError, extract_record, offset_secti
 from resource_formats import decode_archive
 from scenario_format import (instructions, record_directory, source_operand_lengths,
                              text_sections)
+from campaign_vm_format import compile_instructions, phase_groups
 
 
 def record_id(chapter: int, member: int, block: int, record: int) -> str:
@@ -102,7 +103,7 @@ def prepare_campaign(game: Path) -> dict:
     lengths = source_operand_lengths(main)
     people, people_source = read_resource(game, "BAKDATA.R3")
     inputs = [main_source, people_source]
-    records, chapters = [], []
+    records, chapters, vm_records = [], [], []
     opcode_counts, status_counts = Counter(), Counter()
     coverage = {"chapters": 0, "members": 0, "blocks": 0, "records": 0,
                 "framedCompleteRecords": 0, "framingFailures": 0,
@@ -123,6 +124,7 @@ def prepare_campaign(game: Path) -> dict:
             for block, (start, end) in enumerate(offset_sections(member.data, script_name, sentinel=True)):
                 coverage["blocks"] += 1
                 descriptors = record_directory(member.data, start, end, script_name, member.index)
+                groups = phase_groups(descriptors)
                 framed_records = []
                 for descriptor in descriptors:
                     frames, framing_error = [], None
@@ -166,10 +168,23 @@ def prepare_campaign(game: Path) -> dict:
                     status_counts[execution] += 1
                     label = scene["name"] if scene is not None else identity
                     condition = descriptor["conditionBytes"]
+                    vm_records.append({"id": identity, "chapter": chapter, "member": member.index,
+                                       "block": block, "ordinal": ordinal,
+                                       "kind": condition[0] & 0x7F,
+                                       "inverted": bool(condition[0] & 0x80),
+                                       "rawKind": condition[0],
+                                       "words": list(struct.unpack("<3H", bytes(condition[2:8]))),
+                                       "group": groups[ordinal],
+                                       "instructions": compile_instructions(member.data, frames, text,
+                                           text_bounds[member.index], people, main, lengths,
+                                           resource=script_name, text_resource=text_name,
+                                           member=member.index, battle_ids=battle_ids),
+                                       "framingFailure": framing_error,
+                                       "source": descriptor["source"]})
                     records.append({"id": identity, "label": label, "chapter": chapter,
                                     "member": member.index, "block": block, "record": ordinal,
                                     "conditionUnconditional": not conditional,
-                                    "conditionStatus": "all-zero condition header" if not conditional else "opaque source condition; evaluation unsupported",
+                                    "conditionStatus": "source event kind, inversion and phase group decoded; VM retains event arguments",
                                     "conditions": {"raw": condition, "kind": condition[0], "groupByte": condition[1],
                                                    "words": list(struct.unpack("<3H", bytes(condition[2:8])))},
                                     "executionStatus": execution, "scene": scene, "boundary": boundary,
@@ -193,11 +208,21 @@ def prepare_campaign(game: Path) -> dict:
     if before != inventory(game):
         raise SceneError("original game files changed during campaign extraction")
     return {"format": 1, "chapters": chapters, "records": records, "coverage": coverage,
+            "vmProgram": {"format": 1, "records": vm_records,
+                          "sourceDigest": hashlib.sha256(json.dumps(
+                              [{"resource": item["resource"], "sha256": item["sha256"]} for item in inputs],
+                              sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest(),
+                          "initialState": {"chapter": 0, "member": 0, "block": 0, "groupBase": 0,
+                                           "packedMap": 0, "city": 0, "flags": [0] * 32},
+                          "profile": "MAIN:731c8d26; source event predicates and phase dispatcher",
+                          "limitations": ["Unsupported host effects stop at the literal source instruction.",
+                                          "A complete record catalog does not establish full campaign playability.",
+                                          "Raw text expansion requires further restoration; original yes/no selector values and order are established."]},
             "opcodeCounts": dict(sorted(opcode_counts.items())),
             "limitations": ["The complete source record catalog is not a playable full campaign.",
-                            "Conditions, choices and source control flow are not auto-selected.",
+                            "The separate native VM evaluates source phase groups, flags and known event predicates; unsupported host effects remain boundaries.",
                             "Only supported palace commands have a native preview; other commands retain explicit boundaries.",
-                            "Text offset rollover uses bounded monotonic structural derivation, not a verified original seek implementation.",
+                            "Text offset rollover follows MAIN's two explicit base exceptions; original DOS execution is not used.",
                             "Experimental battle outcomes must not be committed as verified original campaign progress."],
             "provenance": {"method": "independent source-file parsing; no original executable execution",
                            "inputs": inputs, "originalFileCount": len(before), "originalHashesPreserved": True,

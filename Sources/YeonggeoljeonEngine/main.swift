@@ -67,7 +67,8 @@ func verify(_ data: DataSet, output: URL) throws {
     print("Verified \(frames.count) offscreen frames; boundary: \(runtime.endReason ?? "unknown")")
 }
 
-final class GameView: NSView {
+protocol EngineTimedView { func stop() }
+final class GameView: NSView,EngineTimedView {
     let runtime: Runtime; let renderer: Renderer
     var onBoundary:((Termination)->Void)?
     private var boundaryDelivered = false
@@ -126,7 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func windowWillClose(_ notification:Notification) {
         guard let closing = notification.object as? NSWindow else { return }
-        (closing.contentView as? GameView)?.stop()
+        (closing.contentView as? EngineTimedView)?.stop()
         researchWindows.removeAll { $0 === closing }
         if window === closing { window = nil }
     }
@@ -137,7 +138,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         appMenu.addItem(withTitle:"종료",action:#selector(NSApplication.terminate(_:)),keyEquivalent:"q")
         let research = NSMenuItem(title:"연구",action:nil,keyEquivalent:"")
         let submenu = NSMenu(title:"연구"); research.submenu = submenu; menu.addItem(research)
-        let battle = NSMenuItem(title:"실험 전투…",action:#selector(browseBattles),keyEquivalent:"b"); battle.target = self; submenu.addItem(battle)
+        let play = NSMenuItem(title:"원작 캠페인 실행 연구…",action:#selector(playOriginalCampaign),keyEquivalent:"n");play.target = self;submenu.addItem(play)
+        let restored = NSMenuItem(title:"원작 전투 복원 검증…",action:#selector(browseRestoredBattles),keyEquivalent:"b"); restored.target = self; submenu.addItem(restored)
+        let battle = NSMenuItem(title:"이전 실험 규칙 연구…",action:#selector(browseBattles),keyEquivalent:""); battle.target = self; submenu.addItem(battle)
         let campaign = NSMenuItem(title:"캠페인 분석…",action:#selector(browseCampaign),keyEquivalent:"g"); campaign.target = self; submenu.addItem(campaign)
         NSApplication.shared.mainMenu = menu
     }
@@ -170,6 +173,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             showBrowser(controller,title:"전투 연구 목록")
         } catch { self.error(error) }
+    }
+    @objc func browseRestoredBattles() {
+        guard let data = data else { return }
+        do {
+            let source = try OriginalGameData(root:data.root)
+            let controller = RecordBrowser(titles:source.battles.battles.map { "\($0.id) · 원작 배치 프로그램" },
+                details:"복원한 원작 수치·이동·공격·반격·경험치·지원 AI를 검증합니다. 초기 플래그가 비어 있는 독립 상태이며 캠페인 진행을 대신하지 않습니다. 미복원 원작 명령에서는 멈춥니다.") { [weak self] row in
+                    do { try self?.showOriginalBattle(source.battles.battles[row].id) } catch { self?.error(error) }
+                }
+            showBrowser(controller,title:"원작 전투 복원 검증")
+        } catch { self.error(error) }
+    }
+    @objc func playOriginalCampaign() {
+        guard let data = data else { return }
+        do { show(try OriginalCampaignView(data:data),title:"원작 캠페인 복원",size:NSSize(width:960,height:640)) }
+        catch { self.error(error) }
+    }
+    func showOriginalBattle(_ id:String) throws {
+        guard let data = data else { return }
+        let c = Calendar.current.dateComponents([.day,.hour,.minute,.second],from:Date())
+        func bcd(_ n:Int?) -> UInt8 { let v = n ?? 0;return UInt8(((v/10)<<4)|(v%10)) }
+        let rng = OriginalRNG.clockSeed(dayByte:bcd(c.day),hourByte:bcd(c.hour),minuteByte:bcd(c.minute),secondByte:bcd(c.second))
+        let source = try OriginalGameData(root:data.root),session = try source.isolatedBattle(id,rng:rng)
+        let board = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:data.root))
+        let scroll = NSScrollView(frame:CGRect(x:0,y:0,width:1100,height:740))
+        scroll.hasVerticalScroller = true;scroll.hasHorizontalScroller = true;scroll.documentView = board
+        try board.start();show(scroll,title:"원작 전투 복원 · \(id)")
+        scroll.window?.makeFirstResponder(board)
     }
     func showBattle(_ definition:BattleDefinition) throws {
         let session = try BattleSession(definition:definition,policy:.experimentalV1)
@@ -209,7 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 struct EngineOptions {
     var data:URL?, output:URL?, battleID:String?, campaignRecord:String?
-    var verify = false, tests = false, verifyBattle = false, verifyCampaign = false
+    var verify = false, tests = false, verifyBattle = false, verifyCampaign = false,verifyVM = false
     var listBattles = false, listCampaign = false, experimental = false
 }
 func arguments() throws -> EngineOptions {
@@ -223,6 +254,7 @@ func arguments() throws -> EngineOptions {
         case "--self-test": options.tests = true
         case "--verify-battle": options.verifyBattle = true
         case "--verify-campaign": options.verifyCampaign = true
+        case "--verify-vm":options.verifyVM = true
         case "--list-battles": options.listBattles = true
         case "--list-campaign": options.listCampaign = true
         case "--experimental-rules": options.experimental = true
@@ -236,7 +268,7 @@ func arguments() throws -> EngineOptions {
         default: throw EngineError.invalid("Unknown argument: \(args[i])")
         }; i += 1
     }
-    let verificationModes = [options.verify,options.verifyBattle,options.verifyCampaign].filter{$0}.count
+    let verificationModes = [options.verify,options.verifyBattle,options.verifyCampaign,options.verifyVM].filter{$0}.count
     guard verificationModes <= 1, !(options.battleID != nil && options.campaignRecord != nil),
           !(options.listBattles && options.listCampaign),
           !(options.tests && (verificationModes > 0 || options.battleID != nil || options.campaignRecord != nil || options.listBattles || options.listCampaign)) else {
@@ -245,22 +277,24 @@ func arguments() throws -> EngineOptions {
     let listing = options.listBattles || options.listCampaign
     guard !(listing && (verificationModes > 0 || options.battleID != nil || options.campaignRecord != nil || options.experimental || options.output != nil)),
           !(options.verify && options.battleID != nil),
-          !(options.verifyCampaign && (options.battleID != nil || options.campaignRecord != nil)),
+          !((options.verifyCampaign || options.verifyVM) && (options.battleID != nil || options.campaignRecord != nil)),
           !(options.experimental && options.battleID == nil),
           !(options.output != nil && verificationModes == 0),
           !(options.tests && (options.data != nil || options.output != nil || options.experimental)) else {
         throw EngineError.invalid("Arguments select incompatible engine actions")
     }
     if options.verifyBattle && options.battleID == nil { throw EngineError.invalid("--verify-battle requires an explicit --battle ID") }
-    if options.battleID != nil && !options.experimental {
-        throw EngineError.invalid("Original battle rules are not implemented; --experimental-rules is required for the experimental research mode")
-    }
     return options
 }
 
 do {
     let options = try arguments()
-    if options.tests { try selfTests(); try battleSelfTests(); try campaignSelfTests(); exit(0) }
+    if options.tests {
+        try selfTests();try battleSelfTests();try campaignSelfTests();try campaignVMSelfTests()
+        try originalCombatSelfTests();try originalAISelfTests();try originalTurnSelfTests();try originalIntegrationSelfTests()
+        try originalScriptBattleSelfTests();try originalStrategyAISelfTests();try originalStrategiesSelfTests()
+        try originalScriptActionSelfTests();exit(0)
+    }
     guard let root = options.data ?? Bundle.main.resourceURL?.appendingPathComponent("GameData",isDirectory:true) else {
         throw EngineError.invalid("Use --data PATH or an app bundle containing Resources/GameData")
     }
@@ -280,14 +314,16 @@ do {
         data = try data.replacingScene(CampaignSession(catalog:catalog).selectRecord(id:id))
     }
     let app = NSApplication.shared
-    if options.verify || options.verifyBattle || options.verifyCampaign {
+    if options.verify || options.verifyBattle || options.verifyCampaign || options.verifyVM {
         guard let output = options.output else { throw EngineError.invalid("Verification requires --output PATH") }
         app.setActivationPolicy(.prohibited)
         if options.verifyBattle, let id = options.battleID {
             let catalog = try BattleCatalog.load(from:data.root.appendingPathComponent("battles.json"))
             guard let battle = catalog.battles.first(where:{$0.id == id}) else { throw EngineError.invalid("Unknown source battle ID: \(id)") }
-            try verifyBattle(battle,policy:.experimentalV1,input:data.root,output:output)
-        } else if options.verifyCampaign {
+            if options.experimental { try verifyBattle(battle,policy:.experimentalV1,input:data.root,output:output) }
+            else { try verifyOriginalBattle(id,data:data,output:output) }
+        } else if options.verifyVM { try verifyOriginalCampaignHost(data,output:output) }
+        else if options.verifyCampaign {
             let catalog = try CampaignCatalog.load(from:data.root.appendingPathComponent("campaign.json"))
             try verifyCampaign(catalog,data:data,output:output)
         } else { try verify(data,output:output) }
@@ -297,7 +333,8 @@ do {
         if let id = options.battleID {
             let catalog = try BattleCatalog.load(from:data.root.appendingPathComponent("battles.json"))
             guard let battle = catalog.battles.first(where:{$0.id == id}) else { throw EngineError.invalid("Unknown source battle ID: \(id)") }
-            try delegate.showBattle(battle); app.activate(ignoringOtherApps:true)
+            if options.experimental { try delegate.showBattle(battle) } else { try delegate.showOriginalBattle(id) }
+            app.activate(ignoringOtherApps:true)
             app.run(); withExtendedLifetime(delegate) {}; exit(0)
         }
         let view = try GameView(data:data)
