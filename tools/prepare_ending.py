@@ -179,7 +179,7 @@ def prepare(game: Path, output: Path) -> dict:
                               "The initial center-out reveal and fades are not restored.",
                               "Caption bitmaps use the original font lookup and bold expansion; original DOS framebuffer parity has not been measured.",
                               "Selections0/1 diverge later in END; the common opening does not establish parity of those later branches.",
-                              "Framework display flag8 substitutes palette6E8; this output retains the normal palette848 variant."]}
+                              "When framework display flag8 is clear, non-black palette requests substitute palette6E8; this output retains the requested palette848 variant."]}
     if inventory(game) != before:
         raise ResourceError("original files changed during ending extraction")
     output.mkdir(parents=True, exist_ok=True)
