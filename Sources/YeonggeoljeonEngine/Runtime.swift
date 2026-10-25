@@ -76,6 +76,17 @@ struct Scene: Codable {
     var coordinates: Coordinates?; var timing: Timing?
     var commands: [Command]; var provenance: JSONValue?
 }
+func containedResource(root:URL,relative:String) throws -> URL {
+    guard !relative.isEmpty, !relative.hasPrefix("/"),
+          !relative.split(separator:"/").contains(".."), !relative.contains(":") else {
+        throw EngineError.invalid("Image path is not a contained relative path: \(relative)")
+    }
+    let base = root.standardizedFileURL.resolvingSymlinksInPath()
+    let url = base.appendingPathComponent(relative).standardizedFileURL.resolvingSymlinksInPath()
+    let prefix = base.path.hasSuffix("/") ? base.path : base.path+"/"
+    guard url.path.hasPrefix(prefix) else { throw EngineError.invalid("Image path escapes data root") }
+    return url
+}
 struct DataSet {
     let root: URL; let resources: Resources; let scene: Scene
     init(root: URL) throws {
@@ -89,15 +100,16 @@ struct DataSet {
         root = URL(fileURLWithPath: "."); self.resources = resources; self.scene = scene
         try validate()
     }
+    init(root:URL, resources:Resources, scene:Scene) throws {
+        self.root = root.standardizedFileURL.resolvingSymlinksInPath()
+        self.resources = resources; self.scene = scene
+        try validate()
+    }
+    func replacingScene(_ scene:Scene) throws -> DataSet {
+        try DataSet(root:root,resources:resources,scene:scene)
+    }
     func containedFile(_ relative: String) throws -> URL {
-        guard !relative.isEmpty, !relative.hasPrefix("/"),
-              !relative.split(separator: "/").contains(".."), !relative.contains(":") else {
-            throw EngineError.invalid("Image path is not a contained relative path: \(relative)")
-        }
-        let url = root.appendingPathComponent(relative).standardizedFileURL.resolvingSymlinksInPath()
-        let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
-        guard url.path.hasPrefix(prefix) else { throw EngineError.invalid("Image path escapes data root") }
-        return url
+        try containedResource(root:root,relative:relative)
     }
     private func validate() throws {
         guard resources.format == 1, scene.format == 1, scene.width == 640, scene.height == 400,

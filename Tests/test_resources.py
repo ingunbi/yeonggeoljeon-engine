@@ -97,6 +97,15 @@ class OriginalResourceTests(unittest.TestCase):
             result = prepare(game, output)
             self.assertEqual(result["provenance"]["originalFileCount"], 69)
             self.assertTrue(result["provenance"]["originalHashesPreserved"])
+            self.assertEqual(set(result["maps"]), {str(0x2000+i) for i in range(23)})
+            for index in range(23):
+                exported = result["maps"][str(0x2000+index)]
+                self.assertEqual(len(exported["walkBytes"]),620)
+                self.assertEqual(exported["source"]["tiles"]["member"],index)
+                self.assertEqual([o["source"]["ordinal"] for o in exported["objects"]],list(range(len(exported["objects"]))))
+                self.assertTrue(all(o["source"]["member"] == index for o in exported["objects"]))
+                header,_ = png_scanlines((output/exported["image"]).read_bytes())
+                self.assertEqual(header[:2],(512,320))
             self.assertIsNone(result["title"])
             self.assertIn("damaged", result["titleStatus"]["reason"])
             self.assertEqual(len(result["maps"]["8192"]["walkBytes"]), 620)

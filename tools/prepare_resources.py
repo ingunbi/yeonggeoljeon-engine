@@ -127,6 +127,77 @@ def object_bank(payload: bytes) -> tuple[list[IndexedImage], list[dict]]:
     return images, origins
 
 
+def palace_maps(game_dir: Path, main: bytes, write_image) -> dict[str, dict]:
+    """Decode palace maps; MAIN owns the two-stage prop-bank selection tables.
+
+    The verified MAIN hash binds DGROUP and these file offsets. The values of
+    the tables remain original-data inputs, not copied game data in the code.
+    MAIN 0x246BB..0x246C7 indexes DS:3838 then DS:37FA.
+    """
+    maps = Archive((game_dir / "PMAP.R3").read_bytes(), "PMAP.R3")
+    tile_member = Archive((game_dir / "SMAPBGPL.R3").read_bytes(), "SMAPBGPL.R3").decode(1)
+    if len(tile_member.data) % 128:
+        raise ResourceError("palace planar tile bank has partial cells")
+    tiles = [planar_image(tile_member.data[i:i + 128], 16, 16)
+             for i in range(0, len(tile_member.data), 128)]
+    objects = Archive((game_dir / "SSCCHR1.R3").read_bytes(), "SSCCHR1.R3")
+    banks, object_images, result = {}, {}, {}
+    group_base, bank_base = 0x37DA0 + 0x3838, 0x37DA0 + 0x37FA
+    if len(maps) != 23 or group_base + len(maps) > len(main):
+        raise ResourceError("palace map count/table is outside the examined MAIN build")
+    for index in range(len(maps)):
+        member = maps.decode(index)
+        raw = member.data
+        if len(raw) < 1261 or len(raw) != 1261 + raw[1260] * 3:
+            raise ResourceError(f"PMAP{index} does not match the source tile/walk/object format")
+        background = bytearray(512 * 320)
+        for offset, tile in enumerate(raw[:640]):
+            if tile >= len(tiles):
+                raise ResourceError(f"PMAP{index} references an absent background cell")
+            paint(background, 512, 320, tiles[tile], offset % 32 * 16, offset // 32 * 16)
+        group = main[group_base + index]
+        if bank_base + group >= len(main):
+            raise ResourceError("palace prop-bank table index is outside MAIN")
+        bank = main[bank_base + group]
+        if bank not in banks:
+            prop_member = objects.decode(bank)
+            props, origins = object_bank(prop_member.data)
+            banks[bank] = (prop_member, props, origins)
+        prop_member, props, origins = banks[bank]
+        placed = []
+        for ordinal in range(raw[1260]):
+            at = 1261 + ordinal * 3
+            pattern, x, y = raw[at:at + 3]
+            if pattern >= len(props):
+                raise ResourceError(f"PMAP{index} references an absent prop pattern")
+            picture = props[pattern]
+            key = (bank, pattern)
+            if key not in object_images:
+                object_images[key] = write_image(f"prop-{bank}-{pattern}.png", picture, True)
+            placed.append({"id": f"pmap{index}-object-{ordinal}", "image": object_images[key],
+                           "x": x, "y": y, "width": picture.width, "height": picture.height,
+                           "anchorX": 0, "anchorY": picture.height - 16,
+                           "source": {"resource": "PMAP.R3", "member": index, "decodedOffset": at,
+                                      "ordinal": ordinal, "bank": bank, "sprite": prop_member.provenance(),
+                                      "pattern": pattern, "patternSource": origins[pattern]}})
+        walk = list(raw[640:1260])
+        result[str(0x2000 + index)] = {
+            "image": write_image(f"palace-{index}.png", IndexedImage(512, 320, bytes(background))),
+            "width": 512, "height": 320, "viewport": [16, 16, 512, 320],
+            "walkWidth": 31, "walkHeight": 20, "walkBytes": walk,
+            "walkGrid": ["".join("#" if c & 128 else "." for c in walk[y * 31:(y + 1) * 31]) for y in range(20)],
+            "neighborsEven": [{"dx": -1, "dy": 0, "direction": 2}, {"dx": -1, "dy": -1, "direction": 3},
+                              {"dx": 1, "dy": 0, "direction": 1}, {"dx": 1, "dy": -1, "direction": 0}],
+            "neighborsOdd": [{"dx": -1, "dy": 1, "direction": 2}, {"dx": -1, "dy": 0, "direction": 3},
+                             {"dx": 1, "dy": 1, "direction": 1}, {"dx": 1, "dy": 0, "direction": 0}],
+            "objects": placed,
+            "source": {"tiles": member.provenance(), "tileBank": tile_member.provenance(),
+                       "walkDecodedOffset": 640, "objectsDecodedOffset": 1260,
+                       "propBankSelector": {"resource": "MAIN.EXE", "groupOffset": group_base + index,
+                                            "group": group, "bankOffset": bank_base + group, "bank": bank}}}
+    return result
+
+
 def prepare(game_dir: Path, output: Path, title_opgrp: Path | None = None) -> dict:
     game_dir, output = game_dir.resolve(), output.resolve()
     if output == game_dir or game_dir in output.parents:
@@ -144,52 +215,7 @@ def prepare(game_dir: Path, output: Path, title_opgrp: Path | None = None) -> di
         path.write_bytes(png_bytes(picture, colors, transparent_zero=alpha))
         return relative.as_posix()
 
-    # PMAP source is 640 literal tile IDs, 620 walk cells, count + object triples.
-    palace_member = Archive((game_dir / "PMAP.R3").read_bytes(), "PMAP.R3").decode(0)
-    palace = palace_member.data
-    if len(palace) < 1261 or len(palace) != 1261 + palace[1260] * 3:
-        raise ResourceError("PMAP0 does not have the verified tile/walk/object structure")
-    tile_member = Archive((game_dir / "SMAPBGPL.R3").read_bytes(), "SMAPBGPL.R3").decode(1)
-    if len(tile_member.data) % 128:
-        raise ResourceError("palace planar tile bank is not a whole number of 16x16 cells")
-    tiles = [planar_image(tile_member.data[i:i + 128], 16, 16)
-             for i in range(0, len(tile_member.data), 128)]
-    background = bytearray(512 * 320)
-    for offset, tile in enumerate(palace[:640]):
-        if tile >= len(tiles):
-            raise ResourceError("PMAP0 references an absent palace background cell")
-        paint(background, 512, 320, tiles[tile], offset % 32 * 16, offset // 32 * 16)
-    walk = list(palace[640:1260])
-    room = {"image": write_image("palace-0.png", IndexedImage(512, 320, bytes(background))),
-            "width": 512, "height": 320, "viewport": [16, 16, 512, 320],
-            "walkWidth": 31, "walkHeight": 20, "walkBytes": walk,
-            "walkGrid": ["".join("#" if cell & 128 else "." for cell in walk[y * 31:(y + 1) * 31]) for y in range(20)],
-            "neighborsEven": [{"dx": -1, "dy": 0, "direction": 2}, {"dx": -1, "dy": -1, "direction": 3},
-                              {"dx": 1, "dy": 0, "direction": 1}, {"dx": 1, "dy": -1, "direction": 0}],
-            "neighborsOdd": [{"dx": -1, "dy": 1, "direction": 2}, {"dx": -1, "dy": 0, "direction": 3},
-                             {"dx": 1, "dy": 1, "direction": 1}, {"dx": 1, "dy": 0, "direction": 0}],
-            "source": {"tiles": palace_member.provenance(), "tileBank": tile_member.provenance(),
-                       "walkDecodedOffset": 640, "objectsDecodedOffset": 1260}}
-    # MAIN palace bank lookup for local map 0 selects original SSCCHR1 bank 8.
-    prop_member = Archive((game_dir / "SSCCHR1.R3").read_bytes(), "SSCCHR1.R3").decode(8)
-    props, pattern_origins = object_bank(prop_member.data)
-    object_images, room_objects = {}, []
-    for ordinal in range(palace[1260]):
-        at = 1261 + ordinal * 3
-        pattern, x, y = palace[at:at + 3]
-        if pattern >= len(props):
-            raise ResourceError("PMAP0 object references an absent pattern")
-        picture = props[pattern]
-        if pattern not in object_images:
-            object_images[pattern] = write_image(f"prop-8-{pattern}.png", picture, True)
-        room_objects.append({"id": f"pmap0-object-{ordinal}", "image": object_images[pattern],
-                             "x": x, "y": y, "width": picture.width, "height": picture.height,
-                             "anchorX": 0, "anchorY": picture.height - 16,
-                             "source": {"resource": "PMAP.R3", "member": 0, "decodedOffset": at,
-                                        "ordinal": ordinal, "bank": 8,
-                                        "sprite": prop_member.provenance(), "pattern": pattern,
-                                        "patternSource": pattern_origins[pattern]}})
-    room["objects"] = room_objects
+    maps = palace_maps(game_dir, main, write_image)
 
     actor_archive = Archive((game_dir / "SSCCHR2.R3").read_bytes(), "SSCCHR2.R3")
     if len(actor_archive) != 29:
@@ -226,8 +252,8 @@ def prepare(game_dir: Path, output: Path, title_opgrp: Path | None = None) -> di
                                "portraitIndex": struct.unpack_from("<H", record, 14)[0],
                                "source": {"resource": "BAKDATA.R3", "offset": offset, "bytes": 21,
                                           "spriteByteOffset": offset + 16, "sprite": source}}
-    limitations = ["Only the first palace map is exported; other map kinds are unavailable.",
-                   "Palace palette slot 2 follows prior research; its exact runtime selection instruction has not been re-established in this implementation.",
+    limitations = ["Palace maps are exported; town/campaign map kinds remain unavailable.",
+                   "Palace palette slot 2 follows the statically examined default color path; grayscale and dynamic palette changes are not implemented.",
                    "Portrait TF-DCE decoding is not implemented in this bounded resource slice; portraits are unavailable."]
     selected_title = title_opgrp if title_opgrp is not None else game_dir / "OPGRP.R3"
     title_data = selected_title.read_bytes()
@@ -245,7 +271,7 @@ def prepare(game_dir: Path, output: Path, title_opgrp: Path | None = None) -> di
     after = inventory(game_dir)
     if before != after:
         raise ResourceError("original source file inventory/hash changed during extraction")
-    result = {"format": 1, "title": relative, "maps": {"8192": room}, "actors": actors, "portraits": {},
+    result = {"format": 1, "title": relative, "maps": maps, "actors": actors, "portraits": {},
               "titleStatus": title_metadata, "limitations": limitations,
               "provenance": {"originalFiles": before, "originalFileCount": len(before),
                              "originalHashesPreserved": True, "originalExecution": False,
@@ -253,7 +279,9 @@ def prepare(game_dir: Path, output: Path, title_opgrp: Path | None = None) -> di
                              "researchReferences": ["town-motion/evidence.json", "town-motion/static_findings.json",
                                                     "title-screen/source-layout.json", "MAIN.EXE:0x244FA..0x24648", "MAIN.EXE:0x1A9CA..0x1AA61"],
                              "palette": {"resource": "MAIN.EXE", "offset": 0x38DF0 + 2 * 48, "bytes": 48,
-                                         "slot": 2, "selectionStatus": "prior-research inference; exact runtime selector not re-established"},
+                                         "slot": 2, "selectionStatus": "statically-derived default color path",
+                                         "selectionCode": ["MAIN.EXE:0x26207..0x2620C", "MAIN.EXE:0x1E628..0x1E635",
+                                                           "MAIN.EXE:0x15B3A..0x15B44", "MAIN.EXE:0x182CE..0x18372"]},
                              "coordinateSystem": {"townTopLeft": "16*x, 16*y-24+8*(x&1)",
                                                   "propTopLeft": "16*x,16*y-height+16", "viewport": [16, 16, 512, 320]}}}
     destination = output / "resources.json"

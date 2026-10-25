@@ -4,11 +4,15 @@
 caller-owned original files
   ├─ resource_formats.py        bounded LS11 / pixel codecs
   ├─ prepare_resources.py       source graphics, geometry and identities
-  └─ prepare_scene.py           source instructions and dialogue references
+  ├─ prepare_scene.py           source instructions and dialogue references
+  ├─ prepare_campaign.py        source record directory and transitions
+  └─ prepare_battles.py         source battle maps and placement facts
           ↓ local-only JSON + PNG
   DataSet                      typed, contained native data
           ↓
   Runtime                      command cursor, actor state, movement batches
+  BattleSession                explicitly selected experimental policy
+  CampaignSession              research previews, identities and result origin
           ↓
   Renderer                     640×400 source-coordinate canvas
           ↓
@@ -30,8 +34,9 @@ unsupported source boundary is different from consuming a supported scene, and
 both differ from a runtime failure. Diagnostics must not infer success merely
 because the command loop stopped.
 
-The first implementation is deliberately a bounded original palace record.
-Full campaign dispatch, player-controlled town exploration, battle rules/AI,
-source font rendering, sound synthesis, and progress saves require subsequent
-implementation and original-runtime comparison. Existing code or saves from
-another game engine are not silently used to fill these gaps.
+The source campaign catalog and native battle research policy extend the first
+bounded palace implementation. Complete campaign dispatch, original combat
+rules/AI, player-controlled town exploration, source font rendering, sound and
+progress saves require further implementation and original-runtime comparison.
+Experimental battle mechanics do not fill those gaps as original behavior.
+Existing code or saves from another game engine are not silently used.

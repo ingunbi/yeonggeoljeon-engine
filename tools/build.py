@@ -151,6 +151,8 @@ def main() -> None:
             resource_args.extend(["--title-opgrp", str(external_title)])
         run(*resource_args)
         run(sys.executable, "tools/prepare_scene.py", "--game-dir", str(game), "--output", str(data))
+        run(sys.executable, "tools/prepare_campaign.py", "--game-dir", str(game), "--output", str(data))
+        run(sys.executable, "tools/prepare_battles.py", "--game-dir", str(game), "--output", str(data))
         sources = sorted((ROOT / "Sources" / "YeonggeoljeonEngine").glob("*.swift"))
         if not sources:
             raise ValueError("native source is not present")
@@ -160,13 +162,14 @@ def main() -> None:
                 "CFBundleName": "Yeonggeoljeon Engine",
                 "CFBundleDisplayName": "영걸전 자체 엔진 연구",
                 "CFBundleExecutable": EXECUTABLE, "CFBundlePackageType": "APPL",
-                "CFBundleShortVersionString": "0.1.0", "CFBundleVersion": "1",
+                "CFBundleShortVersionString": "0.2.0", "CFBundleVersion": "2",
                 "LSMinimumSystemVersion": "13.0", "NSHighResolutionCapable": True,
                 "NSPrincipalClass": "NSApplication"}
         (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps(info))
         (resources / "ENGINE-NOTICE.txt").write_text(
             "Yeonggeoljeon Engine: new native engine research prototype.\n"
             "Engine source code: GPL-3.0-only.\n"
+            "Source project: https://github.com/ingunbi/yeonggeoljeon-engine\n"
             "Original artwork and dialogue were exported locally from caller-owned inputs.\n"
             "They are not part of the engine source distribution.\n", encoding="utf-8")
         shutil.copyfile(ROOT / "LICENSE", resources / "LICENSE")
@@ -181,7 +184,7 @@ def main() -> None:
             run("/usr/bin/ditto", "-c", "-k", "--keepParent", str(target), str(archive))
             shutil.rmtree(target)
         app.rename(target)
-        evidence = {"format": 1, "kind": "native-build", "version": "0.1.0",
+        evidence = {"format": 1, "kind": "native-build", "version": "0.2.0",
                     "sourceInput": str(source), "sourceFiles": before,
                     "optionalTitleInput": str(external_title) if external_title else None,
                     "optionalTitleSha256": title_before, "originalFilesPreserved": True,

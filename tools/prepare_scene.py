@@ -126,34 +126,37 @@ def person_name(people: bytes, person: int) -> tuple[str, dict]:
 
 
 def dialogue(text: bytes, bounds: tuple[int, int], relative: int, people: bytes,
-             instruction_source: dict) -> list[dict]:
+             instruction_source: dict, *, text_resource: str = "SNR0M.R3") -> list[dict]:
     base, end = bounds
     offset = base + relative
     result = []
     while True:
         if offset + 2 > end:
-            raise SceneError(f"dialogue list is truncated at SNR0M.R3 {offset:#x}")
+            raise SceneError(f"dialogue list is truncated at {text_resource} {offset:#x}")
         person = word(text, offset, "dialogue person")
         if person == 0xFFFF:
             return result
         name, name_source = person_name(people, person)
-        line, after = text_at(text, offset + 2, end, "SNR0M.R3")
+        line, after = text_at(text, offset + 2, end, text_resource)
         result.append({"op": "say", "person": person, "speaker": name, "text": line,
                        "source": instruction_source,
-                       "textSource": source_span("SNR0M.R3", text, offset, after - offset),
+                       "textSource": source_span(text_resource, text, offset, after - offset),
                        "speakerSource": name_source})
         offset = after
 
 
 def extract_record(script: bytes, start: int, end: int, text: bytes,
-                   text_bounds: tuple[int, int], people: bytes) -> tuple[list, list, dict]:
+                   text_bounds: tuple[int, int], people: bytes,
+                   *, allowed_maps: set[int] | None = None,
+                   script_resource: str = "SNR0D.R3", script_member: int = 0,
+                   text_resource: str = "SNR0M.R3") -> tuple[list, list, dict]:
     commands, effects = [], []
     offset = start
     selected_map = None
     while offset < end:
         opcode = script[offset]
         size = INSTRUCTION_LENGTHS.get(opcode)
-        instruction_source = source_span("SNR0D.R3", script, offset, 1, member=0)
+        instruction_source = source_span(script_resource, script, offset, 1, member=script_member)
         if size is None:
             boundary = {"status": "unsupported-boundary", "opcode": opcode,
                         "offset": offset, "reason": f"unsupported opcode 0x{opcode:02X}"}
@@ -164,7 +167,7 @@ def extract_record(script: bytes, start: int, end: int, text: bytes,
             if offset + size > end:
                 raise SceneError("instruction operands cross the source record boundary")
             raw = span(script, offset, size, "palace instruction")
-            instruction_source = source_span("SNR0D.R3", script, offset, size, member=0)
+            instruction_source = source_span(script_resource, script, offset, size, member=script_member)
             instruction_source["opcode"] = opcode
             instruction_source["mainHandler"] = HANDLERS[opcode]
             fields = {"source": instruction_source}
@@ -176,17 +179,17 @@ def extract_record(script: bytes, start: int, end: int, text: bytes,
                                  "x": raw[3], "y": raw[4], "facing": raw[5], **fields})
             elif opcode == 0x00:
                 commands.extend(dialogue(text, text_bounds, word(raw, 1, "dialogue offset"),
-                                         people, instruction_source))
+                                         people, instruction_source, text_resource=text_resource))
             elif opcode == 0x09:
                 selected_map = word(raw, 1, "packed map")
-                if selected_map != 0x2000:
+                if selected_map not in (allowed_maps if allowed_maps is not None else {0x2000}):
                     raise SceneError(f"selected record leaves the first palace map: {selected_map}")
                 commands.append({"op": "map", "map": selected_map, **fields})
             elif opcode == 0x0B:
                 at = text_bounds[0] + word(raw, 1, "caption offset")
-                caption, after = text_at(text, at, text_bounds[1], "SNR0M.R3")
+                caption, after = text_at(text, at, text_bounds[1], text_resource)
                 commands.append({"op": "caption", "text": caption, **fields,
-                                 "textSource": source_span("SNR0M.R3", text, at, after - at)})
+                                 "textSource": source_span(text_resource, text, at, after - at)})
             elif opcode == 0x18:
                 person = word(raw, 1, "remove person")
                 if not 0 <= person < PERSON_COUNT:
@@ -199,7 +202,7 @@ def extract_record(script: bytes, start: int, end: int, text: bytes,
             elif opcode in (0x05, 0x2C):
                 commands.append({"op": "show" if opcode == 5 else "redraw", **fields})
             elif opcode == 0xFF:
-                commands.append({"op": "end", "reason": "original first palace record ended (FF); later blocks are outside this slice", **fields})
+                commands.append({"op": "end", "reason": "original source record ended (FF); later records require campaign routing" if allowed_maps is not None else "original first palace record ended (FF); later blocks are outside this slice", **fields})
                 return commands, effects, {"status": "bounded-record-complete", "offset": offset,
                                            "nextBlockOffset": end, "selectedMap": selected_map}
         except SceneError as error:
@@ -212,7 +215,7 @@ def extract_record(script: bytes, start: int, end: int, text: bytes,
     boundary = {"status": "unsupported-boundary", "offset": offset,
                 "reason": "record boundary reached without a source FF terminator"}
     commands.append({"op": "end", "reason": boundary["reason"], "unsupported": True, "boundary": "unsupported",
-                     "source": source_span("SNR0D.R3", script, end, 0, member=0)})
+                     "source": source_span(script_resource, script, end, 0, member=script_member)})
     return commands, effects, boundary
 
 
