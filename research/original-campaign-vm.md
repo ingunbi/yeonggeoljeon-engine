@@ -72,7 +72,8 @@ result. Original 48×20 button pixels come from MARK member zero offsets
 `1BD0` and `1DB0`. These pixels remain local exported assets.
 
 The host preserves one scene runtime across command batches. It completes map
-loads with `resumeMap`, presents source choice indices with `choose`, and can
+selections with `acknowledgeMapSelection`, enters actual map contexts with
+`enterMapContext`, presents source choice indices with `choose`, and can
 acknowledge a host action only if that opcode was registered with an actual
 implementation. Original person state, battle placement, inventory and combat
 effects belong to their own parsed models. Program digests bind saved contexts
@@ -100,10 +101,45 @@ relative word is added with 32-bit carry. A descending directory value alone
 does not authorize an inferred wrap. This replaces the earlier monotonic-span
 derivation while preserving the same actual source member spans.
 
-Game/player current city and script context city are separate saved fields.
-`setCurrentCity` and opcode2E update the former; `resumeMap` establishes the
-latter for map/cache ownership. `setPlayerPosition` retains the selected map
-and byte-sized route coordinates. `commitWorldArrival` is called after the
-native route completes, records current city and player position, and returns
-the exact source event; it does not skip the event dispatcher or automatically
-enter a destination map.
+City identities have three source owners: `currentCity` is player7A80+10,
+`gameCity` is Game7A6C+4, and `city` is script context+8. Source2E/CBB4 and world
+arrival write the first two together. The script map selector can change only
+Game+4; `enterMapContext` copies Game+4 into context+8. Native built-in direct
+map-kind/index writes have a different selector contract and retain Game+4.
+`setReturnContext` stores the original7A76 map/coordinate tuple only when its
+producing instruction or room entry does so. World arrival preserves7A76.
+Runtime owns actual arrived coordinates; arrival returns its exact source event
+without skipping the event dispatcher or automatically entering another map.
+
+`11` changes the script's packed map and calls the battle return helper with
+mode zero, or mode one only when the immediate following opcode is `29`
+(`MAIN 0x1C768`). The helper changes no battle result unless the active game
+palette is three. Under that palette it writes raw result two for mode zero,
+raw result three for modes one/three (`0x336FA..0x33735`). `29` calls mode
+three, selects music four, and immediately returns interpreter status seven
+(`0x1D15E..0x1D176`). These raw values are retained without assigning an
+unverified victory/defeat name.
+
+An acknowledged `29` or `2A` produces a persistent VM interpreter-return
+boundary. The next source instruction, including `FF`, is not consumed.
+Original world/town callers translate status seven to map-loop flag `20`,
+status eight to flag four (`0x22250..0x22285`, `0x26491..0x264CA`). The main
+loop routes flag `20` to its retry selector and selects framework return four
+only if accepted (`0x1E556..0x1E605`). Retrying/restarting is an outer program
+operation; a list ending or continuing the abandoned record is not a substitute.
+
+Nested source callers can use `queryInvocation` instead of the legacy research
+loop. `.invocationReturn` preserves raw zero/one/two/five statuses without
+running a subsequent automatic record. Movement returns five after batching;
+the pending movement entry may return six in the original wait loop. Native
+asynchronous movement waits are collapsed until the actual movement finishes.
+The next query then resumes the same source cursor. Normal opcode `17` only
+updates automatic mode and continues; the nonzero save-prompt opcode `3D`
+provides the source zero-return continuation. These are distinct producers.
+
+Opcode `20` was initially labeled as an item operation but its host effect was
+unregistered. Source `0x2028E..0x202D7` establishes a city-object flag operation:
+optional list-wide OR one, then clear one for each listed city. The producer
+now emits `city-availability`; no inventory is changed. The city constructor
+or loader supplies the current chapter's flag array via `setCityFlags` and the
+VM owns the subsequent bit operation. Missing city ownership stays an error.

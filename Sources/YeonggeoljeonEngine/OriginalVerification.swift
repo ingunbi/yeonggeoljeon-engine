@@ -28,7 +28,7 @@ func verifyOriginalBattle(_ id:String,data:DataSet,output:URL) throws {
     let session = try source.isolatedBattle(id,rng:OriginalRNG(state:seed))
     let initial = session.units.values.sorted(by:{$0.slot < $1.slot})
     var hooks:[OriginalTurnHook] = [],reason = "driver-round-budget",rounds = 0
-    let view = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:data.root))
+    let view = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:data.root),sprites:OriginalBattleSpriteRenderer(root:data.root))
     // Capture is native AppKit offscreen rendering; no keyboard/mouse event is
     // synthesized and original-runtime pixel/AI/RNG parity is not asserted.
     try view.capture(to:output.appendingPathComponent("original-battle-initial.png"))
@@ -83,7 +83,7 @@ func verifyOriginalBattle(_ id:String,data:DataSet,output:URL) throws {
                      "The scripted player input policy is only a test driver; supported enemy decisions use source-derived controllers.",
                      "Campaign hooks are retained but not executed by this isolated check. A source goal event is not an asserted campaign victory.",
                      "Seed1 is explicit test input; source clock packing and implemented call order do not establish whole-DOS RNG timeline parity.",
-                     "Markers are native diagnostic geometry over the original map; original combat sprites and animation are not reproduced.",
+                     "Original map/sprite pixels use source selectors; whole original combat animation and timing remain unverified. Slot labels are native diagnostics.",
                      "No original DOS executable or existing save was run or modified; OS input delivery is not tested."])
     let encoder = JSONEncoder();encoder.outputFormatting = [.prettyPrinted,.sortedKeys,.withoutEscapingSlashes]
     try encoder.encode(report).write(to:output.appendingPathComponent("original-battle-verification.json"),options:.atomic)

@@ -87,6 +87,10 @@ struct OriginalCampaignProgram: Codable {
                       (instruction.negativeFlags ?? []).allSatisfy({ (0...255).contains($0) }) else {
                     throw EngineError.invalid("Invalid original campaign instruction facts")
                 }
+                if let status = instruction.interpreterStatus,
+                   !((instruction.opcode == 0x29 && status == 7) || (instruction.opcode == 0x2A && status == 8)) {
+                    throw EngineError.invalid("Original campaign interpreter return has no matching source opcode")
+                }
             }
             for instruction in record.instructions {
                 if let target = instruction.skipTarget, !offsets.contains(target) {
@@ -150,10 +154,23 @@ struct OriginalCampaignCachedActor: Codable, Equatable {
     var sourceFacing = 0
 }
 
-struct OriginalCampaignPlayerPosition: Codable, Equatable {
+struct OriginalCampaignReturnContext: Codable, Equatable {
     var packedMap: Int
     var x: Int
     var y: Int
+}
+
+struct OriginalSettlementCacheReplay {
+    var actors: [OriginalCampaignCachedActor]
+    var music: Int?
+    var restored: Bool
+}
+
+struct OriginalCampaignInterpreterReturn: Codable, Equatable {
+    var recordID: String
+    var sourceOffset: Int
+    var opcode: Int
+    var status: Int
 }
 
 struct OriginalCampaignState: Codable, Equatable {
@@ -167,10 +184,18 @@ struct OriginalCampaignState: Codable, Equatable {
     /// Game/player current city is separate from the script map-context city.
     /// Its first established script value is supplied by opcode2E.
     var currentCity: Int?
-    var playerPosition: OriginalCampaignPlayerPosition?
+    /// Game7A6C+4 is a separate selector/context byte. World/battle map
+    /// selectors may change it without changing player7A80+10 currentCity.
+    var gameCity: Int?
+    var cityFlags: [UInt8]?
+    var cityFlagsChapter: Int?
+    var returnContext: OriginalCampaignReturnContext?
     var flags = [UInt8](repeating: 0, count: 32)
     var automatic = false
     var music: Int?
+    /// Current device selection is separate from script context+1BF's saved
+    /// music. A native battle-result stinger does not overwrite that cache.
+    var currentMusic: Int?
     var objectiveText: String?
     var sourceList: [Int] = []
     var actorCache = [OriginalCampaignCachedActor](repeating: OriginalCampaignCachedActor(), count: 62)
@@ -182,6 +207,12 @@ struct OriginalCampaignState: Codable, Equatable {
     var instructionIndex = 0
     var event: OriginalCampaignEvent?
     var pending: CampaignVMPending?
+    var interpreterReturn: OriginalCampaignInterpreterReturn?
+    /// Optional bounded source-call mode used by nested battle dispatchers.
+    var invocationActive: Bool?
+    var invocationReturn: OriginalCampaignInterpreterReturn?
+    var invocationMayResume: Bool?
+    var invocationNormalStatus: Int?
     var completedRecords = 0
 
     func flag(_ id: Int) throws -> Bool {
@@ -227,6 +258,8 @@ enum CampaignVMYield {
     case loadMap(CampaignVMMapRequest)
     case choice(CampaignVMChoice)
     case sourceAction(OriginalCampaignInstruction)
+    case interpreterReturn(OriginalCampaignInterpreterReturn)
+    case invocationReturn(OriginalCampaignInterpreterReturn)
     case waiting(CampaignVMWaiting)
     case unsupported(CampaignVMFailure)
     case budgetReached
@@ -264,29 +297,138 @@ final class CampaignVM {
 
     func snapshot() -> OriginalCampaignState { state }
 
+    func setSourceMusic(selection: Int) throws {
+        guard (0...255).contains(selection) else { throw EngineError.invalid("Original music selection exceeds its source byte") }
+        state.currentMusic = selection
+    }
+
+    /// MAIN86F0 writes only the script's current city and packed map. Source
+    /// selectors may change global currentCity before this entry operation.
+    func enterMapContext(packedMap: Int) throws {
+        guard (0...65535).contains(packedMap), let city = state.gameCity else {
+            throw EngineError.invalid("Source map context entry lacks its current city or map identity")
+        }
+        state.packedMap = packedMap
+        state.city = city
+    }
+
+    /// Script dispatcher C86C selects261A8/220D0/261F6/20172. Only world/battle write
+    /// Game+4; this does not change player current city or script context+8.
+    func selectScriptMap(packedMap: Int) throws {
+        guard (0...65535).contains(packedMap), (0...3).contains(packedMap >> 12) else {
+            throw EngineError.invalid("Native source map selector has no examined kind")
+        }
+        if [1,3].contains(packedMap >> 12) { state.gameCity = packedMap & 255 }
+    }
+
+    /// Source1C058 is called by settlement(0/2) entry at24C6A, not by the world
+    /// loop. It neither clears mismatched cache identities nor restores player0.
+    func replaySettlementCache() throws -> OriginalSettlementCacheReplay {
+        guard [0,2].contains(state.packedMap >> 12) else {
+            throw EngineError.invalid("Source actor-cache replay has no world/battle call site")
+        }
+        let ownerMatches = state.actorCacheCity == state.city && state.actorCacheMap == state.packedMap
+        if !ownerMatches {
+            state.actorCacheDirty = true
+            return OriginalSettlementCacheReplay(actors: [], music: nil, restored: false)
+        }
+        guard state.actorCacheDirty else {
+            return OriginalSettlementCacheReplay(actors: [], music: nil, restored: false)
+        }
+        state.actorCacheDirty = false
+        return OriginalSettlementCacheReplay(actors: state.actorCache.filter { $0.person != 0xFFFF && $0.person != 0 },
+                                              music: state.music, restored: true)
+    }
+
+    /// Original event wrappers return continuation entry zero while source
+    /// context1B7 is busy. They do not re-evaluate the event predicate then.
+    @discardableResult
+    func queryInvocation(event: OriginalCampaignEvent) throws -> Bool {
+        guard state.interpreterReturn == nil, state.invocationReturn == nil,
+              state.invocationActive != true, state.pending == nil else {
+            throw EngineError.invalid("Original source invocation cannot replace a pending call")
+        }
+        if state.currentRecordID != nil {
+            guard state.invocationMayResume == true else {
+                throw EngineError.invalid("Original source invocation has no established continuation entry")
+            }
+            state.invocationMayResume = false
+        } else if !(try dispatch(event: event)) { return false }
+        state.invocationActive = true
+        state.invocationNormalStatus = 1
+        return true
+    }
+
+    /// Nonterminal source returns are consumed by the calling dispatcher. This
+    /// does not resume the script; a subsequent source query selects/resumes it.
+    func takeInvocationReturn() throws -> OriginalCampaignInterpreterReturn {
+        guard let returned = state.invocationReturn else {
+            throw EngineError.invalid("Original source invocation has no pending return")
+        }
+        state.invocationReturn = nil
+        state.invocationActive = false
+        state.invocationNormalStatus = nil
+        return returned
+    }
+
+    private func stopInvocation(_ record: OriginalCampaignRecord, instruction: OriginalCampaignInstruction,
+                                status: Int, resumable: Bool = false) -> CampaignVMYield {
+        let value = OriginalCampaignInterpreterReturn(recordID: record.id, sourceOffset: instruction.offset,
+                                                       opcode: instruction.opcode, status: status)
+        state.invocationReturn = value
+        state.invocationMayResume = resumable
+        return .invocationReturn(value)
+    }
+
+    private var normalInvocationStatus: Int {
+        state.packedMap & 0xF000 == 0x1000 ? 0 : state.invocationNormalStatus ?? 1
+    }
+
+    /// Source CBB4(file20504), used by2E: writes player+10 and Game+4 together.
     func setCurrentCity(_ city: Int) throws {
         guard (0...255).contains(city) else {
             throw EngineError.invalid("Current source city exceeds its byte field")
         }
         state.currentCity = city
+        state.gameCity = city
     }
 
-    func setPlayerPosition(packedMap: Int, x: Int, y: Int) throws {
-        guard (0...65535).contains(packedMap), (0...255).contains(x), (0...255).contains(y) else {
-            throw EngineError.invalid("Source player map/position exceeds its stored field widths")
+    /// The city constructor/loader owns initial values and list population.
+    func setCityFlags(chapter: Int, flags: [UInt8]) throws {
+        guard chapter == state.chapter, !flags.isEmpty, flags.count <= 32 else {
+            throw EngineError.invalid("Source city flags do not match the current constructed chapter list")
         }
-        state.playerPosition = OriginalCampaignPlayerPosition(packedMap: packedMap, x: x, y: y)
+        state.cityFlags = flags
+        state.cityFlagsChapter = chapter
     }
 
-    /// The host completes the source route first. Arrival stores global/player
-    /// city and returns its exact kind4 trigger; script context city changes
-    /// separately when the destination map is entered (MAIN1C040/1C058).
-    func commitWorldArrival(city: Int, x: Int, y: Int) throws -> OriginalCampaignEvent {
+    /// MAIN2028E..202D7: optional list-wide OR1, then clear1 for listed cities.
+    /// This affects world-city availability, not any item inventory.
+    func applyCityAvailability(clearFirst: Bool, cities: [Int]) throws {
+        guard var flags = state.cityFlags, state.cityFlagsChapter == state.chapter,
+              cities.allSatisfy({ flags.indices.contains($0) }) else {
+            throw EngineError.invalid("Source city availability requires its constructed city flags and valid city identities")
+        }
+        if clearFirst { for id in flags.indices { flags[id] |= 1 } }
+        for id in cities { flags[id] &= ~UInt8(1) }
+        state.cityFlags = flags
+    }
+
+    func setReturnContext(packedMap: Int, x: Int, y: Int) throws {
+        guard (0...65535).contains(packedMap), (0...255).contains(x), (0...255).contains(y) else {
+            throw EngineError.invalid("Source return context exceeds its stored map/coordinate widths")
+        }
+        state.returnContext = OriginalCampaignReturnContext(packedMap: packedMap, x: x, y: y)
+    }
+
+    /// The host completes the source route first. Arrival changes current city
+    /// but does not write saved world position7A76 (MAIN23F3C..23F83).
+    /// Runtime owns the player's actual arrived coordinates.
+    func commitWorldArrival(city: Int) throws -> OriginalCampaignEvent {
         guard state.currentRecordID == nil, state.pending == nil,
               state.packedMap & 0xF000 == 0x1000, (0..<255).contains(city) else {
             throw EngineError.invalid("World destination arrival cannot replace a running script or an unselected world map")
         }
-        try setPlayerPosition(packedMap: state.packedMap, x: x, y: y)
         try setCurrentCity(city)
         return .worldDestination(currentCity: city)
     }
@@ -363,9 +505,16 @@ final class CampaignVM {
         if let city = state.currentCity, !(0...255).contains(city) {
             throw EngineError.invalid("Invalid saved source current-city field")
         }
-        if let position = state.playerPosition,
+        if let city = state.gameCity, !(0...255).contains(city) {
+            throw EngineError.invalid("Invalid saved source game selector byte")
+        }
+        guard (state.cityFlags == nil) == (state.cityFlagsChapter == nil),
+              state.cityFlags.map({ !$0.isEmpty && $0.count <= 32 }) ?? true else {
+            throw EngineError.invalid("Saved original city flag ownership is invalid")
+        }
+        if let position = state.returnContext,
            !(0...65535).contains(position.packedMap) || !(0...255).contains(position.x) || !(0...255).contains(position.y) {
-            throw EngineError.invalid("Invalid saved source player position")
+            throw EngineError.invalid("Invalid saved source return context")
         }
         if let id = state.currentRecordID {
             guard let record = recordsByID[id], record.chapter == state.chapter,
@@ -381,6 +530,26 @@ final class CampaignVM {
                   let record = recordsByID[pending.recordID],
                   record.instructions.contains(where: { $0.offset == pending.offset && $0.opcode == pending.opcode }) else {
                 throw EngineError.invalid("Original campaign pending operation identity is invalid")
+            }
+        }
+        if let returned = state.interpreterReturn {
+            guard state.pending == nil, returned.recordID == state.currentRecordID,
+                  let record = recordsByID[returned.recordID], state.instructionIndex > 0,
+                  state.instructionIndex <= record.instructions.count else {
+                throw EngineError.invalid("Original interpreter return lost its source cursor")
+            }
+            let instruction = record.instructions[state.instructionIndex - 1]
+            guard instruction.opcode == returned.opcode, instruction.offset == returned.sourceOffset,
+                  instruction.interpreterStatus == returned.status else {
+                throw EngineError.invalid("Original interpreter return does not match its source instruction")
+            }
+        }
+        if let returned = state.invocationReturn {
+            guard state.interpreterReturn == nil, state.pending == nil,
+                  let record = recordsByID[returned.recordID],
+                  record.instructions.contains(where: { $0.offset == returned.sourceOffset && $0.opcode == returned.opcode }),
+                  [0,1,2,5].contains(returned.status) else {
+                throw EngineError.invalid("Original invocation return lost its source identity")
             }
         }
     }
@@ -420,7 +589,8 @@ final class CampaignVM {
     /// Events may not abandon a running script, pending map, battle or choice.
     @discardableResult
     func dispatch(event: OriginalCampaignEvent) throws -> Bool {
-        guard state.currentRecordID == nil, state.pending == nil,
+        guard state.currentRecordID == nil, state.pending == nil, state.interpreterReturn == nil,
+              state.invocationReturn == nil,
               [0, 2, 3, 4, 6, 7, 8, 9, 11, 12].contains(event.kind) else {
             throw EngineError.invalid("Original campaign event cannot replace a running operation or has an unsupported source kind")
         }
@@ -444,10 +614,12 @@ final class CampaignVM {
         return try advance()
     }
 
-    private func waiting() -> CampaignVMYield {
-        .waiting(CampaignVMWaiting(chapter: state.chapter, member: state.member, block: state.block,
-            groupBase: state.groupBase, eventKinds: Array(Set(currentGroup().map(\.kind))).sorted()))
+    func waitingState() -> CampaignVMWaiting {
+        CampaignVMWaiting(chapter: state.chapter, member: state.member, block: state.block,
+            groupBase: state.groupBase, eventKinds: Array(Set(currentGroup().map(\.kind))).sorted())
     }
+
+    private func waiting() -> CampaignVMYield { .waiting(waitingState()) }
 
     private func failure(_ reason: String, instruction: OriginalCampaignInstruction? = nil) -> CampaignVMYield {
         .unsupported(CampaignVMFailure(recordID: state.currentRecordID, opcode: instruction?.opcode,
@@ -487,15 +659,15 @@ final class CampaignVM {
             offset: instruction.offset, opcode: instruction.opcode, choice: choice)
     }
 
-    func resumeMap(packedMap: Int) throws {
+    func acknowledgeMapSelection(packedMap: Int) throws {
         guard let pending = state.pending, pending.kind == "map", state.packedMap == packedMap else {
             throw EngineError.invalid("Original campaign map completion does not match its pending source selection")
         }
-        guard let city = state.currentCity else {
-            throw EngineError.invalid("Source map entry has no established current city")
-        }
-        state.city = city
         state.pending = nil
+        if state.invocationActive == true, let record = recordsByID[pending.recordID],
+           let instruction = record.instructions.first(where: { $0.offset == pending.offset }) {
+            _ = stopInvocation(record, instruction: instruction, status: 2, resumable: true)
+        }
     }
 
     func resumeHostAction(opcode: Int, sourceOffset: Int) throws {
@@ -504,7 +676,19 @@ final class CampaignVM {
             throw EngineError.invalid("Original campaign host action has no matching registered implementation")
         }
         if opcode == 7 { state.storyPanelActive = true }
+        if let record = recordsByID[pending.recordID],
+           let instruction = record.instructions.first(where: { $0.offset == sourceOffset }),
+           let status = instruction.interpreterStatus {
+            state.interpreterReturn = OriginalCampaignInterpreterReturn(recordID: record.id,
+                sourceOffset: sourceOffset, opcode: opcode, status: status)
+        }
         state.pending = nil
+        if opcode == 0x3D, state.invocationActive == true,
+           let record = recordsByID[pending.recordID],
+           let instruction = record.instructions.first(where: { $0.offset == sourceOffset }),
+           instruction.arguments.first.map({ $0 != 0 }) == true {
+            _ = stopInvocation(record, instruction: instruction, status: 0, resumable: true)
+        }
     }
 
     func choose(index: Int) throws {
@@ -536,6 +720,8 @@ final class CampaignVM {
     /// Commands yield before subsequent control effects execute. A pending host
     /// boundary is stable across calls and save/restore until its exact completion.
     func advance(instructionBudget: Int = 4096) throws -> CampaignVMYield {
+        if let returned = state.interpreterReturn { return .interpreterReturn(returned) }
+        if let returned = state.invocationReturn { return .invocationReturn(returned) }
         guard instructionBudget > 0 else { throw EngineError.invalid("Campaign instruction budget must be positive") }
         if let pending = state.pending {
             guard let record = recordsByID[pending.recordID],
@@ -585,7 +771,15 @@ final class CampaignVM {
                         state.instructionIndex += 1
                     }
                 }
+                if state.invocationActive == true {
+                    if instruction.opcode == 0x0A { state.invocationNormalStatus = 0 }
+                    else if instruction.opcode == 1 || instruction.opcode == 5 {
+                        _ = stopInvocation(record, instruction: instruction,
+                                           status: instruction.opcode == 1 ? 5 : 0, resumable: true)
+                    }
+                }
                 if !commands.isEmpty { return .commands(commands) }
+                if let returned = state.invocationReturn { return .invocationReturn(returned) }
             case "flag":
                 guard instruction.arguments.count == 2 else { return failure("Invalid source flag operands", instruction: instruction) }
                 try state.setFlag(instruction.arguments[0], instruction.arguments[1] == 0)
@@ -597,13 +791,18 @@ final class CampaignVM {
             case "jump-block":
                 guard let block = instruction.arguments.first else { return failure("Missing original block selector", instruction: instruction) }
                 state.block = block; state.groupBase = 0; state.currentRecordID = nil; state.instructionIndex = 0
+                if state.invocationActive == true { return stopInvocation(record, instruction: instruction, status: normalInvocationStatus) }
             case "next-chapter":
                 state.chapter += 1; state.member = 0; state.block = 0; state.groupBase = 0
                 state.currentRecordID = nil; state.instructionIndex = 0
-            case "next-phase": try finishRecord(advanceGroup: true)
+                if state.invocationActive == true { return stopInvocation(record, instruction: instruction, status: normalInvocationStatus) }
+            case "next-phase":
+                try finishRecord(advanceGroup: true)
+                if state.invocationActive == true { return stopInvocation(record, instruction: instruction, status: 5) }
             case "end-record":
                 let repeatGroup = currentGroup().first?.group.repeating ?? record.group.repeating
                 try finishRecord(advanceGroup: !repeatGroup)
+                if state.invocationActive == true { return stopInvocation(record, instruction: instruction, status: normalInvocationStatus) }
                 if repeatGroup { return waiting() }
             case "load-map":
                 guard let map = instruction.arguments.first else { return failure("Missing source map selector", instruction: instruction) }
@@ -614,6 +813,12 @@ final class CampaignVM {
             case "city":
                 guard let city = instruction.arguments.first else { return failure("Missing source city selector", instruction: instruction) }
                 try setCurrentCity(city); state.instructionIndex += 1
+            case "return-context":
+                guard instruction.arguments.count == 3 else {
+                    return failure("Invalid source return-context operands", instruction: instruction)
+                }
+                try setReturnContext(packedMap: instruction.arguments[0], x: instruction.arguments[1], y: instruction.arguments[2])
+                state.instructionIndex += 1
             case "automatic":
                 guard let value = instruction.arguments.first else { return failure("Missing source automatic-mode selector", instruction: instruction) }
                 state.automatic = value == 0; state.instructionIndex += 1
@@ -634,7 +839,10 @@ final class CampaignVM {
                 guard supportedHostOpcodes.contains(instruction.opcode) else {
                     return failure("Original \(instruction.kind) host effect has no registered implementation", instruction: instruction)
                 }
-                if instruction.kind == "music" { state.music = instruction.arguments.first }
+                if instruction.kind == "music", let selection = instruction.arguments.first {
+                    state.music = selection
+                    try setSourceMusic(selection: selection)
+                }
                 if instruction.kind == "resume-map", let map = instruction.arguments.first { state.packedMap = map }
                 state.instructionIndex += 1; pending(instruction, kind: "host")
                 return .sourceAction(instruction)

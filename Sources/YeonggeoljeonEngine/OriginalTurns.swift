@@ -205,8 +205,10 @@ extension OriginalBattleSession {
     /// A failed friendly-person lookup tries the source0x400 wildcard. The host
     /// requests each probe after the preceding script finishes so native script
     /// mutations to position and roster are observed by the next lookup.
+    /// Status2/flag4 is a once-only caller-entry gate (MAIN2C04E..2C064),
+    /// not a predicate to repeat after an earlier hook script changed the unit.
     func sourceUnitProbe(_ slot:Int,kind:Int,direction:Int? = nil,sourcePerson:Int? = nil) throws -> OriginalTurnEventProbe? {
-        guard let unit = units[slot],unit.status == 2,unit.scriptFlags&4 == 0 else { return nil }
+        guard let unit = units[slot] else { return nil }
         let person = sourcePerson ?? unit.person
         let arguments:[Int]
         if kind == 6 || kind == 11 {

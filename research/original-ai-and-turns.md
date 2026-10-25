@@ -67,3 +67,24 @@ movement sets bit40. An attack prevents a later move. Cancelling the source
 command menu restores its saved origin and clears bit40. Waiting changes no
 morale. Combat-owned upkeep and morale setters retain their own RNG consumption,
 condition changes, integer widths and class-specific MP effects.
+
+Battle script actions have a separate native action-manager byte, duel context,
+ordered environment backups and marker overlays. Duel setup, clash, motion and
+completion preserve their coordinates, frame selectors and conditional sound RNG;
+they do not invent troop loss or retirement. Native bitmap timing remains
+unrestored. Affiliation transfer retains shared person identity and copies the
+first matching runtime slot into the first inactive slot of the opposite side.
+Side-wide troop effects visit live slots without deduplicating aliased people.
+Environment effects preserve sequential picture remaps, byte wrapping, raw type
+indices and the first matching backup rather than normalizing them downstream.
+
+Generic campaign place, move and remove commands dispatch to different producers
+on battle maps. Place activates a reserved runtime slot from its matching setup
+row, rather than copying the VM actor cache's coordinates. Activation's flip is
+unit flag10; it is independent of the byte8 AI priority. Scripted movement uses
+the native flag4 goal controller and then clears C4. Scripted removal sets native
+status4 while suppressing death/objective effects and clears references only from
+order0 followers. Native person lookup remains the first matching slot, including
+inactive aliases. The VM owns its actor cache and typed operand interpretation;
+these battle adapters own live-unit mutations. Party activation and spawn search
+have one owner in `OriginalParty`.

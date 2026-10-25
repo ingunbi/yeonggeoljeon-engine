@@ -69,7 +69,7 @@ struct OriginalPartySelection:Codable {
 }
 
 struct OriginalPartyCarryover:Codable {
-    var friendlySlots:[OriginalLiveUnit]
+    var liveSlots:[OriginalLiveUnit]
     var roundIndex:Int
     var weatherIndex:UInt8
 }
@@ -192,14 +192,13 @@ enum OriginalParty {
     /// rows can match more than once; fallback consumes the first unsigned
     /// person>=400 row, including an all-FF row whose255 coordinates reject.
     static func deploy(carryover:OriginalPartyCarryover,roster:OriginalRoster,people:OriginalPeople,movement:OriginalMovementProfile,
-                       existingUnits:[Int:OriginalLiveUnit],width:Int,height:Int,terrain:[UInt8]) throws -> OriginalPartyDeployment {
+                       existingUnits:[Int:OriginalLiveUnit]? = nil,width:Int,height:Int,terrain:[UInt8]) throws -> OriginalPartyDeployment {
         guard let header = roster.header,header.preserveFriendlySlots,roster.slots.count == 45,
-              carryover.friendlySlots.count <= 15,Set(carryover.friendlySlots.map(\.slot)).count == carryover.friendlySlots.count,
-              carryover.friendlySlots.allSatisfy({(0..<15).contains($0.slot)}),(0...255).contains(carryover.roundIndex) else {
+              carryover.liveSlots.count <= 45,Set(carryover.liveSlots.map(\.slot)).count == carryover.liveSlots.count,
+              carryover.liveSlots.allSatisfy({(0..<45).contains($0.slot)}),(0...255).contains(carryover.roundIndex) else {
             throw BattleError.invalid("Original preserved party state is incomplete")
         }
-        var units = existingUnits,roster = roster,attempts:[OriginalPartySpawnAttempt] = []
-        for unit in carryover.friendlySlots {units[unit.slot] = unit}
+        var units = existingUnits ?? Dictionary(uniqueKeysWithValues:carryover.liveSlots.map{($0.slot,$0)}),roster = roster,attempts:[OriginalPartySpawnAttempt] = []
         for slot in units.keys {
             units[slot]!.scriptFlags &= ~UInt8(4)
             if slot < 15 {units[slot]!.orderMode = try people.person(units[slot]!.person).sourceFlags&31 == 0 ? 7 : 1}
@@ -239,7 +238,7 @@ extension OriginalBattleSession {
                 units[slot]!.status = 1
             }
         }
-        return OriginalPartyCarryover(friendlySlots:units.values.filter{$0.slot < 15}.sorted{$0.slot < $1.slot},
+        return OriginalPartyCarryover(liveSlots:units.values.sorted{$0.slot < $1.slot},
             roundIndex:turns.roundIndex,weatherIndex:turns.weatherIndex)
     }
 }

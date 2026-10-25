@@ -43,6 +43,7 @@ class ExplorationFormatTests(unittest.TestCase):
         main[DGROUP + 0x136C:DGROUP + 0x136E] = bytes([255, 255])
         cities = bytearray(4 * 0x380)
         cities[:8] = b"Example\0"
+        cities[22] = 123
         chapters, records, dimensions = chapter_mappings(bytes(main), bytes(cities))
         self.assertEqual(dimensions, {0: (8, 4)})
         self.assertEqual(len(chapters), 5)
@@ -51,6 +52,8 @@ class ExplorationFormatTests(unittest.TestCase):
         self.assertFalse(records[0]["worldPositionKnown"])
         self.assertEqual(records[0]["rawWorldX"], 255)
         self.assertEqual(records[0]["name"], "Example")
+        self.assertEqual(records[0]["sourceCityType"],123)
+        self.assertEqual(records[0]["source"]["cityTypeOffset"],22)
 
     def test_extraction_does_not_write_into_original_directory(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -71,6 +74,10 @@ class OriginalExplorationTests(unittest.TestCase):
             self.assertEqual(len(result["peopleBanks"]), 384)
             self.assertEqual(len(result["actorBanks"]["world"]), 6)
             self.assertEqual(len(result["actorBanks"]["town"]), 384)
+            self.assertEqual(set(result["worldPlacementDirections"]), set(range(8)))
+            original_main = (Path(os.environ["ORIGINAL_GAME_DIR"]) / "MAIN.EXE").read_bytes()
+            self.assertEqual(result["worldPlacementDirections"],
+                             list(struct.unpack_from("<8H", original_main, DGROUP + 0x2EE6)))
             self.assertTrue(result["source"]["originalHashesPreserved"])
             self.assertFalse((output / "resources.json").exists())
             for record in result["maps"]:

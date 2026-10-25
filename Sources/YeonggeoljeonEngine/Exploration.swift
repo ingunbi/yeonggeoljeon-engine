@@ -15,11 +15,13 @@ struct OriginalChapterMapping:Codable {
 struct OriginalCity:Codable {
     var chapter:Int; var id:Int; var name:String; var worldX:Int?; var worldY:Int?
     var worldPositionKnown:Bool; var worldMapKey:String; var townMapKey:String
+    var sourceCityType:Int? = nil
 }
 struct OriginalExplorationCatalog:Codable {
     var format:Int; var maps:[OriginalExplorationMap]; var chapterMappings:[OriginalChapterMapping]
     var cities:[OriginalCity]; var actorBanks:[String:[String:ActorResource]]
     var worldNeighbors:[Neighbor]; var worldDirectionFrames:[Int]
+    var worldPlacementDirections:[Int]? = nil
     var source:JSONValue?; var limitations:[String]?
     static func load(from url:URL) throws -> Self {
         let value = try JSONDecoder().decode(Self.self,from:Data(contentsOf:url))
@@ -64,7 +66,12 @@ struct OriginalExplorationCatalog:Codable {
         // Source world movers execute each route nibble twice, at the traced
         // integer halfstep interval. Original DOS frame timing is unobserved.
         resource.stepMicroseconds = world ? 298_462 : nil
-        resource.placementDirections = world ? [2,4,6,0] : nil
+        if world {
+            guard let directions = worldPlacementDirections,directions.count == 8,Set(directions) == Set(0..<8) else {
+                throw EngineError.invalid("Original world placement direction producer is absent")
+            }
+            resource.placementDirections = directions
+        }
         var actors = actorBanks["town"] ?? [:]
         if world {
             actors = [:]

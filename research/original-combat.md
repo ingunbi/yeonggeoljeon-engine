@@ -109,6 +109,49 @@ The final retirement predicate also accepts condition2 with zero morale even
 when troops remain. Its stateful retirement/campaign-hook producer is separate
 from this pure predicate.
 
+## Resumable physical context and recursive aliasing
+
+`OriginalAttackOperation` owns a Codable program counter, completed context
+effects, retirement checks and pending acknowledgement. The synchronous
+`attack` convenience drives this same operation. Each primary/subtype7 context
+uses one mutable producer for presentation draws, damage, target HP/morale and
+attacker EXP. Waiting for a canonical session retirement notice does not repeat
+these quantities or execute the caller's remaining tail.
+
+The original recursive call at `0x322B9` passes the same context pointer to
+`0x31E7A` (`E91A`). That method writes context attacker/target indices at
+`0x31E83..0x31EFD`. No caller restore follows the recursive return. The target
+read at `0x322F2..0x3230D` therefore uses the context's current target, which can
+still be the counter's target. It must not be replaced with a saved logical
+outer target. This corrects the former native loop that preselected two
+different retirement slots.
+
+A retirement script executes synchronously inside its source call stack. The
+operation yields that notice and requires explicit acknowledgement before
+querying the current target again. The next check reads that slot's current
+person, HP, morale and status, rather than retaining an earlier retirement
+decision. The session's status4/cache/notice producer remains the single owner;
+suppression flag4 changes status without creating a campaign wait. Local check
+indices and global retirement sequence numbers remain distinct.
+
+The player caller at `0x30E21..0x30E41` and AI caller at
+`0x3034F..0x30373` turn the attacker horizontally before creating the context;
+equal x preserves the prior sprite-flip bit. The acted flag128 is set at
+`0x30E61` or `0x303A1`, after the entire context call returns. It is not set
+while a nested retirement script is waiting. Repeated finished advances return
+the retained result without repeating damage, RNG, EXP or that completion.
+
+Synthetic tests cover serialization before/after recursive damage and while a
+retirement is pending, source prelude/counter draw ordering, updated-level
+counter defense, post-morale condition suppression, shared person aliases,
+current-target re-query after script mutation, source context index aliasing,
+suppressed notices and one-time completion. Synthetic slot replacement at a
+retirement boundary tests continuation semantics, not campaign reachability.
+These checks do not establish original animation timing or all presentation RNG.
+The examined retirement-script opcode producers do not establish a second
+re-entry into the global E52E context. Unresolved scripted actor-action paths
+remain separate unsupported boundaries rather than a guessed nested context.
+
 ## Phase recovery
 
 The recovery method consumes `random(11)` and `random(5)` before checking source

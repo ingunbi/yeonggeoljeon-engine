@@ -6,7 +6,11 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     let renderer:Renderer
     private var timer:Timer?
     private var errorText:String?
+    private var inputNotice:String?
     private var presenting = false
+    private var battleView:OriginalBattleView?
+    private var battleScroll:NSScrollView?
+    private var partyNote:NSTextField?
     override var isFlipped:Bool { true }
     override var acceptsFirstResponder:Bool { true }
     init(data:DataSet) throws {
@@ -24,9 +28,79 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         do {
             try host.advance(microseconds:16_667)
             needsDisplay = true
+            try synchronizeBattle()
             if let choice = host.choice,choice.kind == "choice-skip" || !choice.options.isEmpty { present(choice) }
             if host.saveRequest != nil { presentSave() }
+            if host.partySelection != nil { presentParty() }
+            if host.retirementPresentation != nil { try presentRetirement() }
+            if host.stage.palette == 3,host.stage.dialogue != nil { try presentBattleDialogue() }
         } catch { errorText = "\(error)";needsDisplay = true }
+    }
+    private func synchronizeBattle() throws {
+        guard host.ending == nil,host.stage.palette == 3,let session = host.battle else { battleScroll?.isHidden = true;return }
+        if battleView?.session !== session {
+            battleScroll?.removeFromSuperview()
+            let board = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:host.data.root),sprites:OriginalBattleSpriteRenderer(root:host.data.root))
+            board.onHook = { [weak self] value in guard let self = self else { return false };return try self.host.beginTurnHook(value) }
+            board.onRetirement = { [weak self] value in
+                guard let self = self else { return false }
+                return try self.host.beginRetirement(value)
+            }
+            board.inputReady = { [weak self] in self?.host.battleInputReady == true }
+            let scroll = NSScrollView(frame:CGRect(x:0,y:0,width:bounds.width,height:bounds.height-40))
+            scroll.autoresizingMask = [.width,.height];scroll.hasVerticalScroller = true;scroll.hasHorizontalScroller = true;scroll.documentView = board
+            addSubview(scroll);battleView = board;battleScroll = scroll
+            window?.makeFirstResponder(board)
+        }
+        battleScroll?.isHidden = false
+        if host.battleInputReady,let board = battleView {
+            if session.turns.stage == .unstarted { try board.start() }
+            else if board.suspended { try board.resumeSourceFlow() }
+            if board.flow.canLeaveBattle { try host.finishBattleLoop() }
+        }
+        battleView?.needsDisplay = true
+    }
+    private func presentBattleDialogue() throws {
+        guard let dialogue = host.stage.dialogue else { return }
+        presenting = true;defer { presenting = false }
+        let alert = NSAlert();alert.messageText = dialogue.speaker;alert.informativeText = dialogue.text
+        alert.addButton(withTitle:"계속")
+        alert.runModal();try host.acknowledge()
+    }
+    private func presentRetirement() throws {
+        guard let text = host.retirementText else { return }
+        presenting = true;defer { presenting = false }
+        let alert = NSAlert();alert.messageText = "원작 퇴장 이벤트";alert.informativeText = text;alert.addButton(withTitle:"계속")
+        alert.runModal();try host.acknowledgeRetirement()
+    }
+    private func presentParty() {
+        guard let selection = host.partySelection else { return }
+        presenting = true;defer { presenting = false;partyNote = nil }
+        let alert = NSAlert();alert.messageText = "출전 부대 선택"
+        let container = NSView(frame:CGRect(x:0,y:0,width:430,height:350))
+        let note = NSTextField(labelWithString:"남은 선택 \(selection.remaining) / 최대 \(selection.capacity)")
+        note.frame = CGRect(x:0,y:325,width:430,height:24);container.addSubview(note);partyNote = note
+        let scroll = NSScrollView(frame:CGRect(x:0,y:0,width:430,height:318));scroll.hasVerticalScroller = true
+        let list = NSView(frame:CGRect(x:0,y:0,width:410,height:max(318,selection.candidates.count*27)))
+        for (index,id) in selection.candidates.enumerated() {
+            guard let person = try? host.people.person(id) else { continue }
+            let button = NSButton(checkboxWithTitle:"\(person.name) · Lv \(person.level)",target:self,action:#selector(partyToggled(_:)))
+            button.tag = id;button.frame = CGRect(x:8,y:list.bounds.height-CGFloat(index+1)*27,width:390,height:25)
+            button.state = selection.selectedSlots.contains(id) ? .on : .off
+            button.isEnabled = !selection.selectedSlots.prefix(selection.fixedCount).contains(id);list.addSubview(button)
+        }
+        scroll.documentView = list;container.addSubview(scroll);alert.accessoryView = container;alert.addButton(withTitle:"출전")
+        if alert.runModal() == .alertFirstButtonReturn {
+            do { try host.confirmParty() } catch { errorText = "\(error)" }
+        }
+    }
+    @objc private func partyToggled(_ sender:NSButton) {
+        do { try host.toggleParty(person:sender.tag) }
+        catch { NSSound.beep();partyNote?.stringValue = "\(error)" }
+        if let selection = host.partySelection {
+            sender.state = selection.selectedSlots.contains(sender.tag) ? .on : .off
+            partyNote?.stringValue = "남은 선택 \(selection.remaining) / 최대 \(selection.capacity)"
+        }
     }
     private func present(_ choice:CampaignVMChoice) {
         presenting = true;defer { presenting = false }
@@ -68,11 +142,12 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let scale = min(bounds.width/640,(bounds.height-40)/400)
         do {
-            let frame = try renderer.render(host.stage)
+            let frame = try host.ending.map { try renderer.renderEnding($0) } ?? renderer.render(host.stage)
             Renderer.image(frame.image,in:CGRect(x:(bounds.width-640*scale)/2,y:0,width:640*scale,height:400*scale),context:context)
         } catch { errorText = "\(error)" }
         let text:String
         if let error = errorText { text = error }
+        else if let notice = inputNotice { text = notice }
         else if let choice = host.choice { text = "원작 선택지 입력 대기 · \(choice.id)" }
         else { text = host.status }
         (text as NSString).draw(in:CGRect(x:12,y:bounds.height-35,width:bounds.width-24,height:32),withAttributes:[.font:NSFont.systemFont(ofSize:12),.foregroundColor:NSColor.lightGray])
@@ -80,22 +155,42 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     override func keyDown(with event:NSEvent) {
         if event.keyCode == 53 { window?.performClose(nil);return }
         if [36,49,76].contains(event.keyCode),!event.isARepeat {
-            do { try host.acknowledge() } catch { errorText = "\(error)" };needsDisplay = true
+            inputNotice = nil
+            do { try host.acknowledge() } catch { recordInputError(error) };needsDisplay = true
         }
     }
+    private func recordInputError(_ error:Error) {
+        if host.failure != nil { errorText = "\(error)" }
+        else { inputNotice = "\(error)" }
+    }
     override func mouseDown(with event:NSEvent) {
+        inputNotice = nil
         do {
-            if host.waiting != nil,host.vm.state.packedMap>>12 != 1 {
+            if host.explorationInputReady,[0,1,2].contains(host.vm.state.packedMap>>12) {
                 let scale = min(bounds.width/640,(bounds.height-40)/400)
                 let p = convert(event.locationInWindow,from:nil)
                 let x = (p.x-(bounds.width-640*scale)/2)/scale,y = p.y/scale,v = host.stage.viewport
+                if host.vm.state.packedMap>>12 == 1 {
+                    let cities = host.exploration.cities.filter{$0.chapter == host.vm.state.chapter && $0.worldPositionKnown}
+                    if let city = cities.first(where:{ city in
+                        guard let cx = city.worldX,let cy = city.worldY else { return false }
+                        return CGRect(x:v[0]+cx*32-host.stage.camera[0],y:v[1]+cy*32-host.stage.camera[1],width:32,height:32).contains(CGPoint(x:x,y:y))
+                    }) { try host.travel(toCity:city.id) }
+                    needsDisplay = true;return
+                }
                 let actors = host.stage.actors.values.sorted{$0.registration > $1.registration}
                 if let actor = actors.first(where:{ actor in
+                    guard actor.person != 0 else { return false }
                     let rect = CGRect(x:v[0]+16*actor.position.x-host.stage.camera[0],y:v[1]+16*actor.position.y+8*(actor.position.x&1)-24-host.stage.camera[1],width:32,height:40)
                     return rect.contains(CGPoint(x:x,y:y))
-                }) { _ = try host.dispatch(OriginalCampaignEvent(kind:3,arguments:[actor.person])) }
+                }) { try host.talk(to:actor.person) }
+                else {
+                    let gx = Int(floor((x-CGFloat(v[0])+CGFloat(host.stage.camera[0]))/16))
+                    let gy = Int(floor((y-CGFloat(v[1])+CGFloat(host.stage.camera[1])-CGFloat(8*(gx&1)))/16))
+                    try host.walk(to:GridPoint(x:gx,y:gy))
+                }
             } else { try host.acknowledge() }
-        } catch { errorText = "\(error)" }
+        } catch { recordInputError(error) }
         needsDisplay = true
     }
 }

@@ -38,3 +38,20 @@ first-match lookup, blocked-goal partial effects, retained coordinates, unused
 word operands, item insertion/duplicates and full-inventory replacement. They
 do not establish original GUI presentation, a completed campaign or live DOS
 execution parity.
+
+Opcode `0x1A` (`0x1C8D2..0x1C8FF`) reads one person word and calls the same
+generic placement helper as `0x0A`, with literal x0, y0 and raw direction0.
+`0x1D2D4..0x1D3D4` updates the owned actor-cache row before dispatching by map
+kind. Settlement factories retain those coordinates; world placement doubles
+them, preserving zero. Their position setters store the supplied bytes rather
+than resolving a default entry or city location. The campaign producer therefore
+normalizes `1A` to a typed `place` command with `sourcePlacementFacing:0`.
+
+For battle maps, `0x335BE..0x3366C` ignores the command's position and direction:
+it finds the first native person slot, requires status1 and activates from that
+person's first setup row. Setup flag4 determines sprite flip. The tail after
+activation does not clear action/condition maskC4. The battle adapter accepts
+the ignored direction's omission, while the common command/host/runtime owner
+interprets the exclusive script-quarter versus raw8 direction fields for cache
+and nonbattle placement. Synthetic producer and native tests cover this path;
+original bytes, images and derived catalogs remain local imports.

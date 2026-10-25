@@ -28,6 +28,9 @@ struct OriginalScriptDuel:Codable,Equatable {
     var positions:[Int16] = [4,16]
     var rows:[Int16] = [3,3]
     var frames:[UInt8] = [0,0]
+    // Source3431C graphics buffers are replaced by death/flee loaders. The
+    // same pose index must retain its current native graphic-load identity.
+    var loadModes:[UInt8] = [0,1]
     var camera:UInt8 = 0
     var active = true
 }
@@ -63,10 +66,13 @@ extension OriginalBattleSession {
             throw BattleError.invalid("Original native map command identity/shape")
         }
         if command.op != "remove" {
-            guard let x = command.x,let y = command.y,let facing = command.facing,
-                  [x,y,facing].allSatisfy({(0...255).contains($0)}) else {
+            guard let x = command.x,let y = command.y,[x,y].allSatisfy({(0...255).contains($0)}) else {
                 throw BattleError.invalid("Original native map position operands are not bytes")
             }
+            // Generic facing/cache interpretation belongs to Command's
+            // genericPlacementDirection consumer in the host/runtime. The
+            // native battle placement/movement never reads that operand; raw8,
+            // script-quarter and omitted facing therefore share this adapter.
         }
         var result = OriginalScriptActionResult(opcode:opcode,sourceReturn:-1,rngBefore:rng.state,rngAfter:rng.state)
         // MAIN3356A returns the first person match, including inactive/reserved
@@ -85,6 +91,7 @@ extension OriginalBattleSession {
             // out-of-map setup coordinate. Preserve that wrapper return value.
             _ = try OriginalParty.activate(unit:&unit,classID:classID,requested:GridPoint(x:row.x,y:row.y),
                 flipped:row.flags&4 == 0,movement:movement,width:width,height:height,terrain:terrain,occupancy:&occupancy)
+            // MAIN33652..3366C has no action/condition-bit clear after8422.
             units[slot] = unit;result.sourceReturn = 1
         case "move":
             let goal = GridPoint(x:command.x!,y:command.y!)
@@ -108,15 +115,9 @@ extension OriginalBattleSession {
             units[slot]!.scriptFlags &= ~UInt8(0xC4);result.sourceReturn = 1
         case "remove":
             units[slot]!.scriptFlags |= 4
-            if prior.status == 2 {
-                units[slot]!.status = 4
-                // MAIN2BABE clears references only from native order0 units.
-                // The temporary flag4 suppresses death/objective/person effects.
-                for other in units.keys.sorted() where units[other]!.orderMode == 0 && units[other]!.preferredTarget == slot {
-                    units[other]!.preferredTarget = nil;units[other]!.orderMode = 1
-                    result.changedSlots.append(other)
-                }
-            }
+            let referenced = units.keys.sorted().filter{units[$0]!.orderMode == 0 && units[$0]!.preferredTarget == slot}
+            _ = retireUnit(slot)
+            if prior.status == 2 { result.changedSlots.append(contentsOf:referenced) }
             units[slot]!.scriptFlags &= ~UInt8(4);result.sourceReturn = 1
         default:throw BattleError.invalid("Original native map command producer")
         }
@@ -153,9 +154,12 @@ private enum OriginalDuelActions {
             try approach(&value,side:side,extra:nil)
             value.frames[side] = UInt8(code < 3 ? (code+2)*2+1 : (code-4)*2+1)
         case 2:value.frames[side] = 9
-        case 3:value.frames[side] = 4
+        case 3:
+            value.loadModes[1] = 2
+            value.frames[side] = 4
         case 4:
             // The source fleeing sequence always moves duel participant1.
+            value.loadModes[1] = 3
             value.positions[1] = Int16(truncatingIfNeeded:Int(value.positions[1])+14)
             value.frames[1] = 1
         case 5:value.frames[side] = 0

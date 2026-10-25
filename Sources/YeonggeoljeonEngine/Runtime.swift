@@ -63,14 +63,28 @@ struct Coordinates: Codable { var grid: [Int]; var columnStaggerY: Int; var acto
 struct Command: Codable {
     var op: String
     var map: Int?; var person: Int?; var x: Int?; var y: Int?; var facing: Int?
+    // Opcode01/0A facing is a quarter-direction byte. Cache/default placement
+    // already owns the generic raw8 field; the two domains are exclusive.
+    var sourcePlacementFacing:Int?
     var speaker: String?; var text: String?; var reason: String?
     var seconds: Double?; var to: String?; var coordinateUnits: String?
     var boundary: String?
     var source: JSONValue?; var textSource: JSONValue?
     init(_ op: String, person: Int? = nil, x: Int? = nil, y: Int? = nil, facing: Int? = nil,
-         map: Int? = nil, text: String? = nil, seconds: Double? = nil) {
+         map: Int? = nil, text: String? = nil, seconds: Double? = nil,sourcePlacementFacing:Int? = nil) {
         self.op = op; self.person = person; self.x = x; self.y = y; self.facing = facing
         self.map = map; self.text = text; self.seconds = seconds
+        self.sourcePlacementFacing = sourcePlacementFacing
+    }
+    func genericPlacementDirection() throws -> Int? {
+        guard facing == nil || sourcePlacementFacing == nil else { throw EngineError.invalid("Original placement mixes script and generic facing domains") }
+        if let raw = sourcePlacementFacing {
+            guard (0..<8).contains(raw) else { throw EngineError.invalid("Invalid original generic placement facing") }
+            return raw
+        }
+        guard let script = facing else { return nil }
+        guard (0..<4).contains(script) else { throw EngineError.invalid("Invalid original script facing") }
+        return script*2
     }
 }
 struct Scene: Codable {
@@ -252,6 +266,32 @@ final class Runtime {
         if mode == "scene" { pump() }
     }
     var busy: Bool { batch != nil || waitRemaining > 0 || fadeRemaining > 0 }
+    func sourceRoute(person:Int,to target:GridPoint) throws -> [RouteNode] {
+        guard hostWaiting,let actor = actors[person] else { throw EngineError.invalid("Original exploration route requires an idle live actor") }
+        return try route(from:actor,to:target)
+    }
+    func setNativeFacing(person:Int,direction:Int) throws {
+        guard hostWaiting,var actor = actors[person],(0..<(currentMap?.geometry == "world" ? 8 : 4)).contains(direction) else {
+            throw EngineError.invalid("Original input facing requires an idle live actor and native direction")
+        }
+        actor.facing = direction;actors[person] = actor
+    }
+    /// Source input planners may trim the final actor-target step. Keep that
+    /// exact source route instead of re-solving toward the adjacent endpoint.
+    func enqueueSourceRoute(person:Int,route:[RouteNode],finalFacing:Int) throws {
+        guard hostWaiting,let actor = actors[person],let first = route.first,
+              first.position == actor.position,(0..<(currentMap?.geometry == "world" ? 8 : 4)).contains(finalFacing),
+              route.count <= 131073 else { throw EngineError.invalid("Original input route has no matching idle actor state") }
+        for node in route { try validateGridPosition(node.position) }
+        let timing = currentMap?.stepMicroseconds.map { Timing(stepMicroseconds:$0,terminalMicroseconds:0) }
+            ?? data.scene.timing ?? Timing(stepMicroseconds:99_488,terminalMicroseconds:99_488)
+        let (travel,overflow) = timing.stepMicroseconds.multipliedReportingOverflow(by:Int64(route.count-1))
+        let (duration,overflow2) = travel.addingReportingOverflow(timing.terminalMicroseconds)
+        guard !overflow && !overflow2 else { throw EngineError.invalid("Original input movement clock overflow") }
+        batch = MoveBatch(motions:[Motion(person:person,route:route,finalFacing:finalFacing,source:nil)],elapsed:0,
+            duration:duration,step:timing.stepMicroseconds,terminal:timing.terminalMicroseconds)
+        updateActors();if duration == 0 { settleBatch() }
+    }
     var currentMap: MapResource? { mapID.flatMap { hostMaps[$0] ?? data.resources.maps[String($0)] } }
     func actorResource(_ person:Int) -> ActorResource? { (hostActors ?? data.resources.actors)[String(person)] }
     func configureMap(_ id:Int,resource:MapResource,actors:[String:ActorResource]?) throws {
@@ -348,9 +388,15 @@ final class Runtime {
         return currentMap?.geometry == "world" ? GridPoint(x:p.x*2,y:p.y*2) : p
     }
     private func facing(_ command: Command, fallback: Int = 0) throws -> Int {
-        let d = command.facing ?? fallback
-        guard (0..<4).contains(d) else { throw EngineError.invalid("Invalid raw facing") }
-        return currentMap?.placementDirections?[d] ?? d
+        guard let raw = try command.genericPlacementDirection() else {
+            guard (0..<(currentMap?.geometry == "world" ? 8 : 4)).contains(fallback) else { throw EngineError.invalid("Invalid retained native facing") }
+            return fallback
+        }
+        if currentMap?.geometry == "world" {
+            guard let directions = currentMap?.placementDirections,directions.count == 8 else { throw EngineError.invalid("Original world placement direction facts are absent") }
+            return directions[raw]
+        }
+        return raw>>1
     }
     private func pump() {
         guard mode == "scene", dialogue == nil, !busy else { return }

@@ -40,6 +40,12 @@ class OriginalMovementTests(unittest.TestCase):
         self.assertEqual(result["strategyMPCosts"],list(main[DATA_BASE+0x44EC:DATA_BASE+0x44EC+36]))
         self.assertEqual(result["strategyTerrainEligibility"],[list(main[DATA_BASE+0x47BC+4*i:DATA_BASE+0x47BC+4*i+4]) for i in range(3)])
         self.assertEqual(result["classMovementTypes"],list(main[DATA_BASE+0x3FFA:DATA_BASE+0x3FFA+19]))
+        environment=result["scriptEnvironment"]
+        self.assertEqual(environment["markerTerrain"],list(main[DATA_BASE+0x4FF4:DATA_BASE+0x4FF4+256]))
+        self.assertEqual(environment["toggleTerrain"],list(main[DATA_BASE+0x4FF6:DATA_BASE+0x4FF6+256]))
+        self.assertEqual(environment["remapFrom"],list(main[DATA_BASE+0x500C:DATA_BASE+0x500C+9]))
+        self.assertEqual(environment["remapTo"],list(main[DATA_BASE+0x5015:DATA_BASE+0x5015+9]))
+        self.assertEqual([len(row) for row in environment["pictureDeltas"]],[128,128])
         for row in range(4):
             self.assertEqual(result["movementCosts"][row][255],main[DATA_BASE+0x400E+20*row+255])
         with tempfile.TemporaryDirectory() as temp:

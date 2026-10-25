@@ -3,7 +3,7 @@
 [![Engine source checks](https://github.com/ingunbi/yeonggeoljeon-engine/actions/workflows/verify.yml/badge.svg)](https://github.com/ingunbi/yeonggeoljeon-engine/actions/workflows/verify.yml)
 
 한국어 DOS/V판 삼국지 영걸전의 원본 자료와 정적 분석을 바탕으로 만드는
-Swift/AppKit 자체 엔진입니다. **0.3.0 연구 개발판**은 원작 전투 계산·AI·책략과
+Swift/AppKit 자체 엔진입니다. **0.4.0 연구 개발판**은 원작 전투 계산·AI·책략과
 캠페인 실행기를 복원하는 단계입니다. **전체 캠페인 완주 기능은 아직 미완성입니다.**
 
 공개 저장소에는 새 엔진 코드·문서·합성 테스트만 들어 있습니다. 원작 실행 파일,
@@ -21,16 +21,19 @@ Swift/AppKit 자체 엔진입니다. **0.3.0 연구 개발판**은 원작 전투
 | 원작 이동·AI | 병과별 이동 비용, 진영 점유·ZOC, 원작 공격 패턴, 명령0~4의 목표·영향권·후보 평가, 물리/책략 비교와 후보별 RNG 소비. 미해석 점유 상태에서는 중단. |
 | 원작 턴 | 날씨, 진영별 회복·상태 회복, AI 우선순위, 이동 취소·대기, 원작 턴 제한 결과와 캠페인 이벤트 프로브. 일반 전멸 판정으로 승리를 만들지 않음. |
 | 캠페인 실행기 | 5장·18멤버·225블록·2,144레코드의 단계 그룹·반복·조건·플래그·선택·전환. 시나리오가 실행한 배치 프로그램을 사용하며 기록 목록의 다음 행으로 진행하지 않음. |
-| 장면 실행 | 동일 런타임에서 인물 배치·동시 이동·퇴장·대사·원작 삽화·초상화·세계지도 이동을 유지. 원작 삽화 창의 수명과 좌표를 복원. 원작 글꼴·창 테두리·전환 시간은 미복원. |
+| 장면 실행 | 동일 런타임에서 인물 배치·동시 이동·퇴장·대사·원작 삽화·초상화를 유지. 도시/인물 입력은 경로·인접 판정·상호 방향 확인 뒤 원작 이벤트를 호출. 원작 창 테두리·전환 시간은 미복원. |
+| 전투와 캠페인 연결 | 출전 선택·보존 부대의 재배치·승리 보너스·다음 전투 연결. 퇴장 이벤트 동안 물리 공격/반격/범위 책략을 중단·재개하며 공유 문맥과 새 대상 상태를 재조회. |
+| 전투 그림·엔딩 | 원본 전투 인물 및 일부 일기토 프레임을 로컬 해독. 엔딩은 원작 첫33프레임/43초까지만 복원되어 이후 경계를 명시. |
 
-전투 창은 원작 지도 위에 진단용 유닛 표식을 그립니다. 원작 전투 인물 그림과
-연출 전체를 재현하는 화면은 아닙니다. `--battle`은 복원 규칙을 사용하는 독립
-검증 상태이며, 초기 플래그를 비운 배치가 실제 캠페인에서 도달 가능한지는 별도 문제입니다.
-이전 `experimentalV1`은 `--experimental-rules`를 지정한 연구 모드에만 남아 있습니다.
+전투 창은 원작 지도·부대 그림에 자체 조작 UI와 진단 정보를 표시합니다.
+공격·일기토·엔딩의 화면 전체와 원작 타이밍을 재현했다는 뜻은 아닙니다.
+`--battle`은 독립 검증 상태입니다. 초기 플래그를 비운 배치의 캠페인 도달 여부는
+실제 시나리오 입력 재생과 별도로 확인해야 합니다. 이전 `experimentalV1`은
+`--experimental-rules`를 명시한 연구 모드에만 남아 있습니다.
 
-실행기는 아직 미복원인 파티 선택·상호작용·일부 전투 스크립트·진행 저장·엔딩
-경계에서 멈춥니다. 퇴장 이벤트가 선택지를 열었을 때의 중단·재개도 더 필요합니다.
-기록 해독이나 개별 전투 검사를 전체 캠페인 완주로 보고하지 않습니다.
+상점·일부 도시의 내장 전이·진행 저장의 이어하기·엔딩 후속 장면 등에는 미복원
+경계가 남아 있습니다. 이 경계는 생략해 진행하지 않습니다. 전체 캠페인 완주를
+지원하거나 검증했다고 보고하지 않습니다.
 
 ## macOS 빌드
 
@@ -49,10 +52,12 @@ python3 tools/build.py --game /path/to/original/GAME --verify --install
 제공된 판본의 `OPGRP.R3` 타이틀 영역은 손상되어 있습니다. 정상 자료를 보유했다면
 `--title-opgrp /path/to/intact/OPGRP.R3`를 추가할 수 있습니다. 자동 다운로드는 하지 않습니다.
 
-기본 화면은 검증된 첫 궁전 장면입니다. 메뉴 **연구 → 원작 캠페인 실행 연구**는
-시나리오 첫 단계에서 시작하는 실행기를 엽니다. **원작 전투 복원 검증**에서는
+기본 화면은 시나리오 첫 단계에서 시작하는 원작 캠페인 실행기입니다.
+메뉴 **연구 → 원작 캠페인 실행 연구**에서 새 실행 창을 열 수 있습니다. **원작 전투 복원 검증**에서는
 독립 전투를 엽니다. 클릭으로 선택·이동·공격, Space로 대기, Return으로 턴 종료,
-Backspace로 이동을 취소합니다. 캠페인의 현재 미지원 경계는 화면에 표시합니다.
+Backspace로 이동을 취소합니다. S 또는 책략 버튼으로 사용 가능한 명령을 고르고
+대상을 지정합니다. 이름 표가 연결되지 않은 책략은 ID와 MP 비용으로 표시합니다.
+캠페인의 현재 미지원 경계는 화면에 표시합니다.
 
 ## 소스 검사와 로컬 진단
 
@@ -71,6 +76,7 @@ python3 tools/source_release.py
 swift run yeonggeoljeon-engine --data /path/to/GameData --battle 0:0:5
 swift run yeonggeoljeon-engine --data /path/to/GameData --verify-battle --battle 0:0:5 --output /path/to/new-battle-report
 swift run yeonggeoljeon-engine --data /path/to/GameData --verify-vm --output /path/to/new-campaign-report
+swift run yeonggeoljeon-engine --data /path/to/GameData --verify-play --inputs /path/to/local-inputs.json --output /path/to/new-play-report
 swift run yeonggeoljeon-engine --data /path/to/GameData --list-campaign
 ```
 
@@ -78,10 +84,12 @@ swift run yeonggeoljeon-engine --data /path/to/GameData --list-campaign
 생성하며 원작 AI로 주장하지 않습니다. 캠페인 진단은 대사·이동을 진행하다 원작
 이벤트·선택·미지원 경계에서 멈추며 승리나 다음 장면을 주입하지 않습니다.
 
-현재 실제 원본 검사에서는 첫 독립 전투가 7라운드·28교전 후 원작 목표 이벤트8에
-도달했습니다. 이는 패배 경로이며 캠페인 승리 검증이 아닙니다. 캠페인 실행기는
-첫7레코드를 진행해 원작 인물 대화 이벤트를 기다렸습니다. 원본69개 파일의
-해시 불변과 원작 없이 실행하는 합성 검사를 별도로 확인했습니다.
+현재 실제 원본 검사에서는 명시한 플레이어 입력41개로 첫 전투의 원작 일기토·승리
+이벤트를 거쳐 다음 장면으로 복귀하고, 두 번째 전투의 수동 조작 단계까지
+이어졌습니다. 배치·승리·플래그를 검사기가 주입하지 않습니다. 입력 경로와 화면·대사
+보고서는 로컬에만 보관합니다. 플레이어 입력을 고른 검사 정책은 원작 AI가 아니며,
+적과 비수동 아군의 행동은 복원한 엔진이 처리합니다. 원본69개 파일의 해시 불변과
+원작 없이 실행하는 합성 검사를 별도로 확인했습니다.
 
 수학·정수 폭·난수 호출·형식의 정적 복원 및 새 코드 검사는 DOS 원본 런타임과의
 비교와 다릅니다. 고정 진단 seed1, 전체 난수 시간축, 실제 OS 입력, 원작 화면의
@@ -95,6 +103,9 @@ swift run yeonggeoljeon-engine --data /path/to/GameData --list-campaign
 - [원작 이동·AI·턴](research/original-ai-and-turns.md) · [전투 스크립트](research/original-script-battle.md)
 - [캠페인 실행기](research/original-campaign-vm.md) · [도시·세계지도](research/exploration-formats.md)
 - [TF-DCE 그림 형식](research/tf-dce-format.md) · [그래픽 팔레트](research/graphics-formats.md)
+- [부대·출전 선택](research/original-party.md) · [퇴장 실행](research/original-retirement.md)
+- [시나리오 지도 반환](research/original-map-return.md) · [입력 재생 검사](research/original-play-verification.md)
+- [전투 그림](research/original-battle-sprites.md) · [엔딩](research/original-ending.md)
 - [기여 안내](CONTRIBUTING.md)
 
 이전 공개 엔진 소스를 본 이력이 있으므로 격리된 클린룸 개발이라고 주장하지

@@ -78,12 +78,14 @@ def chapter_mappings(main: bytes, cities: bytes) -> tuple[list[dict], list[dict]
             except UnicodeDecodeError as error:
                 raise ResourceError("city name is not valid source Korean text") from error
             city_records.append({"chapter": chapter, "id": city, "name": name, "cityGroup": group,
+                                 "sourceCityType":constant[22],
                                  "worldX": x if placed else None, "worldY": y if placed else None,
                                  "worldPositionKnown": placed, "rawWorldX": x, "rawWorldY": y,
                                  "worldMapKey": f"world:{index}",
                                  "townMapKey": f"town:{town}", "townMapIndex": town,
                                  "source": {"resource": "BBKSDAT1.R3", "constantOffset": constant_at,
                                             "constantBytes": constant.hex(), "stateOffset": state_at,
+                                            "cityTypeOffset":constant_at+22,
                                             "stateBytes": cities[state_at:state_at + 5].hex(),
                                             "worldPosition": {"resource": "MAIN.EXE", "offset": xy_at, "length": 2},
                                             "townMapSelector": {"resource": "MAIN.EXE", "offset": town_at, "length": 1},
@@ -241,6 +243,9 @@ def prepare(game: Path, output: Path) -> dict:
     dx = struct.unpack("<8h", span(main, DGROUP + 0x2F1C, 16, "world x neighbors"))
     dy = struct.unpack("<8h", span(main, DGROUP + 0x2F2C, 16, "world y neighbors"))
     frames = list(span(main, DGROUP + 0x2FA6, 8, "world direction base patterns"))
+    placement_directions = list(struct.unpack("<8H",span(main,DGROUP+0x2EE6,16,"world placement direction conversion")))
+    if set(placement_directions) != set(range(8)):
+        raise ResourceError("world placement direction conversion is not the examined eight-direction domain")
     if any(abs(x) > 1 or abs(y) > 1 or (x == 0 and y == 0) for x, y in zip(dx, dy)) or any(frame > 6 for frame in frames):
         raise ResourceError("world direction tables exceed the examined geometry")
     if inventory(game) != before:
@@ -249,11 +254,13 @@ def prepare(game: Path, output: Path) -> dict:
               "actorBanks": actors, "peopleBanks": people_banks,
               "worldNeighbors": [{"dx": x, "dy": y, "direction": index} for index, (x, y) in enumerate(zip(dx, dy))],
               "worldDirectionFrames": frames,
+              "worldPlacementDirections":placement_directions,
               "source": {"inputs": [item[1] for item in selected.values()], "originalHashesPreserved": True,
                          "originalProgramsExecuted": False,
                          "palettes": [{"resource": "MAIN.EXE", "offset": 0x38DF0 + slot * 48, "bytes": 48, "slot": slot} for slot in (0, 1)],
                          "directionTables": {"resource": "MAIN.EXE", "xOffset": DGROUP + 0x2F1C,
-                                             "yOffset": DGROUP + 0x2F2C, "frameOffset": DGROUP + 0x2FA6}},
+                                             "yOffset": DGROUP + 0x2F2C, "frameOffset": DGROUP + 0x2FA6,
+                                             "placementOffset":DGROUP+0x2EE6,"placementWords":8}},
               "limitations": ["Static source extraction does not establish native exploration or full campaign parity.",
                               "Default town/world palettes are exported; grayscale and dynamic palette changes remain unsupported.",
                               "World role references are original initial values; subsequent role changes belong to native person state.",

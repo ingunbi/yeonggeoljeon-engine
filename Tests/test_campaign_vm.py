@@ -14,7 +14,7 @@ from scenario_format import Instruction, instructions
 
 def lengths():
     result = bytearray(62)
-    for opcode, count in [(0, 2), (0x0F, 1), (0x14, 2), (0x15, 2), (0x1D, 2), (0x25, 2), (0x38, 1)]:
+    for opcode, count in [(0, 2), (0x0F, 1), (0x14, 2), (0x15, 2), (0x1A, 2), (0x1D, 2), (0x25, 2), (0x38, 1)]:
         result[opcode] = count
     return bytes(result)
 
@@ -47,6 +47,31 @@ class CampaignVMFormatTests(unittest.TestCase):
         self.assertEqual(effect["kind"], "flag")
         self.assertEqual(effect["arguments"], [7, 1])
         self.assertEqual(effect["source"]["offset"], 0)
+
+    def test_opcode20_is_city_flag_operation_not_item_inventory(self):
+        effect = compile_synthetic(bytes([0x20, 0x82, 2, 4, 0xFF]))[0]
+        self.assertEqual(effect["kind"], "city-availability")
+        self.assertEqual(effect["arguments"], [1, 2, 4])
+
+    def test_opcode1d_produces_return_context_without_placing_player(self):
+        effect = compile_synthetic(bytes([0x1D, 4, 0x10, 7, 9, 0xFF]))[0]
+        self.assertEqual(effect["kind"], "return-context")
+        self.assertEqual(effect["arguments"], [0x1004, 7, 9])
+        self.assertEqual(effect["commands"], [])
+
+    def test_opcode1a_normalizes_literal_zero_placement_without_inventing_an_entry_lookup(self):
+        effects = compile_synthetic(bytes([0x1A, 0x34, 1, 0xFF]))
+        effect = effects[0]
+        self.assertEqual(effect["kind"], "commands")
+        self.assertEqual(effect["arguments"], [0x134])
+        self.assertEqual(len(effect["commands"]), 1)
+        command = effect["commands"][0]
+        self.assertEqual({key: command[key] for key in ("op", "person", "x", "y", "sourcePlacementFacing")},
+                         {"op": "place", "person": 0x134, "x": 0, "y": 0, "sourcePlacementFacing": 0})
+        self.assertNotIn("facing", command)
+        self.assertEqual(command["source"], effect["source"])
+        self.assertEqual(effects[1]["offset"], 3)
+        self.assertEqual(effects[1]["kind"], "end-record")
 
     def test_resume_mode_comes_from_immediate_source_lookahead_and_exit_status_is_explicit(self):
         table = bytearray(lengths())

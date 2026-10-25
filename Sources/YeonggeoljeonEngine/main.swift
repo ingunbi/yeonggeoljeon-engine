@@ -196,7 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         func bcd(_ n:Int?) -> UInt8 { let v = n ?? 0;return UInt8(((v/10)<<4)|(v%10)) }
         let rng = OriginalRNG.clockSeed(dayByte:bcd(c.day),hourByte:bcd(c.hour),minuteByte:bcd(c.minute),secondByte:bcd(c.second))
         let source = try OriginalGameData(root:data.root),session = try source.isolatedBattle(id,rng:rng)
-        let board = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:data.root))
+        let board = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:data.root),sprites:OriginalBattleSpriteRenderer(root:data.root))
         let scroll = NSScrollView(frame:CGRect(x:0,y:0,width:1100,height:740))
         scroll.hasVerticalScroller = true;scroll.hasHorizontalScroller = true;scroll.documentView = board
         try board.start();show(scroll,title:"원작 전투 복원 · \(id)")
@@ -239,8 +239,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 }
 
 struct EngineOptions {
-    var data:URL?, output:URL?, battleID:String?, campaignRecord:String?
-    var verify = false, tests = false, verifyBattle = false, verifyCampaign = false,verifyVM = false
+    var data:URL?, output:URL?, inputs:URL?, battleID:String?, campaignRecord:String?
+    var verify = false, tests = false, verifyBattle = false, verifyCampaign = false,verifyVM = false,verifyPlay = false
     var listBattles = false, listCampaign = false, experimental = false
 }
 func arguments() throws -> EngineOptions {
@@ -255,20 +255,22 @@ func arguments() throws -> EngineOptions {
         case "--verify-battle": options.verifyBattle = true
         case "--verify-campaign": options.verifyCampaign = true
         case "--verify-vm":options.verifyVM = true
+        case "--verify-play":options.verifyPlay = true
         case "--list-battles": options.listBattles = true
         case "--list-campaign": options.listCampaign = true
         case "--experimental-rules": options.experimental = true
-        case "--data", "--output", "--battle", "--campaign-record":
+        case "--data", "--output", "--inputs", "--battle", "--campaign-record":
             let key = args[i]; i += 1
             guard i < args.count else { throw EngineError.invalid("Missing value for \(key)") }
             if key == "--data" { options.data = URL(fileURLWithPath:args[i],isDirectory:true) }
             else if key == "--output" { options.output = URL(fileURLWithPath:args[i],isDirectory:true) }
+            else if key == "--inputs" { options.inputs = URL(fileURLWithPath:args[i]) }
             else if key == "--battle" { options.battleID = args[i] }
             else { options.campaignRecord = args[i] }
         default: throw EngineError.invalid("Unknown argument: \(args[i])")
         }; i += 1
     }
-    let verificationModes = [options.verify,options.verifyBattle,options.verifyCampaign,options.verifyVM].filter{$0}.count
+    let verificationModes = [options.verify,options.verifyBattle,options.verifyCampaign,options.verifyVM,options.verifyPlay].filter{$0}.count
     guard verificationModes <= 1, !(options.battleID != nil && options.campaignRecord != nil),
           !(options.listBattles && options.listCampaign),
           !(options.tests && (verificationModes > 0 || options.battleID != nil || options.campaignRecord != nil || options.listBattles || options.listCampaign)) else {
@@ -277,12 +279,13 @@ func arguments() throws -> EngineOptions {
     let listing = options.listBattles || options.listCampaign
     guard !(listing && (verificationModes > 0 || options.battleID != nil || options.campaignRecord != nil || options.experimental || options.output != nil)),
           !(options.verify && options.battleID != nil),
-          !((options.verifyCampaign || options.verifyVM) && (options.battleID != nil || options.campaignRecord != nil)),
+          !((options.verifyCampaign || options.verifyVM || options.verifyPlay) && (options.battleID != nil || options.campaignRecord != nil)),
           !(options.experimental && options.battleID == nil),
           !(options.output != nil && verificationModes == 0),
           !(options.tests && (options.data != nil || options.output != nil || options.experimental)) else {
         throw EngineError.invalid("Arguments select incompatible engine actions")
     }
+    guard options.verifyPlay == (options.inputs != nil) else { throw EngineError.invalid("--verify-play requires --inputs PATH, and inputs belong only to that verification") }
     if options.verifyBattle && options.battleID == nil { throw EngineError.invalid("--verify-battle requires an explicit --battle ID") }
     return options
 }
@@ -293,7 +296,10 @@ do {
         try selfTests();try battleSelfTests();try campaignSelfTests();try campaignVMSelfTests()
         try originalCombatSelfTests();try originalAISelfTests();try originalTurnSelfTests();try originalIntegrationSelfTests()
         try originalScriptBattleSelfTests();try originalStrategyAISelfTests();try originalStrategiesSelfTests()
-        try originalScriptActionSelfTests();exit(0)
+        try originalScriptActionSelfTests();try originalPartySelfTests();try originalPartyIntegrationSelfTests()
+        try originalEndingSelfTests();try originalBattleSpriteSelfTests();try originalRetirementSelfTests()
+        try originalStrategyFlowInputSelfTests();try originalPlayInputSelfTests();try originalExplorationInputSelfTests()
+        try originalAttackOperationSelfTests();exit(0)
     }
     guard let root = options.data ?? Bundle.main.resourceURL?.appendingPathComponent("GameData",isDirectory:true) else {
         throw EngineError.invalid("Use --data PATH or an app bundle containing Resources/GameData")
@@ -314,7 +320,7 @@ do {
         data = try data.replacingScene(CampaignSession(catalog:catalog).selectRecord(id:id))
     }
     let app = NSApplication.shared
-    if options.verify || options.verifyBattle || options.verifyCampaign || options.verifyVM {
+    if options.verify || options.verifyBattle || options.verifyCampaign || options.verifyVM || options.verifyPlay {
         guard let output = options.output else { throw EngineError.invalid("Verification requires --output PATH") }
         app.setActivationPolicy(.prohibited)
         if options.verifyBattle, let id = options.battleID {
@@ -322,7 +328,8 @@ do {
             guard let battle = catalog.battles.first(where:{$0.id == id}) else { throw EngineError.invalid("Unknown source battle ID: \(id)") }
             if options.experimental { try verifyBattle(battle,policy:.experimentalV1,input:data.root,output:output) }
             else { try verifyOriginalBattle(id,data:data,output:output) }
-        } else if options.verifyVM { try verifyOriginalCampaignHost(data,output:output) }
+        } else if options.verifyPlay,let inputs = options.inputs { try verifyOriginalPlay(data,inputs:inputs,output:output) }
+        else if options.verifyVM { try verifyOriginalCampaignHost(data,output:output) }
         else if options.verifyCampaign {
             let catalog = try CampaignCatalog.load(from:data.root.appendingPathComponent("campaign.json"))
             try verifyCampaign(catalog,data:data,output:output)
@@ -337,13 +344,15 @@ do {
             app.activate(ignoringOtherApps:true)
             app.run(); withExtendedLifetime(delegate) {}; exit(0)
         }
-        let view = try GameView(data:data)
+        let view:NSView
+        if options.campaignRecord != nil {
+            let preview = try GameView(data:data);preview.runtime.acknowledge();view = preview
+        } else { view = try OriginalCampaignView(data:data) }
         let window = NSWindow(contentRect:view.frame,styleMask:[.titled,.closable,.miniaturizable,.resizable],backing:.buffered,defer:false)
         window.isReleasedWhenClosed = false; window.delegate = delegate
-        window.title = "영걸전 연구 엔진"; window.contentView = view; window.contentMinSize = NSSize(width:640,height:400)
+        window.title = "영걸전 자체 엔진 · 원작 캠페인"; window.contentView = view; window.contentMinSize = NSSize(width:640,height:440)
         window.center(); delegate.window = window
         window.makeKeyAndOrderFront(nil); window.makeFirstResponder(view); app.activate(ignoringOtherApps:true)
-        if options.campaignRecord != nil { view.runtime.acknowledge() }
         app.run(); withExtendedLifetime(delegate) {}
     }
 } catch {

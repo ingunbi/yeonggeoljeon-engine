@@ -83,6 +83,14 @@ final class OriginalPeople {
         try body(&person)
         values[id] = person
     }
+    /// Shared-person savepoint. A failed native operation must not leave a
+    /// partial source class/level/HP mutation visible to another live unit.
+    /// Nested transactions retain their own value-semantic savepoints.
+    func transaction<T>(_ body:() throws -> T) rethrows -> T {
+        let before = values
+        do { return try body() }
+        catch { values = before;throw error }
+    }
     func stats(_ id:Int,morale:Int) throws -> OriginalPersonStats {
         let value = try person(id)
         return OriginalPersonStats(classID:value.classID,level:value.level,troops:value.rawTroops,

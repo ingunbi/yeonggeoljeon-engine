@@ -195,18 +195,20 @@ def compile_instructions(script: bytes, frames: list, text: bytes, bounds: tuple
             effect["kind"], effect["arguments"] = "commands", [u16(data)]
             command("remove", person=u16(data))
         elif opcode == 0x1A:
-            # The wrapper supplies zero x/y/facing to the context-dependent
-            # placement helper. Preserve its distinct operation until that
-            # helper's default-position semantics are implemented by the host.
-            effect["kind"], effect["arguments"] = "actor-default-placement", [u16(data)]
+            # MAIN1C8D2..1C8FF calls the same generic placement helper as0A
+            # with literal coordinates0 and raw8-direction0. Native settlement
+            # and world factories keep zero coordinates; battle placement uses
+            # its setup-row owner. There is no default-entry lookup here.
+            effect["kind"], effect["arguments"] = "commands", [u16(data)]
+            command("place", person=u16(data), x=0, y=0, sourcePlacementFacing=0)
         elif opcode == 0x1E:
             effect["kind"] = "clear-actor-cache"
         elif opcode == 0x1D:
-            effect["kind"], effect["arguments"] = "world-position", [u16(data), data[2], data[3]]
+            effect["kind"], effect["arguments"] = "return-context", [u16(data), data[2], data[3]]
         elif opcode == 0x1F:
             effect["kind"] = "town-interaction"
         elif opcode == 0x20:
-            effect["kind"], effect["arguments"] = "item-availability", [int(bool(data[0] & 0x80)), *data[1:]]
+            effect["kind"], effect["arguments"] = "city-availability", [int(bool(data[0] & 0x80)), *data[1:]]
         elif opcode == 0x21:
             positive_count = data[1]
             negative_at = 2 + positive_count

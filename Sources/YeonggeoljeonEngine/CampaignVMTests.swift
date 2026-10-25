@@ -102,7 +102,8 @@ func campaignVMSelfTests() throws {
     let restoredState = try JSONDecoder().decode(OriginalCampaignState.self, from: JSONEncoder().encode(mapVM.snapshot()))
     let restored = try CampaignVM(program: program([mapRecord]), state: restoredState)
     guard case .loadMap = try restored.advance() else { throw EngineError.invalid("Pending map was lost on restore") }
-    try restored.resumeMap(packedMap: 0x2000)
+    try restored.enterMapContext(packedMap: 0x2000)
+    try restored.acknowledgeMapSelection(packedMap: 0x2000)
     try check(restored.state.pending == nil, "exact map completion resumes source cursor")
 
     let unknown = record(0, once, [instruction(3, 0, "unsupported", [1]), end])
@@ -139,13 +140,101 @@ func campaignVMSelfTests() throws {
               terminalVM.state.completedRecords == 0, "FF panel close preserves the source phase until the next advance")
     let destination = record(0, predicateGroup, kind: 4, words: [255, 2, 0], [end])
     var arrivalState = OriginalCampaignState()
-    arrivalState.packedMap = 0x1000; arrivalState.city = 1; arrivalState.currentCity = 1
+    arrivalState.packedMap = 0x1000; arrivalState.city = 1; arrivalState.currentCity = 1; arrivalState.gameCity = 1
+    arrivalState.returnContext = OriginalCampaignReturnContext(packedMap: 4096, x: 9, y: 10)
     let arrivalVM = try CampaignVM(program: program([destination]), state: arrivalState)
-    let arrived = try arrivalVM.commitWorldArrival(city: 2, x: 3, y: 4)
+    let arrived = try arrivalVM.commitWorldArrival(city: 2)
     try check(arrived == OriginalCampaignEvent(kind: 4, arguments: [255, 2]), "world arrival produces the exact source event arguments")
-    try check(arrivalVM.state.currentCity == 2 && arrivalVM.state.city == 1 &&
-              arrivalVM.state.playerPosition == OriginalCampaignPlayerPosition(packedMap: 4096, x: 3, y: 4),
-              "world arrival preserves separate global/player and script-map context ownership")
+    try check(arrivalVM.state.currentCity == 2 && arrivalVM.state.gameCity == 2 && arrivalVM.state.city == 1 &&
+              arrivalVM.state.returnContext == OriginalCampaignReturnContext(packedMap: 4096, x: 9, y: 10),
+              "world arrival changes city while preserving saved7A76 and script-map context ownership")
     try check(try arrivalVM.dispatch(event: arrived), "world arrival selects its matching source phase record")
+    var exit = instruction(0x29, 0, "battle-exit", [3]); exit.interpreterStatus = 7
+    let exitRecord = record(0, once, [exit, instruction(20, 1, "flag", [9, 0]), end])
+    let exitProgram = program([exitRecord])
+    let exitVM = try CampaignVM(program: exitProgram, supportedHostOpcodes: [0x29])
+    guard case .sourceAction = try exitVM.start() else { throw EngineError.invalid("Source exit was not sent to host") }
+    try exitVM.resumeHostAction(opcode: 0x29, sourceOffset: 0)
+    guard case .interpreterReturn(let returned) = try exitVM.advance() else {
+        throw EngineError.invalid("Source interpreter return was swallowed")
+    }
+    try check(returned.status == 7 && returned.opcode == 0x29 && exitVM.state.instructionIndex == 1,
+              "source29 returns before consuming the next instruction")
+    try check(try !exitVM.state.flag(9) && exitVM.state.completedRecords == 0,
+              "interpreter return does not imply phase or flag effects")
+    let exitRestored = try CampaignVM(program: exitProgram, state: exitVM.snapshot(), supportedHostOpcodes: [0x29])
+    guard case .interpreterReturn(let restoredReturn) = try exitRestored.advance() else {
+        throw EngineError.invalid("Restored source return resumed an abandoned record")
+    }
+    try check(restoredReturn == returned, "source return is stable across checkpoint restore")
+    let boundedFirst = record(0, once, kind: 7, [instruction(0x13, 0, "next-phase"), end])
+    let boundedNext = record(0, once, block: 1, [instruction(20, 0, "flag", [25, 0]), end])
+    let boundedVM = try CampaignVM(program: program([boundedFirst, boundedNext]))
+    try check(try boundedVM.queryInvocation(event: .init(kind: 7, arguments: [])), "bounded source query selects objective record")
+    guard case .invocationReturn(let nextPhaseReturn) = try boundedVM.advance() else {
+        throw EngineError.invalid("Bounded phase transition did not return")
+    }
+    try check(nextPhaseReturn.status == 5 && !boundedVM.state.flag(25), "source13 returns before the next automatic lookup")
+    _ = try boundedVM.takeInvocationReturn()
+    try check(try !boundedVM.queryInvocation(event: .init(kind: 12, arguments: [4])), "next event query does not auto-run an unrelated phase")
+    try check(try boundedVM.queryInvocation(event: .automatic), "calling dispatcher explicitly queries automatic phase")
+    guard case .invocationReturn(let boundedEnd) = try boundedVM.advance() else { throw EngineError.invalid("Bounded FF did not return") }
+    try check(boundedEnd.status == 1 && boundedVM.state.flag(25), "bounded FF preserves raw normal return")
+    let motionRecord = record(0, once, kind: 7, [instruction(1, 0, "commands", commands: [Command("move", person: 4, x: 2, y: 3)]),
+        instruction(20, 1, "flag", [26, 0]), end])
+    let motionVM = try CampaignVM(program: program([motionRecord]))
+    _ = try motionVM.queryInvocation(event: .init(kind: 7, arguments: []))
+    guard case .commands = try motionVM.advance() else { throw EngineError.invalid("Source motion was not queued") }
+    guard case .invocationReturn(let movedReturn) = try motionVM.advance() else { throw EngineError.invalid("Source motion did not return") }
+    try check(movedReturn.status == 5 && !motionVM.state.flag(26), "movement boundary retains unexecuted following instruction")
+    _ = try motionVM.takeInvocationReturn()
+    try check(try motionVM.queryInvocation(event: .init(kind: 12, arguments: [99])), "busy source wrapper resumes without a new predicate")
+    _ = try motionVM.advance()
+    try check(try motionVM.state.flag(26), "motion continuation executes its original cursor")
+    try vm.setCityFlags(chapter: 0, flags: [3,2,0,129])
+    try vm.applyCityAvailability(clearFirst: true, cities: [1,3])
+    try check(vm.state.cityFlags == [3,2,1,128], "city operation preserves other bits and does not mutate inventory")
+    var cacheState = OriginalCampaignState()
+    cacheState.currentCity = 2; cacheState.gameCity = 2; cacheState.city = 2; cacheState.packedMap = 0x2000
+    cacheState.actorCacheCity = 2; cacheState.actorCacheMap = 0x2000; cacheState.actorCacheDirty = true
+    cacheState.music = 7; cacheState.currentMusic = 7
+    cacheState.actorCache[0] = .init(person: 0, x: 3, y: 4, flags: 0, sourceFacing: 0)
+    cacheState.actorCache[1] = .init(person: 4, x: 5, y: 6, flags: 0, sourceFacing: 2)
+    let cacheVM = try CampaignVM(program: program([first]), state: cacheState)
+    try cacheVM.setSourceMusic(selection: 4)
+    let replay = try cacheVM.replaySettlementCache()
+    try check(replay.restored && replay.actors.map(\.person) == [4] && replay.music == 7,
+              "settlement reentry restores only nonplayer identities and cached script music")
+    try check(cacheVM.state.currentMusic == 4 && !cacheVM.state.actorCacheDirty,
+              "device music stinger does not replace saved script music; replay clears dirty first")
+    try check(try !cacheVM.replaySettlementCache().restored, "clean settlement cache does not replay twice")
+    cacheState.actorCacheMap = 0x2001
+    let mismatched = try CampaignVM(program: program([first]), state: cacheState)
+    let noReplay = try mismatched.replaySettlementCache()
+    try check(!noReplay.restored && mismatched.state.actorCacheDirty && mismatched.state.actorCache[1].person == 4,
+              "mismatched map marks cache dirty without clearing or changing its owner")
+    let deferredRecord = record(0, once, [instruction(9, 0, "load-map", [0x1004]), end])
+    let deferred = try CampaignVM(program: program([deferredRecord]), state: cacheState)
+    _ = try deferred.queryInvocation(event: .automatic)
+    guard case .loadMap = try deferred.advance() else { throw EngineError.invalid("Deferred map selection was not produced") }
+    try deferred.acknowledgeMapSelection(packedMap: 0x1004)
+    try check(deferred.state.city == 2 && deferred.state.currentCity == 2,
+              "source09 acknowledgement does not perform the deferred game selector or map context entry")
+    let selectedReturn = try deferred.takeInvocationReturn()
+    try check(selectedReturn.status == 2 && deferred.state.currentRecordID == deferredRecord.id,
+              "source09 returns two with its continuation intact")
+    try deferred.selectScriptMap(packedMap: 0x1004);try deferred.enterMapContext(packedMap: 0x1004)
+    try check(deferred.state.city == 4 && deferred.state.gameCity == 4 && deferred.state.currentCity == 2,
+              "outer selector changes Game+4 before context entry without changing player current city")
+    try deferred.selectScriptMap(packedMap: 0x2001)
+    try check(deferred.state.gameCity == 4 && deferred.state.currentCity == 2,
+              "palace selector preserves both city fields")
+    let savedContext = record(0, once, [instruction(0x1D, 0, "return-context", [0x1004,7,9]),
+        instruction(5, 1, "commands", commands: [Command("show")]), end])
+    let contextVM = try CampaignVM(program: program([savedContext]))
+    _ = try contextVM.start()
+    try check(contextVM.state.returnContext == OriginalCampaignReturnContext(packedMap: 0x1004, x: 7, y: 9) &&
+              contextVM.state.packedMap == 0 && contextVM.state.currentCity == nil,
+              "source1D writes return context without changing active map/current city")
     print("Original campaign VM self-tests passed: \(count)")
 }

@@ -153,7 +153,7 @@ def main() -> None:
         run(sys.executable, "tools/prepare_scene.py", "--game-dir", str(game), "--output", str(data))
         run(sys.executable, "tools/prepare_campaign.py", "--game-dir", str(game), "--output", str(data))
         run(sys.executable, "tools/prepare_battles.py", "--game-dir", str(game), "--output", str(data))
-        for exporter in ("prepare_people.py", "prepare_combat.py", "prepare_movement.py", "prepare_rosters.py", "prepare_world.py", "prepare_story.py"):
+        for exporter in ("prepare_people.py", "prepare_combat.py", "prepare_movement.py", "prepare_rosters.py", "prepare_world.py", "prepare_story.py", "prepare_party.py", "prepare_ending.py", "prepare_battle_sprites.py", "prepare_retirement.py"):
             run(sys.executable, "tools/" + exporter, "--game-dir", str(game), "--output", str(data))
         run(sys.executable, "tools/link_resources.py", "--data", str(data))
         sources = sorted((ROOT / "Sources" / "YeonggeoljeonEngine").glob("*.swift"))
@@ -174,7 +174,7 @@ def main() -> None:
                 "CFBundleName": "Yeonggeoljeon Engine",
                 "CFBundleDisplayName": "영걸전 자체 엔진 연구",
                 "CFBundleExecutable": EXECUTABLE, "CFBundlePackageType": "APPL",
-                "CFBundleShortVersionString": "0.3.0", "CFBundleVersion": "3",
+                "CFBundleShortVersionString": "0.4.0", "CFBundleVersion": "4",
                 "LSMinimumSystemVersion": "13.0", "NSHighResolutionCapable": True,
                 "NSPrincipalClass": "NSApplication"}
         (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps(info))
@@ -196,7 +196,7 @@ def main() -> None:
             run("/usr/bin/ditto", "-c", "-k", "--keepParent", str(target), str(archive))
             shutil.rmtree(target)
         app.rename(target)
-        evidence = {"format": 1, "kind": "native-build", "version": "0.3.0", "nativeSourceSha256": native_sources,
+        evidence = {"format": 1, "kind": "native-build", "version": "0.4.0", "nativeSourceSha256": native_sources,
                     "sourceInput": str(source), "sourceFiles": before,
                     "optionalTitleInput": str(external_title) if external_title else None,
                     "optionalTitleSha256": title_before, "originalFilesPreserved": True,

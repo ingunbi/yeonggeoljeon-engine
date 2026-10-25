@@ -182,15 +182,19 @@ def planar_image(data: bytes, width: int, height: int, *, interleaved: bool = Fa
     return IndexedImage(width, height, bytes(output))
 
 
-def png_bytes(image: IndexedImage, colors: list[tuple[int, int, int]], *, transparent_zero: bool = False) -> bytes:
+def png_bytes(image: IndexedImage, colors: list[tuple[int, int, int]], *, transparent_zero: bool = False,
+              opacity: bytes | None = None) -> bytes:
     if len(colors) != 16 or any(len(c) != 3 or any(not 0 <= v <= 255 for v in c) for c in colors):
         raise ResourceError("PNG requires sixteen RGB colors")
+    if opacity is not None and (len(opacity) != len(image.pixels) or any(v not in (0, 255) for v in opacity)):
+        raise ResourceError("PNG opacity must contain one binary alpha per indexed pixel")
     rgba = [bytes((*rgb, 0 if transparent_zero and i == 0 else 255)) for i, rgb in enumerate(colors)]
     rows = bytearray()
     for y in range(image.height):
         rows.append(0)  # PNG filter None, with explicit RGBA rather than a hidden palette.
-        for color in image.pixels[y * image.width:(y + 1) * image.width]:
-            rows.extend(rgba[color])
+        for x, color in enumerate(image.pixels[y * image.width:(y + 1) * image.width]):
+            pixel = rgba[color]
+            rows.extend(pixel if opacity is None else pixel[:3] + bytes([opacity[y * image.width + x]]))
     def chunk(kind: bytes, payload: bytes) -> bytes:
         return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
     header = struct.pack(">IIBBBBB", image.width, image.height, 8, 6, 0, 0, 0)

@@ -48,7 +48,7 @@ func originalTurnSelfTests() throws {
     var roster = OriginalRoster();roster.header = header;roster.slots[0] = friendly;roster.slots[1] = enemy
     var tiles = Array(repeating:0,count:35);tiles[5] = 14
     let definition = BattleDefinition(id:"synthetic-turn",width:7,height:5,tiles:tiles)
-    let session = try OriginalBattleSession(definition:definition,roster:roster,people:people,combat:tables,movement:movement,rng:OriginalRNG(state:7))
+    let session = try OriginalBattleSession(definition:definition,roster:&roster,people:people,combat:tables,movement:movement,rng:OriginalRNG(state:7))
     session.units[16] = OriginalLiveUnit(slot:16,person:2,position:GridPoint(x:6,y:2),status:2,orderMode:3,mp:0)
     session.units[17] = OriginalLiveUnit(slot:17,person:3,position:GridPoint(x:5,y:0),status:2,orderMode:3,mp:0)
     try people.update(2) {$0.rawTroops = 40}
@@ -80,6 +80,13 @@ func originalTurnSelfTests() throws {
     let coordinate = try session.sourceUnitProbe(0,kind:6)
     try check(coordinate?.primary == OriginalCampaignEvent(kind:6,arguments:[0,1,1]) &&
         coordinate?.friendlyFallback == OriginalCampaignEvent(kind:6,arguments:[0x400,1,1]),"unit coordinate probe preserves source friendly wildcard fallback")
+    let beforeProbe = session.units[0]!
+    session.units[0]!.status = 4;session.units[0]!.scriptFlags |= 4
+    session.units[0]!.person = 12;session.units[0]!.position = GridPoint(x:3,y:2)
+    let resumedProbe = try session.sourceUnitProbe(0,kind:11,sourcePerson:wait.sourcePerson)
+    try check(resumedProbe?.primary == OriginalCampaignEvent(kind:11,arguments:[0,3,2]),
+        "hook entry identity stays frozen while later probes observe current coordinates after script retirement/flag4")
+    session.units[0] = beforeProbe
     try session.finishManualFriendly()
     try check(session.turns.pendingAI.isEmpty,"manual mode7 is excluded from friendly automatic actions")
     for _ in 15..<45 { _ = try expected.next(bound:11);_ = try expected.next(bound:5) }

@@ -28,7 +28,7 @@ func originalScriptBattleSelfTests() throws {
     roster.slots[1] = OriginalPlacement(ordinal:1,person:1,x:3,y:1,selector:0,flag:0,flags:1,rawMode:0,parameter:0,classID:0,level:1)
     var terrain = Array(repeating:0,count:25);terrain[4] = 1
     let session = try OriginalBattleSession(definition:BattleDefinition(id:"synthetic-script",width:5,height:5,tiles:terrain),
-        roster:roster,people:people,combat:combat,movement:movement,rng:OriginalRNG(state:1))
+        roster:&roster,people:people,combat:combat,movement:movement,rng:OriginalRNG(state:1))
     session.units[2] = OriginalLiveUnit(slot:2,person:2,position:GridPoint(x:4,y:4),status:4,mp:0)
     session.units[16] = OriginalLiveUnit(slot:16,person:1,position:GridPoint(x:4,y:3),status:1,mp:0)
     session.units[0]!.scriptFlags |= 4;session.units[0]!.goal = GridPoint(x:0,y:0)

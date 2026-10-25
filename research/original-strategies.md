@@ -34,10 +34,31 @@ weather rejection, cancelled selection and rejected full single-target healing
 skip completion costs. The source checks MP before effects; the final byte
 subtraction retains wrapping if an intervening campaign effect changed MP.
 
-`afterRetirement` allows the campaign owner to execute queued source hooks before
-the next splash target. Without that callback, verification covers battle-state
-execution only. This is distinct from full original campaign/retirement-script
-interleaving or original GUI/animation parity.
+`OriginalStrategyOperation` owns a Codable program counter, retained target
+slots/center, completed target effects and pending retirement acknowledgement.
+`begin` performs availability and target/confirmation checks without gameplay
+RNG or effect mutation. Each `advance` commits one target context and yields its
+effect. A newly enqueued session retirement notice blocks the next advance until
+the host explicitly acknowledges that exact notice after source dialogue or
+choices finish. Repeated advances while waiting return the same notice without
+repeating damage, RNG, context EXP or final MP/flat-EXP/acted costs.
+
+The pending operation's local effect index and the session's global retirement
+sequence are separate identities. A status retirement under suppression flag4
+does not create a campaign notice. Notice person identity records the original
+producer's evidence; later effects still read current runtime-slot state.
+Damage splash captures its center after the primary retirement script resumes;
+condition splash retains the center captured before the primary context. Each
+splash neighbor reads current terrain/occupancy, whereas area healing resumes
+the retained slot list. Host script RNG consumption and byte-MP changes remain
+visible to subsequent effects and final completion.
+
+The existing synchronous `castStrategy` convenience drives this same operation
+to completion and acknowledges retirement after its callback returns. An async
+host instead retains the operation across waits. A repeated finished advance
+returns the retained result without charging completion twice. These source
+dispatch semantics do not establish original GUI/animation parity or a full
+campaign playthrough.
 
 The AI estimates (`0x30824..0x30C57`) are implemented independently in
 `OriginalStrategyAI.swift`. They include utility thresholds/bonuses absent from
@@ -49,6 +70,7 @@ preserved rather than replaced with a corrected or generic AI rule.
 
 Public tests use synthetic profiles and persons. They verify actual command
 branching, primary/splash order, callback interleaving, shared writeback, action
-costs, full-target rejection, caster inclusion, source RNG ordering and the
-separation between AI utility and actual effects. No original tables, assets,
+costs, full-target rejection, caster inclusion, source RNG ordering, serialized
+retirement suspension/resumption and the separation between AI utility and
+actual effects. No original tables, assets,
 text or disassembly are required by those tests or included in public sources.

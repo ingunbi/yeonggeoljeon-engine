@@ -31,7 +31,7 @@ private func scriptActionFixture() throws -> OriginalBattleSession {
     for (index,value) in zip([44,45,54,55],[0xC5,0xC6,254,0]) { pictures[index] = value }
     let definition = BattleDefinition(id:"synthetic-actions",width:5,height:5,tiles:terrain,
         pictureColumns:10,pictureRows:10,pictureTiles:pictures)
-    return try OriginalBattleSession(definition:definition,roster:roster,people:people,combat:tables,movement:profile,rng:OriginalRNG(state:4))
+    return try OriginalBattleSession(definition:definition,roster:&roster,people:people,combat:tables,movement:profile,rng:OriginalRNG(state:4))
 }
 
 func originalScriptActionSelfTests() throws {
@@ -46,6 +46,7 @@ func originalScriptActionSelfTests() throws {
     let begin = try duel.applyScriptAction(opcode:0x10,arguments:[0,5])
     try check(begin.sourceReturn == 1 && duel.scriptActions.duel?.people == [0,5],"duel setup resolves source person identities")
     try check(duel.scriptActions.duel?.positions == [4,16],"source duel entry ends at native presentation coordinates")
+    try check(duel.scriptActions.duel?.loadModes == [0,1],"source duel setup initializes both graphic load identities")
     let clash = try duel.applyScriptAction(opcode:0x34,arguments:[])
     try check(clash.rngBounds == [3,3,2,2,3,3,3,3,3,3,2,2,3,3,2,2] && duel.rng.state == 3806687796,
         "duel presentation consumes source random poses and conditional sound draws")
@@ -53,6 +54,7 @@ func originalScriptActionSelfTests() throws {
         "duel presentation does not invent physical damage or retirement")
     for motion in [0,1,0,10] { _ = try duel.applyScriptAction(opcode:0x35,arguments:[0,motion]) }
     _ = try duel.applyScriptAction(opcode:0x35,arguments:[5,3])
+    try check(duel.scriptActions.duel?.loadModes == [0,2],"death motion replaces the second graphic buffer before its final pose")
     _ = try duel.applyScriptAction(opcode:0x35,arguments:[0,9])
     _ = try duel.applyScriptAction(opcode:0x35,arguments:[0,2])
     try check(duel.scriptActions.duel?.positions == [10,1] && duel.scriptActions.duel?.camera == 14,
@@ -61,6 +63,15 @@ func originalScriptActionSelfTests() throws {
     let finish = try duel.applyScriptAction(opcode:0x33,arguments:[])
     try check(duel.scriptActions.duel?.active == false && finish.presentationOnly && !finish.presentationTimingRestored,
         "duel completion records missing native render timing without inventing game effects")
+    let flight = try scriptActionFixture()
+    _ = try flight.applyScriptAction(opcode:0x10,arguments:[0,5])
+    _ = try flight.applyScriptAction(opcode:0x35,arguments:[0,4])
+    try check(flight.scriptActions.duel?.loadModes == [0,3] && flight.scriptActions.duel?.positions == [4,30],
+        "flee motion reloads and moves participant1 even when the named person is participant0")
+    let restoredDuel = try JSONDecoder().decode(OriginalScriptDuel.self,from:JSONEncoder().encode(flight.scriptActions.duel!))
+    try check(restoredDuel.loadModes == [0,3],"saved native duel state retains its reloaded graphic identity")
+    _ = try flight.applyScriptAction(opcode:0x10,arguments:[5,0])
+    try check(flight.scriptActions.duel?.loadModes == [0,1],"fresh source duel context resets graphic load identities")
     let side = try scriptActionFixture()
     side.units[0]!.morale = 59;side.units[1]!.morale = 80
     var expected = side.rng;_ = try expected.next(bound:5)
@@ -125,5 +136,14 @@ func originalScriptActionSelfTests() throws {
     let firstAlias = try map.applyScriptMapCommand(Command("move",person:0,x:4,y:4,facing:3),roster:setup)
     try check(firstAlias.movementPath == nil && map.units[0]!.goal == GridPoint(x:4,y:4) && map.units[1]!.position == GridPoint(x:1,y:2),
         "native person lookup preserves the first reserved alias rather than selecting an active alias")
+    let generic = try scriptActionFixture()
+    generic.units[15]!.status = 1;generic.units[15]!.scriptFlags = 0xE4
+    let genericPlace = try generic.applyScriptMapCommand(Command("place",person:5,x:0,y:0,sourcePlacementFacing:0),roster:setup)
+    try check(genericPlace.sourceReturn == 1 && generic.units[15]!.position == GridPoint(x:2,y:3) && generic.units[15]!.scriptFlags == 0xF4,
+        "opcode1A raw8 zero uses setup placement/flip and preserves action-condition flags after activation")
+    generic.units[15]!.status = 1;generic.units[15]!.scriptFlags = 0xE4
+    let omitted = try generic.applyScriptMapCommand(Command("place",person:5,x:0,y:0),roster:setup)
+    try check(omitted.sourceReturn == 1 && generic.units[15]!.position == GridPoint(x:2,y:3) && generic.units[15]!.scriptFlags == 0xF4 && omitted.rngBefore == omitted.rngAfter,
+        "native battle placement never invents a facing read or extra random effect for an omitted ignored operand")
     print("Original scripted action self-tests passed: \(checks)")
 }

@@ -86,6 +86,28 @@ final class Renderer {
         let bytes = memory.assumingMemoryBound(to:UInt8.self)
         return (0..<(image.width*image.height)).reduce(0) { $0 + (bytes[$1*4+3] > 0 ? 1 : 0) }
     }
+    func renderEnding(_ session:OriginalEndingSession) throws -> RenderedFrame {
+        guard let context = CGContext(data:nil,width:640,height:400,bitsPerComponent:8,bytesPerRow:640*4,
+            space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue) else { throw EngineError.invalid("Ending canvas allocation failed") }
+        context.setFillColor(CGColor(gray:0,alpha:1));context.fill(CGRect(x:0,y:0,width:640,height:400))
+        context.translateBy(x:0,y:400);context.scaleBy(x:1,y:-1);context.interpolationQuality = .none
+        let frame:OriginalEndingFrame
+        switch session.output {
+        case .frame(let value):frame = value
+        case .unsupported:frame = session.program.frames.last!
+        }
+        let assets = Dictionary(uniqueKeysWithValues:session.catalog.assets.map{($0.id,$0)})
+        func draw(_ id:String,x:Int,y:Int) throws {
+            guard let asset = assets[id] else { throw EngineError.invalid("Ending frame references an unavailable source asset") }
+            let picture = try load(asset.image)
+            guard picture.width == asset.width,picture.height == asset.height else { throw EngineError.invalid("Ending bitmap/metadata dimensions disagree") }
+            Self.image(picture,in:CGRect(x:x,y:y,width:asset.width,height:asset.height),context:context)
+        }
+        for layer in frame.layers { try draw(layer.asset,x:layer.x,y:layer.y) }
+        if let caption = frame.caption { try draw(caption.asset,x:caption.x,y:caption.y) }
+        guard let picture = context.makeImage() else { throw EngineError.invalid("Ending canvas image failed") }
+        return RenderedFrame(image:picture,checksum:"",actors:[])
+    }
     func render(_ runtime: Runtime, evidence: Bool = false) throws -> RenderedFrame {
         guard let context = CGContext(data:nil,width:640,height:400,bitsPerComponent:8,bytesPerRow:640*4,
                                       space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue),
