@@ -82,6 +82,8 @@ final class OriginalCampaignHost {
     private(set) var failure:CampaignVMFailure?
     private(set) var interpreterReturn:OriginalCampaignInterpreterReturn?
     private(set) var frameworkReturn:OriginalFrameworkReturn?
+    /// Native notice for a source effect that is reached but not drawn.
+    private(set) var notice:String?
     private(set) var ending:OriginalEndingSession?
     private var endingMicroseconds:Int64 = 0
     private var carryover:OriginalPartyCarryover?
@@ -214,6 +216,7 @@ final class OriginalCampaignHost {
         try walk(to:GridPoint(x:index%w,y:index/w))
     }
     private func beginExplorationInput(_ plan:OriginalExplorationInputPlan) throws {
+        notice = nil
         guard let last = plan.route.last else { throw EngineError.invalid("Original exploration input has an empty source route") }
         try stage.enqueueSourceRoute(person:plan.playerPerson,route:plan.route,finalFacing:last.facing)
         explorationInput = plan
@@ -230,6 +233,12 @@ final class OriginalCampaignHost {
             controllerAfterInvocationFacings = arrival.afterInvocationFacings
             let matched = try dispatch(event,currentPerson:plan.targetPerson)
             if !matched { try restoreInputFacings() }
+            // MAIN26A8D..26A9C: an unmatched talk makes the person say the
+            // DS:397A line. Its bytes are not cp949 text and use the original
+            // font's own codes, so the engine states the omission instead.
+            if !matched,plan.kind == .townActor {
+                notice = "원작 기본 대사(MAIN DS:397A)는 원작 글꼴 코드라 아직 표시하지 않습니다."
+            }
             if let builtin = arrival.builtin {
                 // MAIN252B8..2535A: room and world fallbacks require query
                 // FFFF (or the unreached 4); marker7D also accepts zero.

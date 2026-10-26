@@ -266,7 +266,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         } catch { errorText = "\(error)" }
         let text:String
         if let error = errorText { text = error }
-        else if let notice = inputNotice { text = notice }
+        else if let notice = inputNotice ?? host.notice { text = notice }
         else if let choice = host.choice { text = "원작 선택지 입력 대기 · \(choice.id)" }
         else { text = host.status }
         (text as NSString).draw(in:CGRect(x:12,y:bounds.height-35,width:bounds.width-24,height:32),withAttributes:[.font:NSFont.systemFont(ofSize:12),.foregroundColor:NSColor.lightGray])

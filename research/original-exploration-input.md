@@ -114,7 +114,10 @@ removes its final step through the shared route producer. It does not find a
 new path to a separately chosen adjacent cell. The planner preserves that
 prefix. At arrival, `25B60..25C04` requires adjacency (or the same tile), and
 `26A48..26A85` faces both participants toward one another before kind3's
-person probe. The special person374 shop/controller branch remains explicit.
+person probe. When that probe finds no record, `26A8D..26A9C` makes the
+person say the DS:`397A` line. Those bytes are not cp949 text and use the
+original font's own codes, so the native host shows an explicit notice instead
+of inventing a rendering. The special person374 shop/controller branch remains explicit.
 `26AA1..26AAD` restores the target's saved facing after that invocation while
 the player keeps the new facing; the arrival returns that separate after-call
 effect. An actor that moved away cannot receive the stale interaction event.
