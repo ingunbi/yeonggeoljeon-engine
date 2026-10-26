@@ -236,7 +236,7 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
     func capture(index: Int?, input: OriginalPlayInput?, ticks: Int) throws {
         let name = "\(observations.count)-\(input?.kind.rawValue ?? "initial").png"
         if host.stage.palette == 3, let view = battleView { try view.capture(to: output.appendingPathComponent(name)) }
-        else { try renderer.render(host.stage, evidence: true).writePNG(output.appendingPathComponent(name)) }
+        else { try renderer.render(host.stage, evidence: true, screen: host.fieldScreenState()).writePNG(output.appendingPathComponent(name)) }
         let state = host.vm.state
         observations.append(.init(inputIndex: index, input: input, simulatedTicks: ticks, status: host.status,
             packedMap: state.packedMap, currentCity: state.currentCity, recordID: state.currentRecordID,

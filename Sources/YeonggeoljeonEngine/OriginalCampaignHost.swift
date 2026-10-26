@@ -645,6 +645,20 @@ final class OriginalCampaignHost {
     /// Original MAIN framework texts, exported locally by the campaign producer.
     var retryPromptText:String? { vm.program.framework?.retryPrompt?.text }
     var framework:OriginalFrameworkPrompts? { vm.program.framework }
+    /// MAIN's field screen (CF5:C456) outside battle, title and ending: the
+    /// PACKGRP frame plus portrait0, player money, person0 level and the name
+    /// of player field10's city. Nil when the local data lacks screen facts.
+    func fieldScreenState() -> OriginalFieldScreenState? {
+        guard let screens = story.screens,ending == nil,stage.mode != "title",stage.palette != 3,
+              let frame = story.frameImage(screens.field.frameAsset,palette:stage.palette) else { return nil }
+        let portraitID = screens.field.hud["portrait"]?.portraitID ?? 0
+        let state = vm.state
+        let territory = state.currentCity.flatMap { city in
+            exploration.cities.first(where:{$0.chapter == state.chapter && $0.id == city})?.name
+        }
+        return OriginalFieldScreenState(frameImage:frame,portraitImage:story.portraitImage(portraitID,palette:stage.palette),
+            hud:screens.field.hud,money:money,level:try? people.person(0).level,territory:territory)
+    }
     /// The title stage precedes MAIN's menu; any source state begins only
     /// after the new-game choice (or a native resume).
     var hasStarted:Bool { started }

@@ -24,7 +24,7 @@ func verifyOriginalCampaignHost(_ data:DataSet,output:URL) throws {
     func capture(_ event:String) throws {
         guard captured.insert(event).inserted else { return }
         let name = "\(frames.count)-\(event).png"
-        try renderer.render(host.stage,evidence:true).writePNG(output.appendingPathComponent(name));frames.append(name)
+        try renderer.render(host.stage,evidence:true,screen:host.fieldScreenState()).writePNG(output.appendingPathComponent(name));frames.append(name)
     }
     try capture("title");try host.acknowledge()
     var steps = 0

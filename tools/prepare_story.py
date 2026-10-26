@@ -35,6 +35,53 @@ def picture_directory(data: bytes, count: int) -> list[tuple[int, int]]:
     return result
 
 
+# Field screen routine CF5:C456 (MAIN 1FDA6..1FE2C) and battle screen routine
+# (1FE2E..1FE69). HUD writers share one shape: clear rect, then text cursor.
+FIELD_FRAME_CALL, BATTLE_FRAME_CALL, PORTRAIT_CALL = 0x1FDB1, 0x1FE39, 0x1FE15
+HUD_FIELDS = {"caption": 0x1FC5E, "money": 0x1FCB2, "level": 0x1FCEA, "territory": 0x1FD24}
+HUD_SOURCES = {"caption": "MAIN.EXE:0x1FC5E..0x1FC8E; DS:DB4C via CF5:C340 (source0B)",
+               "money": "MAIN.EXE:0x1FCB2..0x1FCE8; player7A80+0 via CF5:220A",
+               "level": "MAIN.EXE:0x1FCEA..0x1FD22; person0 (DS:7A94) +21 via CF5:7572",
+               "territory": "MAIN.EXE:0x1FD24..0x1FD62; city player7A80+10 via CF5:210E/2118"}
+HUD_FORMATS = {"caption": "%s", "money": "%5u", "level": "%4u", "territory": "%6s"}
+
+
+def hud_field(main: bytes, at: int) -> dict:
+    """push h; push color; mov ax,x; mov dx,y; mov bx,w; call CF5:52EE;
+    push column; push y; push 6390; call CF5:091E (MAIN text cursor)."""
+    code = main[at:at + 31]
+    if len(code) != 31 or (code[0], code[2], code[4], code[7], code[10], code[13], code[18], code[20], code[23]) != \
+            (0x6A, 0x6A, 0xB8, 0xBA, 0xBB, 0x9A, 0x6A, 0x68, 0x68) or \
+            struct.unpack_from("<HH", code, 14) != (0x52EE, 0x0CF5) or struct.unpack_from("<H", code, 24)[0] != 0x6390 or \
+            code[26] != 0x9A or struct.unpack_from("<HH", code, 27) != (0x091E, 0x0CF5):
+        raise ResourceError(f"MAIN HUD writer at {at:#x} does not match the examined profile")
+    x, y, width = (struct.unpack_from("<H", code, offset)[0] for offset in (5, 8, 11))
+    column, text_y = code[19], struct.unpack_from("<H", code, 21)[0]
+    if text_y != y:
+        raise ResourceError(f"MAIN HUD writer at {at:#x} prints outside its cleared row")
+    return {"rect": [x, y, width, code[1]], "clearColor": code[3], "text": [column * 8, text_y]}
+
+
+def screen_facts(main: bytes) -> dict:
+    if main[FIELD_FRAME_CALL:FIELD_FRAME_CALL + 7] != bytes([0x33, 0xC0, 0x9A]) + struct.pack("<HH", 0x520E, 0x0CF5) or \
+            main[BATTLE_FRAME_CALL:BATTLE_FRAME_CALL + 8] != bytes([0xB8, 1, 0, 0x9A]) + struct.pack("<HH", 0x520E, 0x0CF5):
+        raise ResourceError("MAIN screen frame selectors do not match the examined profile")
+    portrait = main[PORTRAIT_CALL:PORTRAIT_CALL + 13]
+    if (portrait[0], portrait[3], portrait[6], portrait[7], portrait[8]) != (0xB8, 0xBA, 0x33, 0xDB, 0x9A) or \
+            struct.unpack_from("<HH", portrait, 9) != (0x51B2, 0x0CF5):
+        raise ResourceError("MAIN field portrait call does not match the examined profile")
+    hud = {}
+    for name, at in HUD_FIELDS.items():
+        hud[name] = {**hud_field(main, at), "format": HUD_FORMATS[name], "textColor": 7, "source": HUD_SOURCES[name]}
+    hud["portrait"] = {"rect": [struct.unpack_from("<H", portrait, 1)[0], struct.unpack_from("<H", portrait, 4)[0], 64, 80],
+                       "portraitID": 0, "source": "MAIN.EXE:0x1FE15..0x1FE21, CF5:51B2 (0x18B02..)"}
+    return {"field": {"frameAsset": 0, "viewport": [16, 16, 512, 320], "hud": hud,
+                      "source": "MAIN.EXE:0x1FDA6..0x1FE2C (CF5:C456), PACKGRP member0 via CF5:520E"},
+            "battle": {"frameAsset": 1, "source": "MAIN.EXE:0x1FE2E..0x1FE69, PACKGRP member1 via CF5:520E"},
+            "limitations": ["Layout coordinates come from MAIN immediates; the original font and text colors are not restored.",
+                            "Window frames for dialogue and selectors are drawn by other primitives and are not part of these facts."]}
+
+
 def prepare(game: Path, output: Path) -> dict:
     game, output = game.resolve(), output.resolve()
     if output == game or game in output.parents:
@@ -100,7 +147,9 @@ def prepare(game: Path, output: Path) -> dict:
                                    "closeStart": 0x207C8, "interpreterLifetime": "0x1C1CF..0x1C1DF"}})
     if inventory(game) != before:
         raise ResourceError("original files changed during story extraction")
+    screens = screen_facts(main)
     result = {"format": 1, "assets": assets, "portraitAssets": portraits, "choiceButtons": buttons, "layouts": layouts,
+              "screens": screens,
               "source": {"inputs": [item[1] for item in selected.values()], "originalHashesPreserved": True,
                          "originalProgramsExecuted": False, "loader": "MAIN.EXE:0x18B5E..0x18C21",
                          "portraitLoader": "MAIN.EXE:0x18A3C..0x18B00",

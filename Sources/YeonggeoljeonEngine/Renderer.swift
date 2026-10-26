@@ -16,6 +16,17 @@ struct RenderedFrame {
     }
 }
 
+/// Values MAIN's field screen shows (CF5:C456), resolved by the campaign host.
+/// Layout comes from `OriginalScreenFacts`; only the text font is native.
+struct OriginalFieldScreenState {
+    var frameImage:String
+    var portraitImage:String?
+    var hud:[String:OriginalHUDField]
+    var money:Int?
+    var level:Int?
+    var territory:String?
+}
+
 final class Renderer {
     let data: DataSet
     private var images: [String: CGImage] = [:]
@@ -43,10 +54,10 @@ final class Renderer {
             }
         }
         for value in data.resources.portraits?.values ?? [:].values {
-            if let path = portraitPath(value) { _ = try load(path) }
+            if let path = Self.portraitPath(value) { _ = try load(path) }
         }
     }
-    private func portraitPath(_ value: JSONValue,palette:Int = 2) -> String? {
+    static func portraitPath(_ value: JSONValue,palette:Int = 2) -> String? {
         switch value {
         case .string(let value): return value
         case .object(let object):
@@ -108,7 +119,17 @@ final class Renderer {
         guard let picture = context.makeImage() else { throw EngineError.invalid("Ending canvas image failed") }
         return RenderedFrame(image:picture,checksum:"",actors:[])
     }
-    func render(_ runtime: Runtime, evidence: Bool = false) throws -> RenderedFrame {
+    /// Right-aligns a MAIN printf field ("%5u", "%6s") in its 8-pixel cells.
+    private func hudText(_ value:String,_ field:OriginalHUDField?) {
+        guard let field = field,let origin = field.text,origin.count == 2 else { return }
+        let digits = field.format.flatMap { Int($0.filter(\.isNumber)) } ?? max(1,(field.rect[0]+field.rect[2]-origin[0])/8)
+        let width = CGFloat(max(digits*8,8))
+        let paragraph = NSMutableParagraphStyle();paragraph.alignment = field.format?.hasSuffix("s") == true && digits == 0 ? .left : .right
+        let font = NSFont.monospacedDigitSystemFont(ofSize:13,weight:.regular)
+        (value as NSString).draw(in:CGRect(x:CGFloat(origin[0]),y:CGFloat(origin[1])-1,width:width,height:18),
+            withAttributes:[.font:font,.foregroundColor:NSColor(white:0.92,alpha:1),.paragraphStyle:paragraph])
+    }
+    func render(_ runtime: Runtime, evidence: Bool = false, screen: OriginalFieldScreenState? = nil) throws -> RenderedFrame {
         guard let context = CGContext(data:nil,width:640,height:400,bitsPerComponent:8,bytesPerRow:640*4,
                                       space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue),
               let pixels = context.data else { throw EngineError.invalid("Canvas allocation failed") }
@@ -116,6 +137,15 @@ final class Renderer {
         context.translateBy(x:0,y:400); context.scaleBy(x:1,y:-1)
         context.setShouldAntialias(false); context.interpolationQuality = .none
         var proof: [ActorRenderProof] = []
+        // MAIN1FDA6..1FDE4 blits PACKGRP member0 at (0,0); the map then
+        // occupies its black viewport (16,16,512,320).
+        let framed = runtime.mode != "title" ? screen : nil
+        if let screen = framed {
+            let frame = try load(screen.frameImage)
+            guard frame.width == 640,frame.height == 400 else { throw EngineError.invalid("Original screen frame is not640x400") }
+            Self.image(frame,in:CGRect(x:0,y:0,width:640,height:400),context:context)
+            context.setFillColor(CGColor(gray:0,alpha:1));context.fill(CGRect(x:16,y:16,width:512,height:320))
+        }
         if runtime.mode == "title", let path = data.resources.title {
             Self.image(try load(path),in:CGRect(x:0,y:0,width:640,height:400),context:context)
         } else if runtime.visible, let map = runtime.currentMap {
@@ -171,19 +201,47 @@ final class Renderer {
             Self.image(picture,in:CGRect(x:160,y:40,width:224,height:144),context:context)
         }
         NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = graphics
-        if runtime.mode != "title", let caption = runtime.caption {
+        if let screen = framed {
+            // CF5:51B2 draws portrait0 at its HUD slot; source0B captions go to
+            // DS:DB4C, printed in the lower-left box (MAIN1FC5E..1FC8E).
+            if let path = screen.portraitImage,let rect = screen.hud["portrait"]?.rect {
+                let portrait = try load(path)
+                Self.image(portrait,in:CGRect(x:rect[0],y:rect[1],width:min(portrait.width,rect[2]),height:min(portrait.height,rect[3])),context:context)
+            }
+            if let value = screen.money { hudText(String(value),screen.hud["money"]) }
+            if let value = screen.level { hudText(String(value),screen.hud["level"]) }
+            if let value = screen.territory { hudText(value,screen.hud["territory"]) }
+            if let caption = runtime.caption,let box = screen.hud["caption"],let origin = box.text {
+                text(caption,rect:CGRect(x:origin[0],y:origin[1]-1,width:box.rect[0]+box.rect[2]-origin[0],height:18),size:13)
+            }
+        } else if runtime.mode != "title", let caption = runtime.caption {
             text(caption,rect:CGRect(x:28,y:24,width:380,height:25),size:14)
         }
         if runtime.mode == "title" && data.resources.title == nil {
             text("영걸전 연구 엔진",rect:CGRect(x:90,y:135,width:470,height:40),size:28)
             text("원작 타이틀 자료를 읽을 수 없습니다.\nEnter 또는 클릭으로 복원된 첫 장면을 시작합니다.",rect:CGRect(x:90,y:195,width:470,height:90),size:16)
+        } else if let dialogue = runtime.dialogue, framed != nil {
+            // The original dialogue window primitives are not restored. This
+            // native panel stays inside the viewport so the frame stays visible.
+            let panel = CGRect(x:24,y:232,width:496,height:96)
+            context.setFillColor(CGColor(red:0.03,green:0.04,blue:0.16,alpha:0.94)); context.fill(panel)
+            context.setStrokeColor(CGColor(gray:0.8,alpha:1)); context.setLineWidth(1)
+            context.stroke(panel.insetBy(dx:0.5,dy:0.5))
+            var textX:CGFloat = 36
+            if let person = dialogue.person, let value = data.resources.portraits?[String(person)], let path = Self.portraitPath(value,palette:runtime.palette) {
+                let portrait = try load(path)
+                Self.image(portrait,in:CGRect(x:32,y:240,width:min(portrait.width,64),height:min(portrait.height,80)),context:context)
+                textX = 108
+            }
+            if !dialogue.speaker.isEmpty { text(dialogue.speaker,rect:CGRect(x:textX,y:238,width:400,height:20),size:14,color:NSColor(red:1,green:0.85,blue:0.45,alpha:1)) }
+            text(dialogue.text,rect:CGRect(x:textX,y:dialogue.speaker.isEmpty ? 240 : 258,width:512-textX,height:dialogue.speaker.isEmpty ? 84 : 66))
         } else if let dialogue = runtime.dialogue {
             context.setFillColor(CGColor(gray:0.055,alpha:1)); context.fill(CGRect(x:16,y:337,width:608,height:63))
             context.setStrokeColor(CGColor(gray:0.65,alpha:1)); context.setLineWidth(1)
             context.stroke(CGRect(x:16.5,y:337.5,width:607,height:62))
             text(dialogue.text,rect:CGRect(x:26,y:344,width:588,height:52))
             text(dialogue.speaker,rect:CGRect(x:536,y:111,width:100,height:48),size:15)
-            if let person = dialogue.person, let value = data.resources.portraits?[String(person)], let path = portraitPath(value,palette:runtime.palette) {
+            if let person = dialogue.person, let value = data.resources.portraits?[String(person)], let path = Self.portraitPath(value,palette:runtime.palette) {
                 let portrait = try load(path)
                 Self.image(portrait,in:CGRect(x:544,y:24,width:portrait.width,height:portrait.height),context:context)
             }

@@ -7,10 +7,11 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private var timer:Timer?
     private var errorText:String?
     private var inputNotice:String?
-    private var presenting = false
     private var battleView:OriginalBattleView?
     private var battleScroll:NSScrollView?
-    private var partyNote:NSTextField?
+    /// In-game selectors and waiting lines drawn above the stage and battle.
+    private let overlay = CanvasOverlayView()
+    private var imageCache:[String:CGImage] = [:]
     override var isFlipped:Bool { true }
     override var acceptsFirstResponder:Bool { true }
     convenience init(data:DataSet) throws {
@@ -22,7 +23,34 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         self.host = host
         renderer = try Renderer(host.data)
         super.init(frame:CGRect(x:0,y:0,width:960,height:640))
+        overlay.frame = bounds;overlay.autoresizingMask = [.width,.height];addSubview(overlay)
+        overlay.restoreFocus = { [weak self] in
+            guard let self = self else { return }
+            if let board = self.battleView,self.battleScroll?.isHidden == false { self.window?.makeFirstResponder(board) }
+            else { self.window?.makeFirstResponder(self) }
+            self.needsDisplay = true
+        }
         timer = Timer.scheduledTimer(withTimeInterval:1.0/60,repeats:true) { [weak self] _ in self?.tick() }
+    }
+    private func image(_ path:String?) -> CGImage? {
+        guard let path = path else { return nil }
+        if let cached = imageCache[path] { return cached }
+        guard let url = try? host.data.containedFile(path),let data = try? Data(contentsOf:url),
+              let picture = NSBitmapImageRep(data:data)?.cgImage else { return nil }
+        imageCache[path] = picture;return picture
+    }
+    private func portrait(_ person:Int?,palette:Int) -> CGImage? {
+        guard let person = person,let value = host.data.resources.portraits?[String(person)] else { return nil }
+        return image(Renderer.portraitPath(value,palette:palette))
+    }
+    /// The two-button selector shows Yes before No (MAIN164A9..165C4) with
+    /// MARK member0 pictures; the answer is the source value (Yes1, No0).
+    private func yesNo(_ text:String,_ answer:@escaping (Bool) -> Void) {
+        let palette = host.stage.palette
+        let yes = image(host.story.choiceButtonImage(value:1,palette:palette))
+        let no = image(host.story.choiceButtonImage(value:0,palette:palette))
+        overlay.show(CanvasMenu(title:text,options:[.init(label:"예",image:yes),.init(label:"아니요",image:no)],
+                                horizontal:true) { index in answer(index == 0) })
     }
     /// Native saves live outside the app bundle and the original GAME folder.
     static func savesDirectory() throws -> URL {
@@ -42,32 +70,32 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     required init?(coder:NSCoder) { fatalError("init(coder:) is not supported") }
     func stop() { timer?.invalidate();timer = nil }
     private func tick() {
-        guard !presenting,errorText == nil else { return }
+        guard !overlay.active,errorText == nil else { return }
         do {
             try host.advance(microseconds:16_667)
             needsDisplay = true
             try synchronizeBattle()
-            if let choice = host.choice,choice.kind == "choice-skip" || !choice.options.isEmpty { present(choice) }
-            if host.saveRequest != nil { presentSave() }
-            if host.partySelection != nil { presentParty() }
-            if host.retirementPresentation != nil { try presentRetirement() }
-            if host.stage.palette == 3,host.stage.dialogue != nil { try presentBattleDialogue() }
-            if let value = host.frameworkReturn,value.outcome == .pending,value.asksRetry { try presentRetry() }
             if host.frameworkReturn?.outcome == .restart { restartMain();return }
+            if let value = host.frameworkReturn,value.outcome == .pending,value.asksRetry { presentRetry() }
+            else if host.saveRequest != nil { presentSave() }
+            else if let choice = host.choice,choice.kind == "choice-skip" || !choice.options.isEmpty { present(choice) }
+            else if host.partySelection != nil { presentParty() }
+            else if host.retirementPresentation != nil { presentRetirement() }
+            else if host.stage.palette == 3,host.stage.dialogue != nil { presentBattleDialogue() }
         } catch { errorText = "\(error)";needsDisplay = true }
+    }
+    private func act(_ body:() throws -> Void) {
+        do { try body() } catch { errorText = "\(error)" }
+        needsDisplay = true
     }
     /// main1E5DD shows the selector over the current screen. The native host
     /// keeps the source result; restart and exit belong to this window owner.
-    private func presentRetry() throws {
-        presenting = true;defer { presenting = false }
-        let alert = NSAlert()
-        alert.messageText = host.retryPromptText ?? "원작 재시작 선택"
-        alert.informativeText = host.retryPromptText == nil ? "원작 문구가 로컬 자료에 없어 엔진 안내문으로 표시합니다." : ""
-        alert.addButton(withTitle:"예 (Yes)");alert.addButton(withTitle:"아니요 (No)")
-        let result = alert.runModal()
-        try host.answerRetryPrompt(result == .alertFirstButtonReturn ? 1 : 0)
-        if host.frameworkReturn?.outcome == .quit { battleScroll?.isHidden = true;window?.makeFirstResponder(self) }
-        needsDisplay = true
+    private func presentRetry() {
+        yesNo(host.retryPromptText ?? "원작 재시작 선택") { [weak self] yes in
+            guard let self = self else { return }
+            self.act { try self.host.answerRetryPrompt(yes ? 1 : 0) }
+            if self.host.frameworkReturn?.outcome == .quit { self.battleScroll?.isHidden = true;self.window?.makeFirstResponder(self) }
+        }
     }
     /// Exit code4 makes HERO.COM execute MAIN again. The engine replaces this
     /// campaign host with a new one; MAIN's own title menu is not restored.
@@ -91,7 +119,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             board.menuTexts = host.framework?.battleMenu
             let scroll = NSScrollView(frame:CGRect(x:0,y:0,width:bounds.width,height:bounds.height-40))
             scroll.autoresizingMask = [.width,.height];scroll.hasVerticalScroller = true;scroll.hasHorizontalScroller = true;scroll.documentView = board
-            addSubview(scroll);battleView = board;battleScroll = scroll
+            addSubview(scroll,positioned:.below,relativeTo:overlay);battleView = board;battleScroll = scroll
             window?.makeFirstResponder(board)
         }
         battleScroll?.isHidden = false
@@ -102,71 +130,54 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         }
         battleView?.needsDisplay = true
     }
-    private func presentBattleDialogue() throws {
+    private func presentBattleDialogue() {
         guard let dialogue = host.stage.dialogue else { return }
-        presenting = true;defer { presenting = false }
-        let alert = NSAlert();alert.messageText = dialogue.speaker;alert.informativeText = dialogue.text
-        alert.addButton(withTitle:"계속")
-        alert.runModal();try host.acknowledge()
+        overlay.show(CanvasNotice(speaker:dialogue.speaker,text:dialogue.text,portrait:portrait(dialogue.person,palette:host.stage.palette)) { [weak self] in
+            guard let self = self else { return }
+            self.act { try self.host.acknowledge() }
+        })
     }
-    private func presentRetirement() throws {
+    private func presentRetirement() {
         guard let text = host.retirementText else { return }
-        presenting = true;defer { presenting = false }
-        let alert = NSAlert();alert.messageText = "원작 퇴장 이벤트";alert.informativeText = text;alert.addButton(withTitle:"계속")
-        alert.runModal();try host.acknowledgeRetirement()
+        overlay.show(CanvasNotice(speaker:"",text:text,portrait:nil) { [weak self] in
+            guard let self = self else { return }
+            self.act { try self.host.acknowledgeRetirement() }
+        })
     }
-    private func presentParty() {
+    /// Native party list over the canvas: rows toggle through the source
+    /// selection rules (fixed prefix, capacity), the last row confirms.
+    private func presentParty(selected:Int = 0,footer:String? = nil,keepScroll:Bool = false) {
         guard let selection = host.partySelection else { return }
-        presenting = true;defer { presenting = false;partyNote = nil }
-        let alert = NSAlert();alert.messageText = "출전 부대 선택"
-        let container = NSView(frame:CGRect(x:0,y:0,width:430,height:350))
-        let note = NSTextField(labelWithString:"남은 선택 \(selection.remaining) / 최대 \(selection.capacity)")
-        note.frame = CGRect(x:0,y:325,width:430,height:24);container.addSubview(note);partyNote = note
-        let scroll = NSScrollView(frame:CGRect(x:0,y:0,width:430,height:318));scroll.hasVerticalScroller = true
-        let list = NSView(frame:CGRect(x:0,y:0,width:410,height:max(318,selection.candidates.count*27)))
-        for (index,id) in selection.candidates.enumerated() {
-            guard let person = try? host.people.person(id) else { continue }
-            let button = NSButton(checkboxWithTitle:"\(person.name) · Lv \(person.level)",target:self,action:#selector(partyToggled(_:)))
-            button.tag = id;button.frame = CGRect(x:8,y:list.bounds.height-CGFloat(index+1)*27,width:390,height:25)
-            button.state = selection.selectedSlots.contains(id) ? .on : .off
-            button.isEnabled = !selection.selectedSlots.prefix(selection.fixedCount).contains(id);list.addSubview(button)
+        let chosen = Set(selection.selectedSlots.prefix(selection.capacity)),fixed = Set(selection.selectedSlots.prefix(selection.fixedCount))
+        let rows = selection.candidates.compactMap { id in (try? host.people.person(id)).map { (id,$0) } }
+        var options = rows.map { id,person in
+            CanvasMenu.Option(label:"\(person.name) · Lv \(person.level)",enabled:!fixed.contains(id),checked:chosen.contains(id))
         }
-        scroll.documentView = list;container.addSubview(scroll);alert.accessoryView = container;alert.addButton(withTitle:"출전")
-        if alert.runModal() == .alertFirstButtonReturn {
-            do { try host.confirmParty() } catch { errorText = "\(error)" }
-        }
-    }
-    @objc private func partyToggled(_ sender:NSButton) {
-        do { try host.toggleParty(person:sender.tag) }
-        catch { NSSound.beep();partyNote?.stringValue = "\(error)" }
-        if let selection = host.partySelection {
-            sender.state = selection.selectedSlots.contains(sender.tag) ? .on : .off
-            partyNote?.stringValue = "남은 선택 \(selection.remaining) / 최대 \(selection.capacity)"
-        }
+        options.append(.init(label:"출전"))
+        let status = footer ?? "남은 선택 \(selection.remaining) / 최대 \(selection.capacity)"
+        overlay.show(CanvasMenu(title:"출전 부대 선택",options:options,selected:selected,footer:status) { [weak self] index in
+            guard let self = self,let index = index else { return }
+            if index == rows.count { self.act { try self.host.confirmParty() };return }
+            do { try self.host.toggleParty(person:rows[index].0);self.presentParty(selected:index,keepScroll:true) }
+            catch {
+                NSSound.beep()
+                let full = self.host.partySelection.map { $0.remaining == 0 && !chosen.contains(rows[index].0) } ?? false
+                self.presentParty(selected:index,footer:full ? "남은 선택이 없습니다. 최대 \(selection.capacity)명입니다." : "\(error)",keepScroll:true)
+            }
+        },keepScroll:keepScroll)
     }
     private func present(_ choice:CampaignVMChoice) {
-        presenting = true;defer { presenting = false }
-        let alert = NSAlert();alert.messageText = choice.prompt.isEmpty ? "선택" : choice.prompt
         if choice.kind == "choice-skip" {
-            alert.addButton(withTitle:"예 (Yes)");alert.addButton(withTitle:"아니요 (No)")
-            let result = alert.runModal()
-            do {
-                if result == .alertFirstButtonReturn { try host.choose(1) }
-                else if result == .alertSecondButtonReturn { try host.choose(0) }
-            } catch { errorText = "\(error)" }
+            yesNo(choice.prompt.isEmpty ? "선택" : choice.prompt) { [weak self] yes in
+                guard let self = self else { return }
+                self.act { try self.host.choose(yes ? 1 : 0) }
+            }
             return
         }
-        let selector = NSPopUpButton(frame:CGRect(x:0,y:0,width:360,height:28))
-        selector.addItems(withTitles:choice.options);alert.accessoryView = selector
-        alert.addButton(withTitle:"선택")
-        if alert.runModal() == .alertFirstButtonReturn {
-            do { try host.choose(selector.indexOfSelectedItem) } catch { errorText = "\(error)" }
-        }
-    }
-    private func ask(_ text:String,detail:String = "") -> Bool {
-        let alert = NSAlert();alert.messageText = text;alert.informativeText = detail
-        alert.addButton(withTitle:"예 (Yes)");alert.addButton(withTitle:"아니요 (No)")
-        return alert.runModal() == .alertFirstButtonReturn
+        overlay.show(CanvasMenu(title:choice.prompt,options:choice.options.map { .init(label:$0) }) { [weak self] index in
+            guard let self = self,let index = index else { return }
+            self.act { try self.host.choose(index) }
+        })
     }
     /// Writes one native resume file; returns false when cancelled or failed.
     private func writeNativeSave() -> Bool {
@@ -188,61 +199,62 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     /// cancelled or failed save asks the decline check, whose No retries.
     /// The written file is native engine state, not an original MSAVE slot.
     private func presentSave() {
-        presenting = true;defer { presenting = false }
         let framework = host.framework
-        let question = framework?.savePrompt?.text ?? "여기서 저장할까요?"
-        if ask(question,detail:"자체 엔진 형식으로 저장합니다. 원작 세이브 슬롯과는 다른 파일입니다.") {
-            while !writeNativeSave() {
-                if ask(framework?.saveDeclinePrompt?.text ?? "저장하지 않고 진행할까요?") { break }
-            }
+        let complete:() -> Void = { [weak self] in
+            guard let self = self else { return }
+            self.act { try self.host.completeSaveRequest() }
         }
-        do { try host.completeSaveRequest() } catch { errorText = "\(error)" }
+        func attempt() {
+            if writeNativeSave() { complete();return }
+            yesNo(framework?.saveDeclinePrompt?.text ?? "저장하지 않고 진행할까요?") { yes in yes ? complete() : attempt() }
+        }
+        yesNo(framework?.savePrompt?.text ?? "여기서 저장할까요?") { yes in yes ? attempt() : complete() }
     }
     /// MAIN CF5:C050 menu after the title. Item0 starts, item1 resumes a
     /// native save, item2 (CF5:BFDE settings) is not restored, and item3
     /// returns to the opening, as exit code0 runs OPEN before MAIN again.
     private func presentTitleMenu() {
-        presenting = true;defer { presenting = false }
         let items = host.framework?.titleMenu?.map(\.text) ?? ["새로 시작","이어하기","기능설정","오프닝"]
-        let alert = NSAlert();alert.messageText = "영걸전"
-        for item in items { alert.addButton(withTitle:item) }
-        let chosen = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-        do {
-            switch chosen {
-            case 0: try host.acknowledge()
-            case 1:
-                guard let resumed = try Self.chooseResume(data:host.data) else { return }
-                replace(with:try OriginalCampaignView(host:resumed))
-            case 2:
-                let notice = NSAlert();notice.messageText = "기능설정(CF5:BFDE)은 아직 복원하지 않았습니다.";notice.runModal()
-            case 3: replace(with:try OriginalCampaignView(data:host.data))
-            default: return
-            }
-        } catch { recordInputError(error) }
+        overlay.show(CanvasMenu(title:"",options:items.map { .init(label:$0) },cancellable:true) { [weak self] chosen in
+            guard let self = self,let chosen = chosen else { return }
+            do {
+                switch chosen {
+                case 0: try self.host.acknowledge()
+                case 1:
+                    guard let resumed = try Self.chooseResume(data:self.host.data) else { return }
+                    self.replace(with:try OriginalCampaignView(host:resumed))
+                case 2:
+                    self.overlay.show(CanvasNotice(speaker:"",text:"기능설정(CF5:BFDE)은 아직 복원하지 않았습니다.",portrait:nil) { [weak self] in
+                        self?.presentTitleMenu()
+                    })
+                case 3: self.replace(with:try OriginalCampaignView(data:self.host.data))
+                default: return
+                }
+            } catch { self.recordInputError(error) }
+            self.needsDisplay = true
+        })
     }
     /// MAIN's field menu (input code23, DS:3636/36E2 -> CF5:F382). The
     /// engine opens it with a secondary click; the original key binding is
     /// not established. Quit, load and save have native counterparts.
     override func rightMouseDown(with event:NSEvent) {
-        guard host.fieldMenuReady,!presenting else { super.rightMouseDown(with:event);return }
-        let menu = NSMenu(title:"메뉴");menu.autoenablesItems = false
+        guard host.fieldMenuReady,!overlay.active else { super.rightMouseDown(with:event);return }
         let labels = host.framework?.fieldMenu?.items.map(\.text) ?? OriginalFieldMenuTexts.actions
-        for (index,label) in labels.enumerated() {
-            let action = OriginalFieldMenuTexts.actions[index]
-            let item = NSMenuItem(title:label,action:#selector(fieldMenuChosen(_:)),keyEquivalent:"")
-            item.target = self;item.tag = index;item.isEnabled = ["quit","load","save"].contains(action)
-            if !item.isEnabled { item.toolTip = "아직 복원하지 않은 원작 기능입니다." }
-            menu.addItem(item)
-        }
-        NSMenu.popUpContextMenu(menu,with:event,for:self)
+        let options = labels.enumerated().map { CanvasMenu.Option(label:$0.element,
+            enabled:["quit","load","save"].contains(OriginalFieldMenuTexts.actions[$0.offset])) }
+        overlay.show(CanvasMenu(title:"",options:options,cancellable:true) { [weak self] index in
+            guard let self = self,let index = index else { return }
+            self.fieldMenuChosen(OriginalFieldMenuTexts.actions[index])
+        })
     }
-    @objc private func fieldMenuChosen(_ sender:NSMenuItem) {
+    private func fieldMenuChosen(_ action:String) {
         guard host.fieldMenuReady else { return }
-        presenting = true;defer { presenting = false;needsDisplay = true }
-        switch OriginalFieldMenuTexts.actions[sender.tag] {
+        switch action {
         case "quit":
-            guard ask(host.framework?.fieldMenu?.quitConfirm.text ?? "게임을 종료할까요?") else { return }
-            do { try host.fieldQuit() } catch { recordInputError(error) }
+            yesNo(host.framework?.fieldMenu?.quitConfirm.text ?? "게임을 종료할까요?") { [weak self] yes in
+                guard yes,let self = self else { return }
+                do { try self.host.fieldQuit() } catch { self.recordInputError(error) }
+            }
         case "save": _ = writeNativeSave()
         case "load":
             do {
@@ -251,6 +263,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             } catch { recordInputError(error) }
         default: return
         }
+        needsDisplay = true
     }
     private func replace(with next:OriginalCampaignView) {
         guard let window = window else { return }
@@ -261,7 +274,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let scale = min(bounds.width/640,(bounds.height-40)/400)
         do {
-            let frame = try host.ending.map { try renderer.renderEnding($0) } ?? renderer.render(host.stage)
+            let frame = try host.ending.map { try renderer.renderEnding($0) } ?? renderer.render(host.stage,screen:host.fieldScreenState())
             Renderer.image(frame.image,in:CGRect(x:(bounds.width-640*scale)/2,y:0,width:640*scale,height:400*scale),context:context)
         } catch { errorText = "\(error)" }
         let text:String
