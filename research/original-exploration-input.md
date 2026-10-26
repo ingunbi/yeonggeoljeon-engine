@@ -57,8 +57,8 @@ World city selection requires the constructed city flags' low two bits to be
 set, and a non-sentinel source position. Initial city flags3 come from the city
 constructor (`1B03C..1B051`), not BBK's five state bytes. The VM owns subsequent
 opcode20 updates. A selected world destination uses Runtime's native two-
-halfstep route. Arrival (`23F3C..23F83`) writes current city before kind4's
-`[255,newCity]` probe. That producer does not write the saved `7A76` return
+halfstep route. Arrival (`23F3C..23F83`) writes current city before the
+kind2/kind5 `[255,newCity]` probe. That producer does not write the saved `7A76` return
 context; only the live actor owns its arrival position. No event is emitted
 when a plan is created.
 
@@ -66,14 +66,14 @@ when a plan is created.
 and `city` to the script map context. The source2E and world-arrival producers
 write both current/game city. World/battle script map selection writes only
 game field4's low selector byte. Default world player placement reads the
-player field; settlement marker kind4 reads game field4. Their values can
+player field; the settlement marker kind2 probe reads game field4. Their values can
 differ and are not substituted for one another.
 
 Town and palace share the settlement controller: `244FA..24790` selects their
 different map resources, while the input and talk producers are shared.
 Native walk bytes come from the active Runtime map, including PMAP resources.
 Town ground7F emits no destination event. A selected marker is rechecked at
-arrival, then kind4 receives `[marker,gameCity]` (`25255..25288`). Source
+arrival, then the kind2 probe receives `[marker,gameCity]` (`25255..25288`). Source
 bit80 blocks input. Marker identities are retained separately from the
 unrestored built-in behavior that may follow an unmatched event.
 For ordinary room markers and marker124, native fallback tests query return4
@@ -82,8 +82,29 @@ wrappers produce0 for a match/busy continuation and FFFF for no match; a
 record directory ordinal must not be substituted for that return. The4 branch
 is retained as a source predicate without an established reachable producer.
 Marker126 has
-no built-in transition. These fallbacks need their own native context owner;
-the planner does not infer a room/map transition from marker text or graphics.
+no built-in transition. The planner does not infer a room/map transition from
+marker text or graphics; the fallback is selected only by the source switch.
+
+The fallbacks rewrite game object `7A6C` (+0/+1 position, +5 kind, +6 index,
++7 entry byte, +9 default facing flag). Arrival first clears +9
+(`25228..25230`). An ordinary key enters room map `2000|key` at (8,15): it
+saves game map and the player's position into `7A76` (`1CB6:1924`, which ends
+at `24EB7..24EC6`) before writing the room (`252C5..25310`). Marker7C enters
+the world map indexed by player field `12` (`25320..25358`); because `CF5:778E`
+indexes the DS:`1360` city-group counts with that field, the native host uses
+the chapter's city group. Marker7D copies kind, index and position from
+`7A76` and sets +9 (`25368..253B4`). Every fallback sets entry byte one.
+
+The framework loop then enters the game-object map. Settlement entry with
+byte one places player `0200` at the game position with raw facing four when
++9 is one, otherwise zero (`2464A..24691`), then replays the actor cache
+(`24C6A`). World entry uses the existing current-city default spawn. Palace
+seven's special actor `0376` and entry music (`24BD6..24C1A`) are not restored
+and palace seven stops explicitly. The native host also follows the
+settlement wrapper's status-two rule (`264B2..264B7`): a script map selection
+from a town or palace event saves `7A76` before C86C. If no player actor is
+displayed then, the saved position is unknown and a later marker7D exit stops.
+A matched marker7D script followed by the built-in exit is not restored.
 
 Actor approach (`25D9E..25E67`) builds the route to the actor's target tile and
 removes its final step through the shared route producer. It does not find a
@@ -98,7 +119,7 @@ effect. An actor that moved away cannot receive the stale interaction event.
 ## Invocation boundary
 
 World wrapper `221EE..2228B` and settlement wrapper `2643C..264CF` query their
-selected kind0/3/4 event once and execute at most one matching invocation.
+selected kind0/3/2 event once (wrapper selectors 0/1/2) and execute at most one matching invocation.
 Neither wrapper repeats on returned status5/6 or supplies automatic0 as a
 query fallback. The settlement wrapper returns the source query result;
 the world wrapper returns the interpreter status. Source query return is0/FFFF,

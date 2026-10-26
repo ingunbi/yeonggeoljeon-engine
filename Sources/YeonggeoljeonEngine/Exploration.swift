@@ -22,10 +22,16 @@ struct OriginalExplorationCatalog:Codable {
     var cities:[OriginalCity]; var actorBanks:[String:[String:ActorResource]]
     var worldNeighbors:[Neighbor]; var worldDirectionFrames:[Int]
     var worldPlacementDirections:[Int]? = nil
+    /// Format2 keys world banks by the constructed person field2B, which is
+    /// the SSCCHR1 member the source allocator loads (MAIN1FC24..18448).
+    var worldBankKey:String?
     var source:JSONValue?; var limitations:[String]?
     static func load(from url:URL) throws -> Self {
         let value = try JSONDecoder().decode(Self.self,from:Data(contentsOf:url))
-        guard value.format == 1,value.maps.count <= 256,Set(value.maps.map(\.key)).count == value.maps.count,
+        guard value.format == 2,value.worldBankKey == "person-field-2B" else {
+            throw EngineError.invalid("Original exploration data predates person-field world banks; rebuild local GameData")
+        }
+        guard value.maps.count <= 256,Set(value.maps.map(\.key)).count == value.maps.count,
               value.worldNeighbors.count == 8,value.worldDirectionFrames.count == 8,
               value.worldDirectionFrames.allSatisfy({[0,2,4,6].contains($0)}),
               Set(value.chapterMappings.map(\.chapter)).count == value.chapterMappings.count else {
@@ -77,7 +83,7 @@ struct OriginalExplorationCatalog:Codable {
             actors = [:]
             for person in people.values.values {
                 guard var actor = actorBanks["world"]?[String(person.sourceRole)] else {
-                    throw EngineError.invalid("Original world actor role \(person.sourceRole) has no source bank")
+                    throw EngineError.invalid("Original world actor bank \(person.sourceRole) (person field2B) is not an exported SSCCHR1 world bank")
                 }
                 actor.directions = worldDirectionFrames.map { Direction(frame:$0,flip:false) }
                 actors[String(person.id)] = actor

@@ -58,11 +58,15 @@ cache's source predicate and returns parsed actors/music for the native
 placement owner. Cached script music and the current device selection are
 separate state: an external battle stinger does not overwrite context `+1BF`.
 
-The native host now retains a battle's source09 selection until the physical
-or strategy operation and its source caller finish. Only then does the outer
-battle-loop boundary apply victory carryover and enter the selected map. A
-caller-selected local replay reached the first campaign victory, returned to
-the following world scene and reached the second battle's manual phase.
-This tests that particular native exit path; it does not establish all source
-battle exits or original-runtime parity. Original save-mode restoration and
+The native host now retains a battle's source09 or source11 selection until
+the physical or strategy operation and its source caller finish. Only then
+does the outer battle-loop boundary interpret the raw result, apply victory
+carryover and enter the selected map, as described in
+[the framework note](original-framework.md). A caller-selected local replay
+reached the first campaign victory, returned to the following world scene and
+reached the second battle's manual phase. A local frontier run then won the
+second battle through its source adjacency event, entered the source11 world
+selection and continued into chapter one. These runs test those particular
+native exit paths; they do not establish all source battle exits or
+original-runtime parity. Original save-mode restoration and
 built-in navigation still require their own producing boundaries.

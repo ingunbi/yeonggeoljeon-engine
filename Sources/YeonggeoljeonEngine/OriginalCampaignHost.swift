@@ -38,6 +38,7 @@ final class OriginalCampaignHost {
     private(set) var saveRequest:OriginalCampaignInstruction?
     private(set) var failure:CampaignVMFailure?
     private(set) var interpreterReturn:OriginalCampaignInterpreterReturn?
+    private(set) var frameworkReturn:OriginalFrameworkReturn?
     private(set) var ending:OriginalEndingSession?
     private var endingMicroseconds:Int64 = 0
     private var carryover:OriginalPartyCarryover?
@@ -60,23 +61,39 @@ final class OriginalCampaignHost {
     var battleInputReady:Bool {
         waiting != nil && stage.hostWaiting && failure == nil && choice == nil && saveRequest == nil &&
         partySelection == nil && pendingTurnHook == nil && retirement == nil && interpreterReturn == nil &&
-        !controllerInvocationPending && (battle?.turns.stage != .unstarted || controllerIdle)
+        frameworkReturn == nil && !controllerInvocationPending && (battle?.turns.stage != .unstarted || controllerIdle)
     }
     private var pendingCache:[Command] = []
     private var currentEventPerson:Int?
     private var started = false
     private var explorationInput:OriginalExplorationInputPlan?
     private var pendingBattleMap:CampaignVMMapRequest?
+    /// Source11 writes script context+0A without an interpreter return. Its
+    /// selection is entered only when the enclosing battle loop finishes.
+    private var battleReturnSelection:CampaignVMMapRequest?
+    /// 1CB6:1924 copies the player actor slot position. When no player actor
+    /// is displayed, that stale slot value is not modeled; this records the
+    /// context written with an unknown position so a later 7D exit stops.
+    private var uncertainReturnContext:OriginalCampaignReturnContext?
     private var controllerMap:CampaignVMMapRequest?
     var explorationInputReady:Bool {
         waiting != nil && stage.hostWaiting && failure == nil && choice == nil && saveRequest == nil &&
-        partySelection == nil && pendingTurnHook == nil && retirement == nil && interpreterReturn == nil && explorationInput == nil &&
+        partySelection == nil && pendingTurnHook == nil && retirement == nil && interpreterReturn == nil && frameworkReturn == nil && explorationInput == nil &&
         controllerIdle && !controllerInvocationPending && vm.state.currentRecordID == nil
     }
     var status:String {
         if let ending = ending {
             if case .unsupported(let frontier) = ending.output { return "엔딩 미복원 경계: \(frontier.resource) @\(frontier.offset) · \(frontier.reason)" }
             return "원작 엔딩 재생"
+        }
+        if let value = frameworkReturn {
+            switch value.outcome {
+            case .restart: return "원작 재시작 선택 · MAIN 다시 실행"
+            case .quit: return "원작 종료 선택 · 종료 그림(MAIN1E3A8) 미복원 · 입력하면 창을 닫습니다"
+            case .pending:
+                return value.asksRetry ? "원작 재시작 선택 대기 · 반환 마스크 \(String(format:"%02X",value.mask)) · \(value.producer)"
+                    : "원작 외부 반환 마스크 \(String(format:"%02X",value.mask)) · \(value.producer)"
+            }
         }
         if let result = interpreterReturn { return "원작 외부 반환 \(result.status) · \(result.recordID) · 현재 캠페인 종료" }
         if let failure = failure { return "미복원: \(failure.recordID ?? "") @\(failure.sourceOffset ?? 0) · \(failure.reason)" }
@@ -169,11 +186,89 @@ final class OriginalCampaignHost {
             controllerAfterInvocationFacings = arrival.afterInvocationFacings
             let matched = try dispatch(event,currentPerson:plan.targetPerson)
             if !matched { try restoreInputFacings() }
-            if !matched,let boundary = arrival.unmatchedBuiltinBoundary {
-                failure = CampaignVMFailure(recordID:vm.activeRecord?.id,opcode:nil,sourceOffset:nil,reason:boundary)
-                throw EngineError.invalid(boundary)
+            if let builtin = arrival.builtin {
+                // MAIN252B8..2535A: room and world fallbacks require query
+                // FFFF (or the unreached 4); marker7D also accepts zero.
+                if !matched { try enterSettlementBuiltin(builtin) }
+                else if builtin == .returnToContext {
+                    let reason = "Original matched palace-exit script followed by its built-in 7A76 return is not restored"
+                    failure = CampaignVMFailure(recordID:vm.activeRecord?.id,opcode:nil,sourceOffset:nil,reason:reason)
+                    throw EngineError.invalid(reason)
+                }
             }
         }
+    }
+    /// MAIN252C5..253B4 rewrites the game object, then the framework loop
+    /// enters that map with native entry byte7=1 (MAIN1E1FE..1E242).
+    private func enterSettlementBuiltin(_ builtin:OriginalSettlementBuiltin) throws {
+        do {
+            guard let current = stage.mapID,[0,2].contains(current>>12),let player = stage.actors[0] else {
+                throw EngineError.invalid("Original settlement fallback has no native settlement map or player actor")
+            }
+            switch builtin {
+            case .roomEntry(let marker):
+                // 1CB6:1924 saves game map and the player's position; game
+                // position becomes (8,15). Arrival cleared game+9 (MAIN25230).
+                try vm.setReturnContext(packedMap:current,x:player.position.x,y:player.position.y)
+                uncertainReturnContext = nil
+                try enterNativeMap(packedMap:0x2000|marker,spawn:OriginalSettlementBuiltin.roomEntryPoint,sourceFacing:0)
+            case .returnToContext:
+                // Kind/index/position come from 7A76; game+9=1 selects raw facing4.
+                guard let back = vm.state.returnContext,back != uncertainReturnContext else {
+                    throw EngineError.invalid("Original palace exit has no established 7A76 return position")
+                }
+                try enterNativeMap(packedMap:back.packedMap,spawn:GridPoint(x:back.x,y:back.y),sourceFacing:4)
+            case .worldExit:
+                // Game index is player+12. CF5:778E indexes DS:1360 with that
+                // field, so it is the chapter's city group (static inference).
+                guard let mapping = exploration.chapterMappings.first(where:{$0.chapter == vm.state.chapter}) else {
+                    throw EngineError.invalid("Original town exit has no chapter city group")
+                }
+                try enterNativeMap(packedMap:0x1000|mapping.cityGroup,spawn:nil,sourceFacing:0)
+            }
+        } catch {
+            failure = CampaignVMFailure(recordID:vm.activeRecord?.id,opcode:nil,sourceOffset:nil,reason:"\(error)")
+            throw error
+        }
+    }
+    /// Native game-object entry (byte7=1). World entry places the default
+    /// player at the current city (MAIN20B46); settlement entry places player
+    /// 0200 at the game position (MAIN2464A..24691), then replays the cache
+    /// (MAIN24C6A). Native entry music (MAIN24BD6..24C1A) is not modeled.
+    private func enterNativeMap(packedMap:Int,spawn:GridPoint?,sourceFacing:Int) throws {
+        let kind = packedMap>>12
+        guard [0,1,2].contains(kind),(0...0xFFFF).contains(packedMap) else {
+            throw EngineError.invalid("Original native entry selected a non-exploration map")
+        }
+        if packedMap == 0x2007 {
+            throw EngineError.invalid("Original palace7 native entry places special actor 0376 (MAIN24BD6..24BEF), which is not restored")
+        }
+        try constructCitiesIfNeeded()
+        try vm.enterMapContext(packedMap:packedMap)
+        try stage.setPalette(kind)
+        if kind < 2 {
+            try exploration.configure(stage:stage,packed:packedMap,chapter:vm.state.chapter,people:people)
+        } else if let map = data.resources.maps[String(packedMap)] {
+            try stage.configureMap(packedMap,resource:map,actors:nil)
+        } else { throw EngineError.invalid("Original room/palace map \(packedMap) is unavailable") }
+        try stage.enqueue([Command("map",map:packedMap)])
+        if kind == 1 {
+            let boot = try OriginalExplorationInput.worldBootstrap(catalog:exploration,state:vm.state,entry:.nativeCityDefault,rng:rng)
+            try stage.enqueue(boot.commands);rng = boot.rngAfter
+        } else {
+            guard let spawn = spawn else { throw EngineError.invalid("Original settlement native entry has no game position") }
+            var after = rng
+            _ = try OriginalExplorationInput.placementEffects(packedMap:packedMap,person:0,rng:&after)
+            try stage.enqueue([Command("place",person:0,x:spawn.x,y:spawn.y,sourcePlacementFacing:sourceFacing)]);rng = after
+            let facts = try vm.replaySettlementCache()
+            let replay = try OriginalExplorationInput.settlementCacheReplay(replay:facts,packedMap:packedMap,rng:rng)
+            try stage.enqueue(replay.commands);rng = replay.rngAfter
+            if let music = facts.music { try vm.setSourceMusic(selection:music) }
+        }
+        // Native entry has no script05. The framework loop presents the new
+        // map itself (MAIN1E2A1..1E2B9); its fade timing is not restored.
+        try stage.enqueue([Command("show")])
+        controllerIdle = false;waiting = vm.waitingState()
     }
     private func restoreInputFacings() throws {
         for facing in controllerAfterInvocationFacings where stage.actors[facing.person] != nil {
@@ -326,7 +421,8 @@ final class OriginalCampaignHost {
         failure = CampaignVMFailure(recordID:record?.id,opcode:instruction?.opcode,sourceOffset:instruction?.offset,reason:"\(error)")
     }
     func pump() throws {
-        guard started,stage.hostWaiting,choice == nil,saveRequest == nil,partySelection == nil,failure == nil,waiting == nil,interpreterReturn == nil else {
+        guard started,stage.hostWaiting,choice == nil,saveRequest == nil,partySelection == nil,failure == nil,waiting == nil,
+              interpreterReturn == nil,frameworkReturn == nil else {
             if let termination = stage.termination,termination != .sourceBoundary {
                 let record = vm.activeRecord
                 let source = stage.trace.last?.source
@@ -389,13 +485,35 @@ final class OriginalCampaignHost {
             case .choice(let value):choice = value;return
             case .waiting(let value):waiting = value;return
             case .unsupported(let value):failure = value;return
-            case .interpreterReturn(let value):interpreterReturn = value;return
+            case .interpreterReturn(let value):
+                interpreterReturn = value
+                // Status8 also selected the ending session in apply(2A). A
+                // source29 inside battle wrote raw result3 as well, which the
+                // battle dispatcher maps to the same mask20.
+                if value.status == 7,let mask = OriginalFrameworkReturn.mask(interpreterStatus:value.status) {
+                    frameworkReturn = OriginalFrameworkReturn(mask:mask,producer:"interpreter-status-7",
+                        recordID:value.recordID,sourceOffset:value.sourceOffset)
+                }
+                return
             case .invocationReturn:
                 guard retirementProbe != nil || turnInvocationPending || controllerInvocationPending else { throw EngineError.invalid("Original bounded interpreter return has no owning source caller") }
                 let returned = try vm.takeInvocationReturn();waiting = vm.waitingState()
                 if controllerInvocationPending {
                     controllerInvocationPending = false;controllerIdle = false;try restoreInputFacings()
                     if let request = controllerMap {
+                        // MAIN264B2..264B7: a settlement invocation returning
+                        // status2 saves game map and player position (1924)
+                        // before C86C. The world wrapper does not (2226D).
+                        if returned.status == 2,let current = stage.mapID,[0,2].contains(current>>12) {
+                            if let player = stage.actors[0] {
+                                try vm.setReturnContext(packedMap:current,x:player.position.x,y:player.position.y)
+                                uncertainReturnContext = nil
+                            } else {
+                                let old = vm.state.returnContext
+                                try vm.setReturnContext(packedMap:current,x:old?.x ?? 0,y:old?.y ?? 0)
+                                uncertainReturnContext = vm.state.returnContext
+                            }
+                        }
                         guard completeSelectedMap(request) else { return }
                         controllerMap = nil
                     }
@@ -408,20 +526,39 @@ final class OriginalCampaignHost {
         }
         failure = CampaignVMFailure(recordID:vm.activeRecord?.id,opcode:nil,sourceOffset:nil,reason:"Original host work budget reached")
     }
-    /// Source09 selects context and returns2; an active battle keeps its old
-    /// map until its caller/attack context returns and the outer loop exits.
+    /// Source09/11 select script context+0A; an active battle keeps its old map
+    /// until its caller/attack context returns and the outer loop exits.
+    /// `OriginalBattleExit` owns the dispatcher's raw-result interpretation.
     func finishBattleLoop() throws {
-        guard let request = pendingBattleMap else { return }
-        guard let battle = battle,battle.turns.result != 0,stage.hostWaiting,retirement == nil,
+        guard let battle = battle,battle.turns.result != 0,stage.palette == 3,frameworkReturn == nil,failure == nil else { return }
+        guard stage.hostWaiting,retirement == nil,
               pendingTurnHook == nil,!controllerInvocationPending,choice == nil,saveRequest == nil,
-              partySelection == nil,failure == nil,interpreterReturn == nil else {
+              partySelection == nil,interpreterReturn == nil else {
             throw EngineError.invalid("Original battle exit still has an owning source operation")
         }
         rng = battle.rng
-        if battle.turns.result == 2 { carryover = try battle.finishBattleForCarryover() }
-        guard completeSelectedMap(request) else { return }
-        pendingBattleMap = nil;controllerIdle = false;waiting = vm.waitingState()
+        let selections = [pendingBattleMap,battleReturnSelection].compactMap{$0}
+        switch OriginalBattleExit.decide(result:battle.turns.result,contextMap:vm.state.packedMap,selectionMaps:selections.map(\.packedMap)) {
+        case .restoreCheckpoint:
+            failure = CampaignVMFailure(recordID:nil,opcode:nil,sourceOffset:nil,
+                reason:"Original battle result1 checkpoint restoration (MAIN1E347..1E368) is not restored")
+        case .framework(let mask):
+            frameworkReturn = OriginalFrameworkReturn(mask:mask,producer:"battle-result-\(battle.turns.result)",recordID:nil,sourceOffset:nil)
+            pendingBattleMap = nil;battleReturnSelection = nil;waiting = nil
+        case .unsupported(let reason):
+            failure = CampaignVMFailure(recordID:nil,opcode:nil,sourceOffset:nil,reason:reason)
+        case .enterMap(let index):
+            if battle.turns.result == 2 { carryover = try battle.finishBattleForCarryover() }
+            guard completeSelectedMap(selections[index]) else { return }
+            pendingBattleMap = nil;battleReturnSelection = nil;controllerIdle = false;waiting = vm.waitingState()
+        }
     }
+    func answerRetryPrompt(_ result:Int) throws {
+        guard var value = frameworkReturn else { throw EngineError.invalid("No original retry selector is pending") }
+        try value.answer(result);frameworkReturn = value
+    }
+    /// Original MAIN DS:2A2E text, exported locally by the campaign producer.
+    var retryPromptText:String? { vm.program.framework?.retryPrompt?.text }
     private func completeSelectedMap(_ request:CampaignVMMapRequest) -> Bool {
         do { try loadSelectedMap(request);return true }
         catch {
@@ -486,6 +623,10 @@ final class OriginalCampaignHost {
             if stage.palette == 3,let battle = battle {
                 try battle.acceptSourceResult(mode == 0 ? 2 : 3)
                 if mode == 3 { try vm.setSourceMusic(selection:4) }
+                if instruction.opcode == 0x11 {
+                    battleReturnSelection = CampaignVMMapRequest(packedMap:args[0],battleID:nil,
+                        recordID:vm.activeRecord?.id ?? "",sourceOffset:instruction.offset)
+                }
             }
         case 0x3B:try stage.worldCamera(x:args[0],y:args[1],source:instruction.source)
         case 0x3C:try stage.worldFollow(person:args[0],source:instruction.source)

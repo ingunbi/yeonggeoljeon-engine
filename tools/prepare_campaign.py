@@ -22,7 +22,7 @@ from prepare_scene import (MAIN_SHA256, SceneError, extract_record, offset_secti
 from resource_formats import decode_archive
 from scenario_format import (instructions, record_directory, source_operand_lengths,
                              text_sections)
-from campaign_vm_format import compile_instructions, phase_groups
+from campaign_vm_format import compile_instructions, framework_prompts, phase_groups
 
 
 def record_id(chapter: int, member: int, block: int, record: int) -> str:
@@ -215,6 +215,7 @@ def prepare_campaign(game: Path) -> dict:
                           "initialState": {"chapter": 0, "member": 0, "block": 0, "groupBase": 0,
                                            "packedMap": 0, "city": 0, "flags": [0] * 32},
                           "profile": "MAIN:731c8d26; source event predicates and phase dispatcher",
+                          "framework": framework_prompts(main),
                           "limitations": ["Unsupported host effects stop at the literal source instruction.",
                                           "A complete record catalog does not establish full campaign playability.",
                                           "Raw text expansion requires further restoration; original yes/no selector values and order are established."]},

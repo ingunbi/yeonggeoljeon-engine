@@ -30,7 +30,7 @@ func verifyOriginalCampaignHost(_ data:DataSet,output:URL) throws {
     var steps = 0
     while steps < 100_000,host.failure == nil,!host.explorationInputReady,
           !(host.stage.palette == 3 && host.battleInputReady),host.choice == nil,host.saveRequest == nil,
-          host.partySelection == nil,host.interpreterReturn == nil {
+          host.partySelection == nil,host.interpreterReturn == nil,host.frameworkReturn == nil {
         steps += 1
         if host.stage.storyPanel != nil { try capture("original-story-figure") }
         if let map = host.stage.mapID,host.stage.visible { try capture("source-map-\(map)") }
@@ -40,7 +40,7 @@ func verifyOriginalCampaignHost(_ data:DataSet,output:URL) throws {
     }
     try capture("last-source-state")
     let failure = host.failure.map { CampaignVMFailureRecord(recordID:$0.recordID,opcode:$0.opcode,sourceOffset:$0.sourceOffset,reason:$0.reason) }
-    let status = failure != nil ? "stopped-at-unrestored-source-operation" : host.waiting != nil ? "waiting-for-original-event" : host.choice != nil ? "waiting-for-original-choice" : host.saveRequest != nil ? "waiting-for-native-save-request" : host.interpreterReturn != nil ? "source-interpreter-return" : "work-budget-reached"
+    let status = failure != nil ? "stopped-at-unrestored-source-operation" : host.waiting != nil ? "waiting-for-original-event" : host.choice != nil ? "waiting-for-original-choice" : host.saveRequest != nil ? "waiting-for-native-save-request" : host.frameworkReturn != nil ? "original-framework-return" : host.interpreterReturn != nil ? "source-interpreter-return" : "work-budget-reached"
     let report = OriginalCampaignHostVerification(status:status,completedRecords:host.vm.state.completedRecords,sourceFailure:failure,
         waitingEvents:host.waiting?.eventKinds,choiceID:host.choice?.id,frames:frames,final:host.snapshot(),trace:host.stage.trace,
         limitations:["The driver acknowledges text and completes source movement; it does not choose branches, inject battle wins or skip unsupported effects.",

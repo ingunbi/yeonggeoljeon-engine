@@ -34,10 +34,37 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             if host.partySelection != nil { presentParty() }
             if host.retirementPresentation != nil { try presentRetirement() }
             if host.stage.palette == 3,host.stage.dialogue != nil { try presentBattleDialogue() }
+            if let value = host.frameworkReturn,value.outcome == .pending,value.asksRetry { try presentRetry() }
+            if host.frameworkReturn?.outcome == .restart { restartMain();return }
+        } catch { errorText = "\(error)";needsDisplay = true }
+    }
+    /// main1E5DD shows the selector over the current screen. The native host
+    /// keeps the source result; restart and exit belong to this window owner.
+    private func presentRetry() throws {
+        presenting = true;defer { presenting = false }
+        let alert = NSAlert()
+        alert.messageText = host.retryPromptText ?? "원작 재시작 선택"
+        alert.informativeText = host.retryPromptText == nil ? "원작 문구가 로컬 자료에 없어 엔진 안내문으로 표시합니다." : ""
+        alert.addButton(withTitle:"예 (Yes)");alert.addButton(withTitle:"아니요 (No)")
+        let result = alert.runModal()
+        try host.answerRetryPrompt(result == .alertFirstButtonReturn ? 1 : 0)
+        if host.frameworkReturn?.outcome == .quit { battleScroll?.isHidden = true;window?.makeFirstResponder(self) }
+        needsDisplay = true
+    }
+    /// Exit code4 makes HERO.COM execute MAIN again. The engine replaces this
+    /// campaign host with a new one; MAIN's own title menu is not restored.
+    private func restartMain() {
+        guard let window = window else { return }
+        stop()
+        do {
+            let next = try OriginalCampaignView(data:host.data)
+            window.contentView = next;window.makeFirstResponder(next)
         } catch { errorText = "\(error)";needsDisplay = true }
     }
     private func synchronizeBattle() throws {
-        guard host.ending == nil,host.stage.palette == 3,let session = host.battle else { battleScroll?.isHidden = true;return }
+        guard host.ending == nil,host.frameworkReturn?.outcome != .quit,host.stage.palette == 3,let session = host.battle else {
+            battleScroll?.isHidden = true;return
+        }
         if battleView?.session !== session {
             battleScroll?.removeFromSuperview()
             let board = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:host.data.root),sprites:OriginalBattleSpriteRenderer(root:host.data.root))
@@ -153,7 +180,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         (text as NSString).draw(in:CGRect(x:12,y:bounds.height-35,width:bounds.width-24,height:32),withAttributes:[.font:NSFont.systemFont(ofSize:12),.foregroundColor:NSColor.lightGray])
     }
     override func keyDown(with event:NSEvent) {
-        if event.keyCode == 53 { window?.performClose(nil);return }
+        if event.keyCode == 53 || host.frameworkReturn?.outcome == .quit { window?.performClose(nil);return }
         if [36,49,76].contains(event.keyCode),!event.isARepeat {
             inputNotice = nil
             do { try host.acknowledge() } catch { recordInputError(error) };needsDisplay = true
@@ -164,6 +191,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         else { inputNotice = "\(error)" }
     }
     override func mouseDown(with event:NSEvent) {
+        // MAIN1E3A8 waits for one input before main exits with code3.
+        if host.frameworkReturn?.outcome == .quit { window?.performClose(nil);return }
         inputNotice = nil
         do {
             if host.explorationInputReady,[0,1,2].contains(host.vm.state.packedMap>>12) {

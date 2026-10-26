@@ -32,11 +32,18 @@ An original `(FF,FF)` position remains an unplaced sentinel, with nullable
 coordinates and separately preserved raw values; it is not clamped onto a map.
 
 Town actors use SSCCHR2's four 32×40 frames under palette slot zero. World
-actors use eight SSCCHR1 patterns in source role+2 banks under palette slot
-one, with no horizontal flip and anchor `height-32`. Direction base frames
-come from DS:`2FA6`; walking phase is added to that base. The initial role
-reference is BAKDATA state byte one, separate from a person's town sprite
-reference in constant byte sixteen. Native person state owns later changes.
+actors use eight SSCCHR1 patterns under palette slot one, with no horizontal
+flip and anchor `height-32`. Direction base frames come from DS:`2FA6`;
+walking phase is added to that base. The person constructor writes object
+field `2B` as BAKDATA state byte one plus two (`0x1AAEE..0x1AAF3`). The world
+allocator passes that field as the bank (`0x1FC24..0x1FC46`), and the bank
+loader reads the SSCCHR1 member equal to it (`0x18942..0x189AE`,
+`0x18448..0x1847D`). Script opcode `2F` writes the same field directly; the
+examined scenarios write values two to six. Format two of `exploration.json`
+keys world banks by member (`2..7`); `peopleBanks` keeps the raw state byte
+and the constructed bank separately. A non-person world actor would use member
+three; script placement covers person actors only. Native person state owns
+later changes, and the town sprite reference stays constant byte sixteen.
 
 These are static source and format observations for the pinned MAIN digest,
 not a DOS framebuffer comparison. Default palettes are supported; grayscale,

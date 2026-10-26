@@ -15,12 +15,30 @@ struct OriginalExplorationInputPlan:Codable {
     var eventCity:Int?
 }
 struct OriginalExplorationFacing:Codable,Equatable {var person:Int;var nativeDirection:Int}
+/// MAIN252A1..253B4: settlement fallbacks after an unmatched kind2 probe.
+/// Marker7C leaves to the world, 7D returns through saved context7A76, 7E has
+/// no built-in, and every other key enters room/palace map 2000|key.
+enum OriginalSettlementBuiltin:Codable,Equatable {
+    case roomEntry(marker:Int)
+    case worldExit
+    case returnToContext
+    /// MAIN252C5..252CC writes game position (8,15) for a room entry.
+    static let roomEntryPoint = GridPoint(x:8,y:15)
+    static func forMarker(_ marker:Int) -> OriginalSettlementBuiltin? {
+        switch marker {
+        case 124: return .worldExit
+        case 125: return .returnToContext
+        case 126,127: return nil
+        default: return marker & 128 == 0 ? .roomEntry(marker:marker) : nil
+        }
+    }
+}
 struct OriginalExplorationArrival:Codable {
     var event:OriginalCampaignEvent?
     var currentCity:Int
     var facings:[OriginalExplorationFacing] = []
     var afterInvocationFacings:[OriginalExplorationFacing] = []
-    var unmatchedBuiltinBoundary:String?
+    var builtin:OriginalSettlementBuiltin?
 }
 enum OriginalWorldEntryMode {case script,nativeCityDefault}
 struct OriginalWorldBootstrap {
@@ -162,7 +180,7 @@ enum OriginalExplorationInput {
             if marker == 127 {return OriginalExplorationArrival(event:nil,currentCity:plan.currentCity)}
             guard marker&128 == 0 else {throw EngineError.invalid("Original town arrival is blocked")}
             return OriginalExplorationArrival(event:.townDestination(marker:marker,currentCity:eventCity),currentCity:plan.currentCity,
-                unmatchedBuiltinBoundary:marker != 126 ? "Original room/world destination fallback requires its native controller" : nil)
+                builtin:OriginalSettlementBuiltin.forMarker(marker))
         case .townActor:
             guard let person = plan.targetPerson,let target = stage.actors[person],!target.walking,
                   let map = stage.currentMap,let even = map.neighborsEven,let odd = map.neighborsOdd else {

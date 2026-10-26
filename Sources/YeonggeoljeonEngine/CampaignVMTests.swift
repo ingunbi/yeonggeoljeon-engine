@@ -138,13 +138,22 @@ func campaignVMSelfTests() throws {
     guard case .commands(let terminalClose) = try terminalVM.advance() else { throw EngineError.invalid("FF did not close the source story panel") }
     try check(terminalClose.first?.op == "close-story" && terminalVM.state.instructionIndex == 2 &&
               terminalVM.state.completedRecords == 0, "FF panel close preserves the source phase until the next advance")
-    let destination = record(0, predicateGroup, kind: 4, words: [255, 2, 0], [end])
+    let destination = record(0, predicateGroup, kind: 2, words: [255, 2, 0], [end])
     var arrivalState = OriginalCampaignState()
     arrivalState.packedMap = 0x1000; arrivalState.city = 1; arrivalState.currentCity = 1; arrivalState.gameCity = 1
     arrivalState.returnContext = OriginalCampaignReturnContext(packedMap: 4096, x: 9, y: 10)
     let arrivalVM = try CampaignVM(program: program([destination]), state: arrivalState)
     let arrived = try arrivalVM.commitWorldArrival(city: 2)
-    try check(arrived == OriginalCampaignEvent(kind: 4, arguments: [255, 2]), "world arrival produces the exact source event arguments")
+    try check(arrived == OriginalCampaignEvent(kind: 2, arguments: [255, 2]), "world arrival produces the exact source event arguments")
+    let selectorPair = OriginalCampaignGroup(base: 0, count: 2, repeating: true)
+    let adjacency = record(0, selectorPair, kind: 4, words: [255, 2, 0], [end])
+    let worldOnly = record(1, selectorPair, kind: 5, words: [2, 0, 0], [end])
+    let selectorVM = try CampaignVM(program: program([adjacency, worldOnly]), state: arrivalState)
+    try check(try selectorVM.dispatch(event: try selectorVM.commitWorldArrival(city: 2)) && selectorVM.state.currentRecordID == worldOnly.id,
+              "destination selector skips battle-adjacency kind4 and accepts world kind5 by arrived city")
+    let townSelectorVM = try CampaignVM(program: program([record(0, predicateGroup, kind: 4, words: [255, 2, 0], [end])]))
+    try check(try !townSelectorVM.dispatch(event: .townDestination(marker: 255, currentCity: 2)),
+              "a settlement destination never matches a battle-adjacency kind4 record")
     try check(arrivalVM.state.currentCity == 2 && arrivalVM.state.gameCity == 2 && arrivalVM.state.city == 1 &&
               arrivalVM.state.returnContext == OriginalCampaignReturnContext(packedMap: 4096, x: 9, y: 10),
               "world arrival changes city while preserving saved7A76 and script-map context ownership")

@@ -7,10 +7,11 @@ import CryptoKit
 struct OriginalPlayInput: Codable, Equatable {
     enum Kind: String, Codable {
         case talk, choice
-        case saveSkip = "save-skip", worldCity = "world-city", townMarker = "town-marker"
+        case saveSkip = "save-skip", worldCity = "world-city", townMarker = "town-marker", townCell = "town-cell"
         case partyToggle = "party-toggle", partyConfirm = "party-confirm", expectBattle = "expect-battle"
         case battleMove = "battle-move", battleAttack = "battle-attack", battleStrategy = "battle-strategy"
         case battleWait = "battle-wait", battleEndTurn = "battle-end-turn"
+        case retryChoice = "retry-choice"
     }
     var kind: Kind
     var person: Int?
@@ -35,12 +36,13 @@ struct OriginalPlayInput: Codable, Equatable {
         let allowed: Set<String>
         switch kind {
         case .talk,.partyToggle: allowed = ["person"]
-        case .choice: allowed = ["index"]
+        case .choice,.retryChoice: allowed = ["index"]
         case .worldCity: allowed = ["city"]
         case .townMarker: allowed = ["marker"]
         case .expectBattle: allowed = battleID == nil ? [] : ["battleID"]
         case .saveSkip,.partyConfirm: allowed = []
         case .battleMove: allowed = ["slot","x","y"]
+        case .townCell: allowed = ["x","y"]
         case .battleAttack: allowed = ["slot","target"]
         case .battleStrategy: allowed = target == nil ? ["slot","ability"] : ["slot","ability","target"]
         case .battleWait: allowed = ["slot"]
@@ -48,7 +50,8 @@ struct OriginalPlayInput: Codable, Equatable {
         }
         guard operandKeys == allowed,
               person.map({ (0..<384).contains($0) }) ?? true,
-              index.map({ $0 >= 0 }) ?? true, city.map({ (0...255).contains($0) }) ?? true,
+              index.map({ $0 >= 0 }) ?? true, kind != .retryChoice || [0,1].contains(index ?? -1),
+              city.map({ (0...255).contains($0) }) ?? true,
               marker.map({ (0...255).contains($0) }) ?? true,
               battleID.map({ !$0.isEmpty }) ?? true,
               slot.map({(0..<45).contains($0)}) ?? true,target.map({(0..<45).contains($0)}) ?? true,
@@ -159,6 +162,7 @@ struct OriginalPlayVerification: Codable {
     var failure: String?
     var sourceFailure: CampaignVMFailureRecord?
     var reachedBattles: [String]
+    var frameworkReturn: OriginalFrameworkReturn?
     var observations: [OriginalPlayObservation]
     var final: OriginalCampaignCheckpoint
     var trace: [TraceEntry]
@@ -202,7 +206,7 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL) thro
         for _ in 0..<budget {
             try synchronizeBattle()
             if let source = host.failure { throw EngineError.invalid("Reached unrestored source operation: \(source.reason)") }
-            if host.interpreterReturn != nil { return totalTicks - started }
+            if host.interpreterReturn != nil || host.frameworkReturn != nil { return totalTicks - started }
             if host.choice != nil || host.saveRequest != nil || host.partySelection != nil { return totalTicks - started }
             if host.retirementPresentation != nil { try host.acknowledgeRetirement(); continue }
             if host.stage.dialogue != nil { try host.acknowledge(); continue }
@@ -230,7 +234,11 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL) thro
         try capture(index: nil, input: nil, ticks: initialTicks)
         for (index, input) in selected.inputs.enumerated() {
             failedIndex = index
+            if let value = host.frameworkReturn, value.outcome != .pending {
+                throw EngineError.invalid("Original MAIN \(value.outcome.rawValue) ended this replay host; later inputs need a new run")
+            }
             switch input.kind {
+            case .retryChoice: try host.answerRetryPrompt(input.index!)
             case .talk: _ = try host.talk(to: input.person!)
             case .choice: try host.choose(input.index!)
             case .saveSkip:
@@ -238,6 +246,7 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL) thro
                 try host.completeSaveRequest()
             case .worldCity: _ = try host.travel(toCity: input.city!)
             case .townMarker: _ = try host.townDestination(marker: input.marker!)
+            case .townCell: try host.walk(to: GridPoint(x: input.x!, y: input.y!))
             case .partyToggle: try host.toggleParty(person: input.person!)
             case .partyConfirm: try host.confirmParty()
             case .expectBattle:
@@ -269,9 +278,11 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL) thro
         inputSHA256: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(), seed: seed,
         fixedStepMicroseconds: fixedStep, maximumTicksPerInput: budget, completedInputs: completed,
         failedInputIndex: failedIndex, failure: failure, sourceFailure: sourceFailure, reachedBattles: reachedBattles,
+        frameworkReturn: host.frameworkReturn,
         observations: observations, final: host.snapshot(), trace: host.stage.trace,
         limitations: ["Only caller-selected native inputs are replayed; no campaign state, flags, result or unit is injected.",
-                      "Dialogue and retirement text are acknowledged; choices, save requests and party selection require explicit input steps.",
+                      "Dialogue and retirement text are acknowledged; choices, save requests, party selection and the MAIN retry selector require explicit input steps.",
+                      "A retry answer records MAIN's restart/exit outcome; this driver does not start a second MAIN host.",
                       "Manual battle primitives are caller-selected and use restored source flow; the driver has no win, teleport or autoplay policy. Enemy decisions belong to the restored engine.",
                       "Completing an input list or reaching a battle does not establish a complete campaign or original-runtime parity.",
                       "Seed1 is the default explicit test input; the driver does not establish the original DOS wall-clock RNG timeline.",

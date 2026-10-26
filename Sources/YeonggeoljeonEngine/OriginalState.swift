@@ -3,6 +3,8 @@ import Foundation
 
 /// Original initial person values. They do not establish a native faction,
 /// battle slot, conditional eligibility, or a selected saved campaign state.
+/// In a catalog, `sourceRole` is raw BAKDATA state byte one. In
+/// `OriginalPeople` it is the constructed object field2B (raw plus two).
 struct OriginalPersonDefinition: Codable {
     var id:Int
     var name:String
@@ -70,6 +72,9 @@ final class OriginalPeople {
         for id in values.keys {
             var person = values[id]!
             person.rawTroops = min(person.rawTroops,try OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:tables))
+            // MAIN1AAEE..1AAF3 stores BAKDATA state byte one plus two in
+            // object field2B. Script2F later writes that field directly.
+            person.sourceRole = (person.sourceRole + 2) & 0xFF
             values[id] = person
         }
         self.values = values

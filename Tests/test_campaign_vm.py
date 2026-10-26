@@ -6,7 +6,10 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from campaign_vm_format import compile_instructions, phase_groups, source_skip_target, stock_caption_index
+import struct
+
+from campaign_vm_format import (MAIN_DATA_SEGMENT, RETRY_PROMPT_CALL, RETRY_PROMPT_POINTER, compile_instructions,
+                                framework_prompts, phase_groups, source_skip_target, stock_caption_index)
 from prepare_campaign import prepare_campaign
 from prepare_scene import SceneError
 from scenario_format import Instruction, instructions
@@ -26,7 +29,32 @@ def compile_synthetic(code, text=b"", bounds=None):
                                 battle_ids={})
 
 
+def synthetic_main(text: bytes, pointer: int = RETRY_PROMPT_POINTER, mode: int = 2) -> bytes:
+    data = bytearray(MAIN_DATA_SEGMENT + 0x3000)
+    # push ds; push pointer; push mode; far call CF5:3C5E
+    call = bytes([0x1E, 0x68]) + struct.pack("<H", pointer) + bytes([0x6A, mode, 0x9A]) + struct.pack("<HH", 0x3C5E, 0x0CF5)
+    data[RETRY_PROMPT_CALL:RETRY_PROMPT_CALL + len(call)] = call
+    at = MAIN_DATA_SEGMENT + RETRY_PROMPT_POINTER
+    data[at:at + len(text) + 1] = text + b"\0"
+    return bytes(data)
+
+
 class CampaignVMFormatTests(unittest.TestCase):
+    def test_retry_prompt_comes_from_the_checked_main_selector_call(self):
+        prompt = framework_prompts(synthetic_main("합성 재시작?".encode("cp949")))["retryPrompt"]
+        self.assertEqual(prompt["text"], "합성 재시작?")
+        self.assertEqual((prompt["yesResult"], prompt["noResult"], prompt["presentationOrder"]), (1, 0, [1, 0]))
+        self.assertEqual(prompt["textSource"]["offset"], MAIN_DATA_SEGMENT + RETRY_PROMPT_POINTER)
+        self.assertEqual(prompt["callSource"]["offset"], RETRY_PROMPT_CALL)
+
+    def test_retry_prompt_rejects_an_unexamined_call_or_empty_text(self):
+        with self.assertRaisesRegex(SceneError, "retry selector call"):
+            framework_prompts(synthetic_main(b"x", pointer=RETRY_PROMPT_POINTER + 2))
+        with self.assertRaisesRegex(SceneError, "retry selector call"):
+            framework_prompts(synthetic_main(b"x", mode=1))
+        with self.assertRaisesRegex(SceneError, "empty"):
+            framework_prompts(synthetic_main(b""))
+
     def test_stock_caption_selector_is_last_source_character_not_decimal_number(self):
         self.assertEqual(stock_caption_index("11"), 1)
         self.assertEqual(stock_caption_index("::"), 10)

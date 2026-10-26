@@ -63,8 +63,17 @@ func originalPlayInputSelfTests() throws {
         #"{"kind":"battle-end-turn","slot":0}"#,
         #"{"kind":"battle-end-turn","result":1}"#,
         #"{"kind":"save-skip","person":null}"#,
-        #"{"kind":"battle-teleport","slot":0,"x":2,"y":3}"#
+        #"{"kind":"battle-teleport","slot":0,"x":2,"y":3}"#,
+        #"{"kind":"retry-choice"}"#,
+        #"{"kind":"town-cell","x":2}"#,
+        #"{"kind":"town-cell","x":2,"y":3,"marker":2}"#,
+        #"{"kind":"retry-choice","index":2}"#,
+        #"{"kind":"retry-choice","index":1,"person":0}"#
     ] {try rejected("{\"format\":1,\"inputs\":[\(row)]}")}
+    let retry = try accepted(#"{"format":1,"inputs":[{"kind":"retry-choice","index":1},{"kind":"retry-choice","index":0}]}"#)
+    guard retry.inputs.map(\.kind) == [.retryChoice,.retryChoice],retry.inputs.map(\.index) == [1,0] else {
+        throw EngineError.invalid("Original play retry selector input lost its source result")
+    };checks += 1
     func primitive(_ row:String)throws->OriginalPlayInput {try accepted("{\"format\":1,\"inputs\":[\(row)]}").inputs[0]}
     func rejectedAction(_ action:()throws->Void)throws {
         do {try action()} catch BattleError.illegalAction {checks += 1;return}

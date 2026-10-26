@@ -19,7 +19,7 @@ func originalExplorationInputSelfTests() throws {
     let cities = [OriginalCity(chapter:0,id:0,name:"syntheticA",worldX:1,worldY:1,worldPositionKnown:true,worldMapKey:"world:0",townMapKey:"town:0"),
         OriginalCity(chapter:0,id:1,name:"syntheticB",worldX:3,worldY:3,worldPositionKnown:true,worldMapKey:"world:0",townMapKey:"town:0"),
         OriginalCity(chapter:0,id:2,name:"syntheticUnplaced",worldPositionKnown:false,worldMapKey:"world:0",townMapKey:"town:0")]
-    let catalog = OriginalExplorationCatalog(format:1,maps:[townMap,worldMap],chapterMappings:[OriginalChapterMapping(chapter:0,cityGroup:0,cityCount:3,cityBase:0,worldMapKey:"world:0")],
+    let catalog = OriginalExplorationCatalog(format:2,maps:[townMap,worldMap],chapterMappings:[OriginalChapterMapping(chapter:0,cityGroup:0,cityCount:3,cityBase:0,worldMapKey:"world:0")],
         cities:cities,actorBanks:[:],worldNeighbors:world,worldDirectionFrames:[0,0,2,2,4,4,6,6],worldPlacementDirections:Array(0..<8))
     let data = try DataSet(resources:Resources(format:1,maps:[:],actors:[:]),scene:Scene(format:1,id:"synthetic-input",name:"synthetic",width:640,height:400,coordinateSystem:"town",commands:[]))
     func runtime(_ map:OriginalExplorationMap,packed:Int)throws->Runtime {
@@ -104,6 +104,9 @@ func originalExplorationInputSelfTests() throws {
     let palaceMarker = try OriginalExplorationInput.townCell(catalog:catalog,state:palaceState,stage:palace,point:GridPoint(x:4,y:3),enabled:true)
     try palace.enqueueSourceRoute(person:0,route:palaceMarker.route,finalFacing:palaceMarker.route.last!.facing);palace.advance(microseconds:100_000)
     let palaceArrival = try OriginalExplorationInput.arrive(palaceMarker,catalog:catalog,state:palaceState,stage:palace)
-    try check(palaceArrival.event == .townDestination(marker:124,currentCity:9) && palaceArrival.unmatchedBuiltinBoundary != nil,"palace marker uses active PMAP walk facts and retains its unmatched built-in boundary")
+    try check(palaceArrival.event == .townDestination(marker:124,currentCity:9) && palaceArrival.builtin == .worldExit,"palace marker uses active PMAP walk facts and retains its unmatched built-in fallback")
+    try check(OriginalSettlementBuiltin.forMarker(125) == .returnToContext && OriginalSettlementBuiltin.forMarker(126) == nil &&
+              OriginalSettlementBuiltin.forMarker(2) == .roomEntry(marker:2) && OriginalSettlementBuiltin.forMarker(0x81) == nil,
+              "settlement fallback follows the source marker switch")
     print("Original exploration input self-tests passed: \(checks)")
 }

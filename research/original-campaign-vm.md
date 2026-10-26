@@ -57,12 +57,17 @@ victory flag is inserted by this VM.
 
 Town actor interaction reaches kind three after approaching the actor and
 setting the participants' facing (`0x26A79..0x26A85`). A town destination
-arrival reads the walk-cell key under the player and dispatches kind four with
-`[destinationKey,currentCity]` after matching the selected destination
-(`0x25255..0x25288`). World destination arrival first writes the new current
-city and then dispatches kind four with `[255,newCurrentCity]`
-(`0x23F3C..0x23F83`, `0x2222B..0x2223C`). A click alone does not establish
-that arrival. The VM exposes corresponding typed event constructors.
+arrival reads the walk-cell key under the player and calls the settlement
+wrapper with selector two and `[destinationKey,gameCity]` after matching the
+selected destination (`0x25255..0x25288`). World destination arrival first
+writes the new current city and then calls the world wrapper with selector two
+and `[255,newCurrentCity]` (`0x23F3C..0x23F83`, `0x2222B..0x2223C`). Selector
+two reaches `CF5:8346`, which swaps its two arguments before predicate
+`0x1DA24..0x1DA6C`: record kind two matches `[key,city]`, and record kind five
+matches `[city]` only on a world map. Earlier native code dispatched record
+kind four here; kind four is the battle adjacency probe (`CF5:82D6`, called
+from `0x2C1A2`). A click alone does not establish that arrival. The VM exposes
+corresponding typed event constructors.
 
 The source `15` chooser displays two MARK bitmap buttons, Yes first and No
 second. Their result values are one and zero respectively, independent of
@@ -143,3 +148,11 @@ optional list-wide OR one, then clear one for each listed city. The producer
 now emits `city-availability`; no inventory is changed. The city constructor
 or loader supplies the current chapter's flag array via `setCityFlags` and the
 VM owns the subsequent bit operation. Missing city ownership stays an error.
+The optional OR pass covers only the constructed count (`CF5:778E`). The clear
+pass uses lookup `CF5:2118` (`0x15A68..0x15A78`), which indexes the fixed
+32-object array at DS:`CC98` (constructed by `0x1B0B6`) without the chapter
+count. Chapter-one lists name slots up to 31 while that chapter constructs 22
+cities. Those slots are not selectable cities, and each chapter constructor
+rewrites its constructed flags (`0x1B04D`). The VM accepts identities below
+`0x20` and changes only constructed entries. Identities at or above `0x20`
+would use a null object and stay unsupported.

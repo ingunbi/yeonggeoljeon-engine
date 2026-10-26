@@ -12,6 +12,37 @@ import struct
 from prepare_scene import SceneError, dialogue, source_span, span, text_at
 
 
+MAIN_DATA_SEGMENT = 0x37DA0
+# main 1E5DD..1E5E7: push ds; push 2A2E; push 2; far call CF5:3C5E.
+RETRY_PROMPT_CALL = 0x1E5DD
+RETRY_PROMPT_CALL_LENGTH = 11
+RETRY_PROMPT_POINTER = 0x2A2E
+RETRY_PROMPT_SELECTOR = (0x0CF5, 0x3C5E)
+
+
+def framework_prompts(main: bytes) -> dict:
+    """Text owned by MAIN's outer framework rather than a scenario member.
+
+    After the framework map loop returns mask 20/40, main shows this text in
+    the two-button selector (Yes returns one, No returns zero). The producer
+    checks the examined push sequence instead of trusting a bare offset.
+    """
+    call = span(main, RETRY_PROMPT_CALL, RETRY_PROMPT_CALL_LENGTH, "MAIN.EXE")
+    if (call[0], call[1], call[4], call[5], call[6]) != (0x1E, 0x68, 0x6A, 2, 0x9A) or \
+            struct.unpack_from("<H", call, 2)[0] != RETRY_PROMPT_POINTER or \
+            struct.unpack_from("<HH", call, 7) != RETRY_PROMPT_SELECTOR[::-1]:
+        raise SceneError("MAIN.EXE retry selector call does not match the examined profile")
+    at = MAIN_DATA_SEGMENT + RETRY_PROMPT_POINTER
+    value, after = text_at(main, at, len(main), "MAIN.EXE")
+    if not value:
+        raise SceneError("MAIN.EXE retry selector text is empty")
+    return {"retryPrompt": {"text": value,
+                            "textSource": source_span("MAIN.EXE", main, at, after - at),
+                            "callSource": source_span("MAIN.EXE", main, RETRY_PROMPT_CALL, RETRY_PROMPT_CALL_LENGTH),
+                            "selectorMode": 2, "yesResult": 1, "noResult": 0,
+                            "presentationOrder": [1, 0]}}
+
+
 def stock_caption_index(text: str) -> int:
     """MAIN 18106..181D0 retains the last character in ASCII 30..41.
 
@@ -141,10 +172,10 @@ def compile_instructions(script: bytes, frames: list, text: bytes, bounds: tuple
             effect["kind"], effect["arguments"] = "no-op", [u16(data), u16(data, 2)]
         elif opcode == 0x0E:
             selector, selector_source = string(u16(data))
-            pointer = u16(main, 0x37DA0 + 0x24FE + stock_caption_index(selector) * 2)
-            value, after = text_at(main, 0x37DA0 + pointer, len(main), "MAIN.EXE")
+            pointer = u16(main, MAIN_DATA_SEGMENT + 0x24FE + stock_caption_index(selector) * 2)
+            value, after = text_at(main, MAIN_DATA_SEGMENT + pointer, len(main), "MAIN.EXE")
             effect["kind"] = "commands"
-            command("caption", text=value, textSource=source_span("MAIN.EXE", main, 0x37DA0 + pointer, after - (0x37DA0 + pointer)))
+            command("caption", text=value, textSource=source_span("MAIN.EXE", main, MAIN_DATA_SEGMENT + pointer, after - (MAIN_DATA_SEGMENT + pointer)))
             effect["selectorSource"] = selector_source
         elif opcode == 9:
             packed = u16(data)

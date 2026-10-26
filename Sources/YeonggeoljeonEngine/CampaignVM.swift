@@ -42,11 +42,27 @@ struct OriginalCampaignRecord: Codable {
     var source: JSONValue?
 }
 
+/// MAIN framework text exported by the local producer (main1E5DD..1E5E7).
+struct OriginalFrameworkText: Codable, Equatable {
+    var text: String
+    var textSource: JSONValue?
+    var callSource: JSONValue?
+    var selectorMode: Int?
+    var yesResult: Int?
+    var noResult: Int?
+    var presentationOrder: [Int]?
+}
+
+struct OriginalFrameworkPrompts: Codable, Equatable {
+    var retryPrompt: OriginalFrameworkText?
+}
+
 struct OriginalCampaignProgram: Codable {
     var format: Int
     var records: [OriginalCampaignRecord]
     var sourceDigest: String?
     var profile: String?
+    var framework: OriginalFrameworkPrompts?
     var limitations: [String]?
 
     static func load(from url: URL) throws -> OriginalCampaignProgram {
@@ -64,6 +80,13 @@ struct OriginalCampaignProgram: Codable {
     func validate() throws {
         guard format == 1, !records.isEmpty, records.count <= 16384 else {
             throw EngineError.invalid("Unsupported original campaign program format or record count")
+        }
+        if let prompt = framework?.retryPrompt {
+            guard !prompt.text.isEmpty, prompt.text.count <= 256,
+                  prompt.yesResult.map({ $0 == 1 }) ?? true, prompt.noResult.map({ $0 == 0 }) ?? true,
+                  prompt.presentationOrder.map({ $0 == [1, 0] }) ?? true else {
+                throw EngineError.invalid("Original framework retry prompt facts are invalid")
+            }
         }
         var ids = Set<String>(), locations = Set<String>()
         for record in records {
@@ -118,11 +141,15 @@ struct OriginalCampaignEvent: Codable, Equatable {
     static func townActor(person: Int) -> OriginalCampaignEvent {
         OriginalCampaignEvent(kind: 3, arguments: [person])
     }
+    /// Settlement (MAIN25282..25288) and world (23F7D..23F83) arrivals call
+    /// their wrappers with selector two. That selector reaches CF5:8346,
+    /// whose predicate (MAIN1DA24..1DA6C) matches record kind2 [key,city],
+    /// or kind5 [city] on a world map. Record kind4 is battle adjacency.
     static func townDestination(marker: Int, currentCity: Int) -> OriginalCampaignEvent {
-        OriginalCampaignEvent(kind: 4, arguments: [marker, currentCity])
+        OriginalCampaignEvent(kind: 2, arguments: [marker, currentCity])
     }
     static func worldDestination(currentCity: Int) -> OriginalCampaignEvent {
-        OriginalCampaignEvent(kind: 4, arguments: [255, currentCity])
+        OriginalCampaignEvent(kind: 2, arguments: [255, currentCity])
     }
 }
 
@@ -402,15 +429,23 @@ final class CampaignVM {
         state.cityFlagsChapter = chapter
     }
 
-    /// MAIN2028E..202D7: optional list-wide OR1, then clear1 for listed cities.
-    /// This affects world-city availability, not any item inventory.
+    /// MAIN2028E..202D7: optional OR1 over the constructed count (CF5:778E),
+    /// then clear1 for listed cities. This affects world-city availability,
+    /// not any item inventory. The clear uses lookup CF5:2118
+    /// (MAIN15A68..15A78), which indexes the fixed 32-object array at DS:CC98
+    /// (MAIN1B0B6) without the chapter count. Source lists name slots beyond
+    /// the constructed cities; those slots are not chapter cities, and the
+    /// next chapter constructor rewrites constructed flags (MAIN1B04D), so no
+    /// selectable city changes. Identities >= 0x20 return a null object.
     func applyCityAvailability(clearFirst: Bool, cities: [Int]) throws {
-        guard var flags = state.cityFlags, state.cityFlagsChapter == state.chapter,
-              cities.allSatisfy({ flags.indices.contains($0) }) else {
-            throw EngineError.invalid("Source city availability requires its constructed city flags and valid city identities")
+        guard var flags = state.cityFlags, state.cityFlagsChapter == state.chapter else {
+            throw EngineError.invalid("Source city availability requires its constructed city flags")
+        }
+        guard cities.allSatisfy({ (0..<0x20).contains($0) }) else {
+            throw EngineError.invalid("Source city lookup returns a null object for identities at or above 0x20")
         }
         if clearFirst { for id in flags.indices { flags[id] |= 1 } }
-        for id in cities { flags[id] &= ~UInt8(1) }
+        for id in cities where flags.indices.contains(id) { flags[id] &= ~UInt8(1) }
         state.cityFlags = flags
     }
 

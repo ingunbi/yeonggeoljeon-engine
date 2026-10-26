@@ -299,7 +299,7 @@ do {
         try originalScriptActionSelfTests();try originalPartySelfTests();try originalPartyIntegrationSelfTests()
         try originalEndingSelfTests();try originalBattleSpriteSelfTests();try originalRetirementSelfTests()
         try originalStrategyFlowInputSelfTests();try originalPlayInputSelfTests();try originalExplorationInputSelfTests()
-        try originalAttackOperationSelfTests();exit(0)
+        try originalAttackOperationSelfTests();try originalFrameworkSelfTests();exit(0)
     }
     guard let root = options.data ?? Bundle.main.resourceURL?.appendingPathComponent("GameData",isDirectory:true) else {
         throw EngineError.invalid("Use --data PATH or an app bundle containing Resources/GameData")

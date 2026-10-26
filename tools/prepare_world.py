@@ -19,6 +19,9 @@ from prepare_scene import read_resource, span
 from resource_formats import Archive, IndexedImage, ResourceError, planar_image, png_bytes, settlement_map
 
 DGROUP = 0x37DA0
+# SSCCHR1 members holding eight equal world-actor patterns in the examined
+# profile. Person field2B values 2..7 select them directly.
+WORLD_BANK_MEMBERS = range(2, 8)
 
 
 def world_layout(payload: bytes, columns: int, rows: int) -> dict:
@@ -215,7 +218,11 @@ def prepare(game: Path, output: Path) -> dict:
     for person in range(384):
         constant_at, state_at = 0x1100 + person * 21, 0x3080 + person * 18
         sprite, role = people[constant_at + 16], people[state_at + 1]
-        if sprite >= len(town_images) or role >= 6:
+        # MAIN 1AAEE..1AAF3 constructs person field 2B as state byte one plus
+        # two. World actors load SSCCHR1 member field2B (MAIN 1FC24, 189A4,
+        # 18448..1847D); script opcode 2F writes the same field directly.
+        bank = (role + 2) & 0xFF
+        if sprite >= len(town_images) or bank not in WORLD_BANK_MEMBERS:
             raise ResourceError("person references an absent source actor bank")
         image, source = town_images[sprite]
         actors["town"][str(person)] = {"image": image, "frameWidth": 32, "frameHeight": 40, "frames": 4,
@@ -223,11 +230,12 @@ def prepare(game: Path, output: Path) -> dict:
                                        "directions": [{"frame": 2, "flip": True}, {"frame": 0, "flip": True},
                                                       {"frame": 0, "flip": False}, {"frame": 2, "flip": False}],
                                        "source": source}
-        people_banks.append({"person": person, "townSprite": sprite, "worldRole": role,
+        people_banks.append({"person": person, "townSprite": sprite, "worldRole": role, "worldBank": bank,
                              "source": {"resource": "BAKDATA.R3", "townSpriteOffset": constant_at + 16,
-                                        "worldRoleOffset": state_at + 1}})
-    for role in range(6):
-        member = props_archive.decode(role + 2)
+                                        "worldRoleOffset": state_at + 1,
+                                        "worldBankConstructor": "MAIN.EXE:0x1AAEE..0x1AAF3"}})
+    for bank in WORLD_BANK_MEMBERS:
+        member = props_archive.decode(bank)
         pictures, pattern_sources = object_bank(member.data)
         if len(pictures) != 8 or len({(picture.width, picture.height) for picture in pictures}) != 1:
             raise ResourceError("world actor role does not contain eight equal-geometry source patterns")
@@ -235,11 +243,12 @@ def prepare(game: Path, output: Path) -> dict:
         canvas = bytearray(width * 8 * height)
         for frame, picture in enumerate(pictures):
             paint(canvas, width * 8, height, picture, frame * width, 0)
-        actors["world"][str(role)] = {"image": write(f"world-role-{role}", IndexedImage(width * 8, height, bytes(canvas)), 1, True),
+        actors["world"][str(bank)] = {"image": write(f"world-bank-{bank}", IndexedImage(width * 8, height, bytes(canvas)), 1, True),
                                       "frameWidth": width, "frameHeight": height, "frames": 8,
                                       "anchorX": 0, "anchorY": height - 32, "flip": False,
                                       "source": {**member.provenance(), "patterns": pattern_sources,
-                                                 "selection": "source person role + 2; MAIN.EXE:0x2228C..0x2238C"}}
+                                                 "selection": "SSCCHR1 member = person field2B; MAIN.EXE:0x1FC00..0x1FC54, 0x18942..0x189AE, 0x18448..0x1847D",
+                                                 "draw": "MAIN.EXE:0x2228C..0x2238C"}}
     dx = struct.unpack("<8h", span(main, DGROUP + 0x2F1C, 16, "world x neighbors"))
     dy = struct.unpack("<8h", span(main, DGROUP + 0x2F2C, 16, "world y neighbors"))
     frames = list(span(main, DGROUP + 0x2FA6, 8, "world direction base patterns"))
@@ -250,7 +259,7 @@ def prepare(game: Path, output: Path) -> dict:
         raise ResourceError("world direction tables exceed the examined geometry")
     if inventory(game) != before:
         raise ResourceError("original file hashes changed during exploration export")
-    result = {"format": 1, "maps": maps, "chapterMappings": chapters, "cities": cities,
+    result = {"format": 2, "worldBankKey": "person-field-2B", "maps": maps, "chapterMappings": chapters, "cities": cities,
               "actorBanks": actors, "peopleBanks": people_banks,
               "worldNeighbors": [{"dx": x, "dy": y, "direction": index} for index, (x, y) in enumerate(zip(dx, dy))],
               "worldDirectionFrames": frames,
@@ -263,7 +272,8 @@ def prepare(game: Path, output: Path) -> dict:
                                              "placementOffset":DGROUP+0x2EE6,"placementWords":8}},
               "limitations": ["Static source extraction does not establish native exploration or full campaign parity.",
                               "Default town/world palettes are exported; grayscale and dynamic palette changes remain unsupported.",
-                              "World role references are original initial values; subsequent role changes belong to native person state.",
+                              "World bank keys are SSCCHR1 members selected by person field2B; peopleBanks keep raw BAKDATA state byte one separately.",
+                              "Non-person world actors use SSCCHR1 member three in the source allocator; script placement here covers person actors only.",
                               "City scripts, citizens, interactive destinations and shop flows require their own source execution models."]}
     temporary = output / ".exploration.json.tmp"
     temporary.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
