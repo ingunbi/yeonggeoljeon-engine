@@ -90,9 +90,12 @@ The fallbacks rewrite game object `7A6C` (+0/+1 position, +5 kind, +6 index,
 (`25228..25230`). An ordinary key enters room map `2000|key` at (8,15): it
 saves game map and the player's position into `7A76` (`1CB6:1924`, which ends
 at `24EB7..24EC6`) before writing the room (`252C5..25310`). Marker7C enters
-the world map indexed by player field `12` (`25320..25358`); because `CF5:778E`
-indexes the DS:`1360` city-group counts with that field, the native host uses
-the chapter's city group. Marker7D copies kind, index and position from
+the world map indexed by player field `12` (`25320..25358`). Source `12`
+stores the new chapter there (`1C7D8..1C7DA`, `1EBA2..1EBA7`), and
+`CF5:777A` maps that chapter through DS:`0EBC` to its city group
+(`1B0CA..1B0DC`). Scripts select world index zero in every chapter; the
+built-in exit keeps the chapter index, and the world picture still follows
+the chapter mapping. Marker7D copies kind, index and position from
 `7A76` and sets +9 (`25368..253B4`). Every fallback sets entry byte one.
 
 The framework loop then enters the game-object map. Settlement entry with

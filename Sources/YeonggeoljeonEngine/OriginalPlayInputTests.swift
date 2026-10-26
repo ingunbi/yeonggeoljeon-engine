@@ -65,11 +65,15 @@ func originalPlayInputSelfTests() throws {
         #"{"kind":"save-skip","person":null}"#,
         #"{"kind":"battle-teleport","slot":0,"x":2,"y":3}"#,
         #"{"kind":"retry-choice"}"#,
+        #"{"kind":"save-native","index":0}"#,
         #"{"kind":"town-cell","x":2}"#,
         #"{"kind":"town-cell","x":2,"y":3,"marker":2}"#,
         #"{"kind":"retry-choice","index":2}"#,
         #"{"kind":"retry-choice","index":1,"person":0}"#
     ] {try rejected("{\"format\":1,\"inputs\":[\(row)]}")}
+    guard try accepted(#"{"format":1,"inputs":[{"kind":"save-native"}]}"#).inputs.first?.kind == .saveNative else {
+        throw EngineError.invalid("Original play native save input was not accepted")
+    };checks += 1
     let retry = try accepted(#"{"format":1,"inputs":[{"kind":"retry-choice","index":1},{"kind":"retry-choice","index":0}]}"#)
     guard retry.inputs.map(\.kind) == [.retryChoice,.retryChoice],retry.inputs.map(\.index) == [1,0] else {
         throw EngineError.invalid("Original play retry selector input lost its source result")

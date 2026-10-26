@@ -13,13 +13,31 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private var partyNote:NSTextField?
     override var isFlipped:Bool { true }
     override var acceptsFirstResponder:Bool { true }
-    init(data:DataSet) throws {
+    convenience init(data:DataSet) throws {
         let c = Calendar.current.dateComponents([.day,.hour,.minute,.second],from:Date())
         func bcd(_ n:Int?) -> UInt8 { let v = n ?? 0;return UInt8(((v/10)<<4)|(v%10)) }
-        host = try OriginalCampaignHost(data:data,rng:OriginalRNG.clockSeed(dayByte:bcd(c.day),hourByte:bcd(c.hour),minuteByte:bcd(c.minute),secondByte:bcd(c.second)))
-        renderer = try Renderer(data)
+        try self.init(host:OriginalCampaignHost(data:data,rng:OriginalRNG.clockSeed(dayByte:bcd(c.day),hourByte:bcd(c.hour),minuteByte:bcd(c.minute),secondByte:bcd(c.second))))
+    }
+    init(host:OriginalCampaignHost) throws {
+        self.host = host
+        renderer = try Renderer(host.data)
         super.init(frame:CGRect(x:0,y:0,width:960,height:640))
         timer = Timer.scheduledTimer(withTimeInterval:1.0/60,repeats:true) { [weak self] _ in self?.tick() }
+    }
+    /// Native saves live outside the app bundle and the original GAME folder.
+    static func savesDirectory() throws -> URL {
+        let base = try FileManager.default.url(for:.applicationSupportDirectory,in:.userDomainMask,appropriateFor:nil,create:true)
+        let folder = base.appendingPathComponent("Yeonggeoljeon Engine",isDirectory:true).appendingPathComponent("Saves",isDirectory:true)
+        try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+        return folder
+    }
+    /// Asks for a native resume file and returns a host continuing after its
+    /// source3D prompt, or nil when the panel is cancelled.
+    static func chooseResume(data:DataSet) throws -> OriginalCampaignHost? {
+        let panel = NSOpenPanel();panel.allowedContentTypes = [.json];panel.allowsMultipleSelection = false
+        panel.directoryURL = try savesDirectory();panel.message = "자체 엔진 저장 파일을 고르세요."
+        guard panel.runModal() == .OK,let url = panel.url else { return nil }
+        return try OriginalCampaignHost.resume(data:data,from:OriginalCampaignResume.read(from:url))
     }
     required init?(coder:NSCoder) { fatalError("init(coder:) is not supported") }
     func stop() { timer?.invalidate();timer = nil }
@@ -54,12 +72,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     /// Exit code4 makes HERO.COM execute MAIN again. The engine replaces this
     /// campaign host with a new one; MAIN's own title menu is not restored.
     private func restartMain() {
-        guard let window = window else { return }
-        stop()
-        do {
-            let next = try OriginalCampaignView(data:host.data)
-            window.contentView = next;window.makeFirstResponder(next)
-        } catch { errorText = "\(error)";needsDisplay = true }
+        do { replace(with:try OriginalCampaignView(data:host.data)) }
+        catch { errorText = "\(error)";needsDisplay = true }
     }
     private func synchronizeBattle() throws {
         guard host.ending == nil,host.frameworkReturn?.outcome != .quit,host.stage.palette == 3,let session = host.battle else {
@@ -148,21 +162,63 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             do { try host.choose(selector.indexOfSelectedItem) } catch { errorText = "\(error)" }
         }
     }
+    private func ask(_ text:String,detail:String = "") -> Bool {
+        let alert = NSAlert();alert.messageText = text;alert.informativeText = detail
+        alert.addButton(withTitle:"예 (Yes)");alert.addButton(withTitle:"아니요 (No)")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+    /// Source3D (MAIN22A62..22AA1): Yes opens the save destination; a
+    /// cancelled or failed save asks the decline check, whose No retries.
+    /// The written file is native engine state, not an original MSAVE slot.
     private func presentSave() {
         presenting = true;defer { presenting = false }
-        let alert = NSAlert();alert.messageText = "현재 자체 엔진 상태를 내보낼까요?"
-        alert.informativeText = "원작 저장 파일과 다른 연구용 JSON 형식입니다. 이어하기 복원은 아직 지원하지 않습니다."
-        alert.addButton(withTitle:"저장 없이 계속");alert.addButton(withTitle:"상태 내보내기…")
-        let result = alert.runModal()
-        do {
-            if result == .alertSecondButtonReturn {
-                let panel = NSSavePanel();panel.nameFieldStringValue = "engine-state.json"
-                guard panel.runModal() == .OK,let url = panel.url else { return }
-                let encoder = JSONEncoder();encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
-                try encoder.encode(host.snapshot()).write(to:url,options:.atomic)
+        let framework = host.framework
+        let question = framework?.savePrompt?.text ?? "여기서 저장할까요?"
+        if ask(question,detail:"자체 엔진 형식으로 저장합니다. 원작 세이브 슬롯과는 다른 파일입니다.") {
+            while true {
+                do {
+                    let snapshot = try host.resumeSnapshot()
+                    let panel = NSSavePanel();panel.allowedContentTypes = [.json];panel.directoryURL = try Self.savesDirectory()
+                    let state = host.vm.state
+                    panel.nameFieldStringValue = "chapter\(state.chapter)-\(state.member)-\(state.block)-\(Int(Date().timeIntervalSince1970)).json"
+                    if panel.runModal() == .OK,let url = panel.url {
+                        let encoder = JSONEncoder();encoder.outputFormatting = [.prettyPrinted,.sortedKeys,.withoutEscapingSlashes]
+                        try encoder.encode(snapshot).write(to:url,options:.atomic)
+                        break
+                    }
+                } catch {
+                    let alert = NSAlert();alert.messageText = "저장하지 못했습니다.";alert.informativeText = "\(error)";alert.runModal()
+                }
+                if ask(framework?.saveDeclinePrompt?.text ?? "저장하지 않고 진행할까요?") { break }
             }
-            try host.completeSaveRequest()
-        } catch { errorText = "\(error)" }
+        }
+        do { try host.completeSaveRequest() } catch { errorText = "\(error)" }
+    }
+    /// MAIN CF5:C050 menu after the title. Item0 starts, item1 resumes a
+    /// native save, item2 (CF5:BFDE settings) is not restored, and item3
+    /// returns to the opening, as exit code0 runs OPEN before MAIN again.
+    private func presentTitleMenu() {
+        presenting = true;defer { presenting = false }
+        let items = host.framework?.titleMenu?.map(\.text) ?? ["새로 시작","이어하기","기능설정","오프닝"]
+        let alert = NSAlert();alert.messageText = "영걸전"
+        for item in items { alert.addButton(withTitle:item) }
+        let chosen = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        do {
+            switch chosen {
+            case 0: try host.acknowledge()
+            case 1:
+                guard let resumed = try Self.chooseResume(data:host.data) else { return }
+                replace(with:try OriginalCampaignView(host:resumed))
+            case 2:
+                let notice = NSAlert();notice.messageText = "기능설정(CF5:BFDE)은 아직 복원하지 않았습니다.";notice.runModal()
+            case 3: replace(with:try OriginalCampaignView(data:host.data))
+            default: return
+            }
+        } catch { recordInputError(error) }
+    }
+    private func replace(with next:OriginalCampaignView) {
+        guard let window = window else { return }
+        stop();window.contentView = next;window.makeFirstResponder(next)
     }
     override func draw(_ dirtyRect:NSRect) {
         NSColor.black.setFill();bounds.fill()
@@ -183,6 +239,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         if event.keyCode == 53 || host.frameworkReturn?.outcome == .quit { window?.performClose(nil);return }
         if [36,49,76].contains(event.keyCode),!event.isARepeat {
             inputNotice = nil
+            if !host.hasStarted { presentTitleMenu();needsDisplay = true;return }
             do { try host.acknowledge() } catch { recordInputError(error) };needsDisplay = true
         }
     }
@@ -194,6 +251,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         // MAIN1E3A8 waits for one input before main exits with code3.
         if host.frameworkReturn?.outcome == .quit { window?.performClose(nil);return }
         inputNotice = nil
+        if !host.hasStarted { presentTitleMenu();needsDisplay = true;return }
         do {
             if host.explorationInputReady,[0,1,2].contains(host.vm.state.packedMap>>12) {
                 let scale = min(bounds.width/640,(bounds.height-40)/400)

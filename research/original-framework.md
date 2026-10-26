@@ -57,8 +57,9 @@ producer exports the DS:`2A2E` text into local GameData after checking the
 examined push sequence; public source contains no original string.
 
 The campaign window shows the selector over the current screen. Yes replaces
-the campaign host with a new one. MAIN's title menu (`CF5:C050`), original
-save slots and the `0x1E3A8` pictures are not restored. No leaves a native
+the campaign host with a new one, which shows MAIN's title menu as described in
+[the resume note](native-resume.md). Original save slots and the `0x1E3A8`
+pictures are not restored. No leaves a native
 status line and closes the window on the next input. The replay driver accepts
 `{kind:"retry-choice",index}` and stops after recording the outcome.
 

@@ -79,6 +79,12 @@ final class OriginalPeople {
         }
         self.values = values
     }
+    /// Native resume replaces every shared person value at once. The values
+    /// are already constructed objects (field2B domain), not catalog rows.
+    func restore(_ list:[OriginalPersonDefinition]) throws {
+        try OriginalPersonCatalog(format:1,people:list).validate()
+        values = Dictionary(uniqueKeysWithValues:list.map{($0.id,$0)})
+    }
     func person(_ id:Int) throws -> OriginalPersonDefinition {
         guard let value = values[id] else { throw BattleError.invalid("Original shared person identity \(id) is unavailable") }
         return value

@@ -352,6 +352,40 @@ final class Runtime {
         camera = [x*16,y*16]
     }
     var viewport: [Int] { currentMap?.viewport ?? data.scene.viewport ?? [16,16,512,320] }
+    /// Native resume of an idle host-driven scene. Only a stage with no
+    /// queued command, dialogue, movement, wait, fade or terminal state can be
+    /// restored. The caller configures the map resource first.
+    func restoreIdle(_ value:Snapshot) throws {
+        guard hostDriven,mode == "title",commands.isEmpty,cursor == 0,value.mode == "scene",value.dialogue == nil,
+              value.batch == nil,value.termination == nil,value.endReason == nil,value.microseconds >= 0,
+              value.camera.count == 2,value.blackAlpha >= 0,value.blackAlpha <= 1,
+              (0...3).contains(value.palette ?? 0),value.inputCount >= 0 else {
+            throw EngineError.invalid("Native resume requires an idle host-driven scene snapshot")
+        }
+        if let id = value.map {
+            guard hostMaps[id] != nil || data.resources.maps[String(id)] != nil else {
+                throw EngineError.invalid("Native resume map resource is not configured")
+            }
+        } else if !value.actors.isEmpty { throw EngineError.invalid("Native resume actors have no map") }
+        let previousMap = mapID
+        mapID = value.map
+        do {
+            guard Set(value.actors.map(\.person)).count == value.actors.count,
+                  Set(value.actors.map(\.registration)).count == value.actors.count,
+                  value.actors.allSatisfy({ !$0.walking && $0.registration >= 0 && (0..<8).contains($0.facing) }) else {
+                throw EngineError.invalid("Native resume actor identities or states are invalid")
+            }
+            for actor in value.actors { try validateGridPosition(actor.position) }
+            if let person = value.followPerson,!value.actors.contains(where:{$0.person == person}) {
+                throw EngineError.invalid("Native resume follow target is absent")
+            }
+        } catch { mapID = previousMap;throw error }
+        mode = "scene";clock = value.microseconds;camera = value.camera;blackAlpha = value.blackAlpha
+        actors = Dictionary(uniqueKeysWithValues:value.actors.map{($0.person,$0)})
+        registration = (value.actors.map(\.registration).max() ?? -1)+1
+        visible = value.visible;caption = value.caption;followPerson = value.followPerson
+        storyPanel = value.storyPanel;palette = value.palette ?? 0;inputCount = value.inputCount
+    }
     func snapshot() -> Snapshot {
         Snapshot(mode: mode, microseconds: clock, nextCommand: cursor, map: mapID,
                  camera: camera, blackAlpha: blackAlpha,

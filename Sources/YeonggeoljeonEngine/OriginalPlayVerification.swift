@@ -7,7 +7,7 @@ import CryptoKit
 struct OriginalPlayInput: Codable, Equatable {
     enum Kind: String, Codable {
         case talk, choice
-        case saveSkip = "save-skip", worldCity = "world-city", townMarker = "town-marker", townCell = "town-cell"
+        case saveSkip = "save-skip", saveNative = "save-native", worldCity = "world-city", townMarker = "town-marker", townCell = "town-cell"
         case partyToggle = "party-toggle", partyConfirm = "party-confirm", expectBattle = "expect-battle"
         case battleMove = "battle-move", battleAttack = "battle-attack", battleStrategy = "battle-strategy"
         case battleWait = "battle-wait", battleEndTurn = "battle-end-turn"
@@ -40,7 +40,7 @@ struct OriginalPlayInput: Codable, Equatable {
         case .worldCity: allowed = ["city"]
         case .townMarker: allowed = ["marker"]
         case .expectBattle: allowed = battleID == nil ? [] : ["battleID"]
-        case .saveSkip,.partyConfirm: allowed = []
+        case .saveSkip,.saveNative,.partyConfirm: allowed = []
         case .battleMove: allowed = ["slot","x","y"]
         case .townCell: allowed = ["x","y"]
         case .battleAttack: allowed = ["slot","target"]
@@ -162,6 +162,9 @@ struct OriginalPlayVerification: Codable {
     var failure: String?
     var sourceFailure: CampaignVMFailureRecord?
     var reachedBattles: [String]
+    var resumedFrom: String?
+    var resumeSHA256: String?
+    var nativeSaves: [String]
     var frameworkReturn: OriginalFrameworkReturn?
     var observations: [OriginalPlayObservation]
     var final: OriginalCampaignCheckpoint
@@ -169,13 +172,23 @@ struct OriginalPlayVerification: Codable {
     var limitations: [String]
 }
 
-func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL) throws {
+func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resume resumeURL: URL? = nil) throws {
     let bytes = try OriginalPlayInputs.readData(from:inputURL)
     let selected = try OriginalPlayInputs.decode(bytes)
+    guard resumeURL == nil || selected.seed == nil else {
+        throw EngineError.invalid("A resumed replay takes its RNG from the native save; remove the input seed")
+    }
     let output = try verificationDirectory(output, excluding: data.root)
     let seed = selected.seed ?? 1, fixedStep = selected.fixedStepMicroseconds ?? 10_000
     let budget = selected.maximumTicksPerInput ?? 20_000
-    let host = try OriginalCampaignHost(data: data, rng: OriginalRNG(state: seed))
+    var resumeDigest: String?
+    let host: OriginalCampaignHost
+    if let url = resumeURL {
+        let saveBytes = try Data(contentsOf: url)
+        resumeDigest = SHA256.hash(data: saveBytes).map { String(format: "%02x", $0) }.joined()
+        host = try OriginalCampaignHost.resume(data: data, from: OriginalCampaignResume.read(from: url))
+    } else { host = try OriginalCampaignHost(data: data, rng: OriginalRNG(state: seed)) }
+    var nativeSaves: [String] = []
     let renderer = try Renderer(data)
     var battleView: OriginalBattleView?, reachedBattles: [String] = []
     var observations: [OriginalPlayObservation] = [], totalTicks = 0
@@ -229,7 +242,7 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL) thro
             battleStage: host.stage.palette == 3 ? host.battle?.turns.stage : nil, frame: name))
     }
     do {
-        try host.acknowledge()
+        if resumeURL == nil { try host.acknowledge() }
         let initialTicks = try settle()
         try capture(index: nil, input: nil, ticks: initialTicks)
         for (index, input) in selected.inputs.enumerated() {
@@ -243,6 +256,13 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL) thro
             case .choice: try host.choose(input.index!)
             case .saveSkip:
                 guard host.saveRequest != nil else { throw EngineError.invalid("Play save-skip has no matching source save request") }
+                try host.completeSaveRequest()
+            case .saveNative:
+                guard host.saveRequest != nil else { throw EngineError.invalid("Play save-native has no matching source save request") }
+                let name = "native-save-\(nativeSaves.count).json"
+                let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys,.withoutEscapingSlashes]
+                try encoder.encode(try host.resumeSnapshot()).write(to: output.appendingPathComponent(name), options: .atomic)
+                nativeSaves.append(name)
                 try host.completeSaveRequest()
             case .worldCity: _ = try host.travel(toCity: input.city!)
             case .townMarker: _ = try host.townDestination(marker: input.marker!)
@@ -278,6 +298,7 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL) thro
         inputSHA256: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(), seed: seed,
         fixedStepMicroseconds: fixedStep, maximumTicksPerInput: budget, completedInputs: completed,
         failedInputIndex: failedIndex, failure: failure, sourceFailure: sourceFailure, reachedBattles: reachedBattles,
+        resumedFrom: resumeURL?.path, resumeSHA256: resumeDigest, nativeSaves: nativeSaves,
         frameworkReturn: host.frameworkReturn,
         observations: observations, final: host.snapshot(), trace: host.stage.trace,
         limitations: ["Only caller-selected native inputs are replayed; no campaign state, flags, result or unit is injected.",

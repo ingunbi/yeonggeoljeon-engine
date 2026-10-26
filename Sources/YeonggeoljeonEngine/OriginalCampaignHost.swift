@@ -14,6 +14,38 @@ struct OriginalCampaignCheckpoint:Codable {
     var battleValue24:Int?
 }
 
+/// Native engine resume point taken at a source3D save prompt. This is not
+/// an original MSAVE slot: MAIN's own save/load (CF5:B58C, title item one)
+/// is not replicated. It retains host-owned continuation state so the same
+/// source cursor continues after the prompt.
+struct OriginalCampaignResume:Codable {
+    static let maximumBytes = 32 * 1024 * 1024
+    var format = 1
+    var kind = "native-engine-resume"
+    var checkpoint:OriginalCampaignCheckpoint
+    var saveOffset:Int
+    var controllerInvocationPending:Bool
+    var controllerIdle:Bool
+    var controllerAfterInvocationFacings:[OriginalExplorationFacing]
+    var currentEventPerson:Int?
+    var carryover:OriginalPartyCarryover?
+    var retryCheckpoint:OriginalCampaignCheckpoint?
+    var uncertainReturnContext:OriginalCampaignReturnContext?
+    var limitations:[String]
+
+    static func read(from url:URL) throws -> Self {
+        let attributes = try FileManager.default.attributesOfItem(atPath:url.path)
+        guard let size = attributes[.size] as? NSNumber,(1...maximumBytes).contains(size.intValue) else {
+            throw EngineError.invalid("Native resume file exceeds its input bound")
+        }
+        let value = try JSONDecoder().decode(Self.self,from:Data(contentsOf:url))
+        guard value.format == 1,value.kind == "native-engine-resume" else {
+            throw EngineError.invalid("Native resume file has an unsupported format")
+        }
+        return value
+    }
+}
+
 /// Owns native state effects for registered source operations. A VM instruction
 /// is acknowledged only after its handler completed; unregistered effects stop
 /// at the exact original record/offset. The record browser never advances this.
@@ -102,14 +134,15 @@ final class OriginalCampaignHost {
         if let waiting = waiting { return "\(waiting.chapter):\(waiting.member):\(waiting.block):\(waiting.groupBase) · 원작 이벤트 대기 \(waiting.eventKinds)" }
         return "\(vm.state.chapter):\(vm.state.member):\(vm.state.block):\(vm.state.groupBase)"
     }
-    init(data:DataSet,rng:OriginalRNG) throws {
+    convenience init(data:DataSet,rng:OriginalRNG) throws { try self.init(data:data,rng:rng,vmState:nil) }
+    private init(data:DataSet,rng:OriginalRNG,vmState:OriginalCampaignState?) throws {
         self.data = data;self.rng = rng;source = try OriginalGameData(root:data.root)
         people = try OriginalPeople(catalog:source.people,tables:source.combat)
         exploration = try OriginalExplorationCatalog.load(from:data.root.appendingPathComponent("exploration.json"))
         story = try OriginalStoryCatalog.load(from:data.root.appendingPathComponent("story.json"))
         retirementCatalog = try OriginalRetirementCatalog.load(from:data.root.appendingPathComponent("retirement.json"))
         let program = try OriginalCampaignProgram.load(from:data.root.appendingPathComponent("campaign.json"))
-        vm = try CampaignVM(program:program,supportedHostOpcodes:[2,3,7,0x10,0x11,0x1B,0x1C,0x20,0x22,0x23,0x24,0x26,0x27,0x28,0x29,0x2A,0x2D,0x2F,0x33,0x34,0x35,0x37,0x39,0x3A,0x2B,0x36,0x38,0x3B,0x3C,0x3D])
+        vm = try CampaignVM(program:program,state:vmState ?? OriginalCampaignState(),supportedHostOpcodes:[2,3,7,0x10,0x11,0x1B,0x1C,0x20,0x22,0x23,0x24,0x26,0x27,0x28,0x29,0x2A,0x2D,0x2F,0x33,0x34,0x35,0x37,0x39,0x3A,0x2B,0x36,0x38,0x3B,0x3C,0x3D])
         stage = Runtime(data,hostDriven:true)
     }
     func acknowledge() throws {
@@ -219,12 +252,10 @@ final class OriginalCampaignHost {
                 }
                 try enterNativeMap(packedMap:back.packedMap,spawn:GridPoint(x:back.x,y:back.y),sourceFacing:4)
             case .worldExit:
-                // Game index is player+12. CF5:778E indexes DS:1360 with that
-                // field, so it is the chapter's city group (static inference).
-                guard let mapping = exploration.chapterMappings.first(where:{$0.chapter == vm.state.chapter}) else {
-                    throw EngineError.invalid("Original town exit has no chapter city group")
-                }
-                try enterNativeMap(packedMap:0x1000|mapping.cityGroup,spawn:nil,sourceFacing:0)
+                // Game index is player+12. Source12 stores the new chapter
+                // there (MAIN1C7D8..1C7DA, 1EBA2..1EBA7); CF5:777A maps it
+                // through DS:0EBC to the city group (MAIN1B0CA..1B0DC).
+                try enterNativeMap(packedMap:0x1000|(vm.state.chapter & 0xFF),spawn:nil,sourceFacing:0)
             }
         } catch {
             failure = CampaignVMFailure(recordID:vm.activeRecord?.id,opcode:nil,sourceOffset:nil,reason:"\(error)")
@@ -557,8 +588,12 @@ final class OriginalCampaignHost {
         guard var value = frameworkReturn else { throw EngineError.invalid("No original retry selector is pending") }
         try value.answer(result);frameworkReturn = value
     }
-    /// Original MAIN DS:2A2E text, exported locally by the campaign producer.
+    /// Original MAIN framework texts, exported locally by the campaign producer.
     var retryPromptText:String? { vm.program.framework?.retryPrompt?.text }
+    var framework:OriginalFrameworkPrompts? { vm.program.framework }
+    /// The title stage precedes MAIN's menu; any source state begins only
+    /// after the new-game choice (or a native resume).
+    var hasStarted:Bool { started }
     private func completeSelectedMap(_ request:CampaignVMMapRequest) -> Bool {
         do { try loadSelectedMap(request);return true }
         catch {
@@ -664,9 +699,62 @@ final class OriginalCampaignHost {
         guard let mapping = exploration.chapterMappings.first(where:{$0.chapter == vm.state.chapter}) else { throw EngineError.invalid("Original city constructor has no chapter mapping") }
         try vm.setCityFlags(chapter:vm.state.chapter,flags:Array(repeating:3,count:mapping.cityCount))
     }
+    /// Outside the battle palette the host RNG is current; a finished battle
+    /// session retains only its exit state.
     func snapshot() -> OriginalCampaignCheckpoint {
-        OriginalCampaignCheckpoint(vm:vm.snapshot(),people:people.values.values.sorted{$0.id < $1.id},roster:roster,
-            rng:battle?.rng ?? rng,money:money,stage:stage.snapshot(),
-            liveUnits:battle?.units.values.sorted{$0.slot < $1.slot},turns:battle?.turns,battleValue24:battle.map{Int($0.scriptValue24)})
+        let active = stage.palette == 3 ? battle : nil
+        return OriginalCampaignCheckpoint(vm:vm.snapshot(),people:people.values.values.sorted{$0.id < $1.id},roster:roster,
+            rng:active?.rng ?? rng,money:money,stage:stage.snapshot(),
+            liveUnits:active?.units.values.sorted{$0.slot < $1.slot},turns:active?.turns,battleValue24:active.map{Int($0.scriptValue24)})
+    }
+    /// Produces a native resume point only at a pending source3D prompt with
+    /// an idle non-battle stage and no other owning source operation.
+    func resumeSnapshot() throws -> OriginalCampaignResume {
+        guard started,let request = saveRequest,request.opcode == 0x3D,stage.palette != 3,stage.hostWaiting,
+              stage.dialogue == nil,stage.batch == nil,failure == nil,choice == nil,partySelection == nil,ending == nil,
+              frameworkReturn == nil,interpreterReturn == nil,explorationInput == nil,retirement == nil,
+              pendingTurnHook == nil,!turnInvocationPending,invocationReturn == nil,retirementProbe == nil,
+              controllerMap == nil,pendingBattleMap == nil,battleReturnSelection == nil,pendingCache.isEmpty,
+              let pending = vm.state.pending,pending.kind == "host",pending.offset == request.offset else {
+            throw EngineError.invalid("Native resume is available only at an idle source save prompt outside battle")
+        }
+        return OriginalCampaignResume(checkpoint:snapshot(),saveOffset:request.offset,
+            controllerInvocationPending:controllerInvocationPending,controllerIdle:controllerIdle,
+            controllerAfterInvocationFacings:controllerAfterInvocationFacings,currentEventPerson:currentEventPerson,
+            carryover:carryover,retryCheckpoint:checkpoint,uncertainReturnContext:uncertainReturnContext,
+            limitations:["Native engine state, not an original MSAVE slot; MAIN's own load path is not replicated.",
+                         "Resume continues the same source cursor after the 3D prompt with the saved native stage."])
+    }
+    /// Rebuilds the saved native host, then completes the pending 3D prompt as
+    /// a performed save so the source cursor continues after it.
+    static func resume(data:DataSet,from save:OriginalCampaignResume) throws -> OriginalCampaignHost {
+        let saved = save.checkpoint
+        let host = try OriginalCampaignHost(data:data,rng:saved.rng,vmState:saved.vm)
+        guard saved.stage.palette != 3,saved.liveUnits == nil,saved.turns == nil,
+              let pending = host.vm.state.pending,pending.kind == "host",pending.opcode == 0x3D,pending.offset == save.saveOffset,
+              let record = host.vm.program.records.first(where:{$0.id == pending.recordID}),
+              let instruction = record.instructions.first(where:{$0.offset == pending.offset}),instruction.kind == "save-prompt" else {
+            throw EngineError.invalid("Native resume file does not stop at a source save prompt outside battle")
+        }
+        if let money = saved.money,!(0...10000).contains(money) { throw EngineError.invalid("Native resume money is outside its source range") }
+        guard saved.roster.slots.count == 45 else { throw EngineError.invalid("Native resume roster is invalid") }
+        try host.people.restore(saved.people)
+        host.roster = saved.roster;host.money = saved.money
+        host.carryover = save.carryover;host.checkpoint = save.retryCheckpoint
+        host.uncertainReturnContext = save.uncertainReturnContext;host.currentEventPerson = save.currentEventPerson
+        host.controllerInvocationPending = save.controllerInvocationPending;host.controllerIdle = save.controllerIdle
+        host.controllerAfterInvocationFacings = save.controllerAfterInvocationFacings
+        try host.stage.setPalette(saved.stage.palette ?? 0)
+        if let map = saved.stage.map {
+            if map>>12 < 2 {
+                try host.exploration.configure(stage:host.stage,packed:map,chapter:host.vm.state.chapter,people:host.people)
+            } else if map>>12 == 2,let resource = data.resources.maps[String(map)] {
+                try host.stage.configureMap(map,resource:resource,actors:nil)
+            } else { throw EngineError.invalid("Native resume map is not an exploration map") }
+        }
+        try host.stage.restoreIdle(saved.stage)
+        host.started = true;host.saveRequest = instruction
+        try host.completeSaveRequest()
+        return host
     }
 }

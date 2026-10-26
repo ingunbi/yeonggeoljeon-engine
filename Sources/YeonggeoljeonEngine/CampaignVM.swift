@@ -53,8 +53,21 @@ struct OriginalFrameworkText: Codable, Equatable {
     var presentationOrder: [Int]?
 }
 
+/// MAIN title menu CF5:C050 item (text DS:2D38 table; handlers DS:2CEC).
+struct OriginalTitleMenuItem: Codable, Equatable {
+    var index: Int
+    var action: String
+    var text: String
+    var textSource: JSONValue?
+    var pointerSource: JSONValue?
+}
+
 struct OriginalFrameworkPrompts: Codable, Equatable {
     var retryPrompt: OriginalFrameworkText?
+    var savePrompt: OriginalFrameworkText?
+    var saveDeclinePrompt: OriginalFrameworkText?
+    var titleMenu: [OriginalTitleMenuItem]?
+    static let titleActions = ["new-game", "resume", "settings", "opening"]
 }
 
 struct OriginalCampaignProgram: Codable {
@@ -81,11 +94,18 @@ struct OriginalCampaignProgram: Codable {
         guard format == 1, !records.isEmpty, records.count <= 16384 else {
             throw EngineError.invalid("Unsupported original campaign program format or record count")
         }
-        if let prompt = framework?.retryPrompt {
+        for prompt in [framework?.retryPrompt, framework?.savePrompt, framework?.saveDeclinePrompt].compactMap({ $0 }) {
             guard !prompt.text.isEmpty, prompt.text.count <= 256,
                   prompt.yesResult.map({ $0 == 1 }) ?? true, prompt.noResult.map({ $0 == 0 }) ?? true,
                   prompt.presentationOrder.map({ $0 == [1, 0] }) ?? true else {
-                throw EngineError.invalid("Original framework retry prompt facts are invalid")
+                throw EngineError.invalid("Original framework selector prompt facts are invalid")
+            }
+        }
+        if let menu = framework?.titleMenu {
+            guard menu.map(\.index) == Array(0..<OriginalFrameworkPrompts.titleActions.count),
+                  menu.map(\.action) == OriginalFrameworkPrompts.titleActions,
+                  menu.allSatisfy({ !$0.text.isEmpty && $0.text.count <= 64 }) else {
+                throw EngineError.invalid("Original title menu facts are invalid")
             }
         }
         var ids = Set<String>(), locations = Set<String>()

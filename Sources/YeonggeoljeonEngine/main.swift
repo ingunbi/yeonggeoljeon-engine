@@ -139,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let research = NSMenuItem(title:"연구",action:nil,keyEquivalent:"")
         let submenu = NSMenu(title:"연구"); research.submenu = submenu; menu.addItem(research)
         let play = NSMenuItem(title:"원작 캠페인 실행 연구…",action:#selector(playOriginalCampaign),keyEquivalent:"n");play.target = self;submenu.addItem(play)
+        let resume = NSMenuItem(title:"원작 캠페인 이어하기…",action:#selector(resumeOriginalCampaign),keyEquivalent:"o");resume.target = self;submenu.addItem(resume)
         let restored = NSMenuItem(title:"원작 전투 복원 검증…",action:#selector(browseRestoredBattles),keyEquivalent:"b"); restored.target = self; submenu.addItem(restored)
         let battle = NSMenuItem(title:"이전 실험 규칙 연구…",action:#selector(browseBattles),keyEquivalent:""); battle.target = self; submenu.addItem(battle)
         let campaign = NSMenuItem(title:"캠페인 분석…",action:#selector(browseCampaign),keyEquivalent:"g"); campaign.target = self; submenu.addItem(campaign)
@@ -190,6 +191,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         do { show(try OriginalCampaignView(data:data),title:"원작 캠페인 복원",size:NSSize(width:960,height:640)) }
         catch { self.error(error) }
     }
+    /// Native engine saves only; original MSAVE slots are not read.
+    @objc func resumeOriginalCampaign() {
+        guard let data = data else { return }
+        do {
+            guard let host = try OriginalCampaignView.chooseResume(data:data) else { return }
+            show(try OriginalCampaignView(host:host),title:"원작 캠페인 복원 · 이어하기",size:NSSize(width:960,height:640))
+        } catch { self.error(error) }
+    }
     func showOriginalBattle(_ id:String) throws {
         guard let data = data else { return }
         let c = Calendar.current.dateComponents([.day,.hour,.minute,.second],from:Date())
@@ -239,7 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 }
 
 struct EngineOptions {
-    var data:URL?, output:URL?, inputs:URL?, battleID:String?, campaignRecord:String?
+    var data:URL?, output:URL?, inputs:URL?, resume:URL?, battleID:String?, campaignRecord:String?
     var verify = false, tests = false, verifyBattle = false, verifyCampaign = false,verifyVM = false,verifyPlay = false
     var listBattles = false, listCampaign = false, experimental = false
 }
@@ -259,12 +268,13 @@ func arguments() throws -> EngineOptions {
         case "--list-battles": options.listBattles = true
         case "--list-campaign": options.listCampaign = true
         case "--experimental-rules": options.experimental = true
-        case "--data", "--output", "--inputs", "--battle", "--campaign-record":
+        case "--data", "--output", "--inputs", "--resume", "--battle", "--campaign-record":
             let key = args[i]; i += 1
             guard i < args.count else { throw EngineError.invalid("Missing value for \(key)") }
             if key == "--data" { options.data = URL(fileURLWithPath:args[i],isDirectory:true) }
             else if key == "--output" { options.output = URL(fileURLWithPath:args[i],isDirectory:true) }
             else if key == "--inputs" { options.inputs = URL(fileURLWithPath:args[i]) }
+            else if key == "--resume" { options.resume = URL(fileURLWithPath:args[i]) }
             else if key == "--battle" { options.battleID = args[i] }
             else { options.campaignRecord = args[i] }
         default: throw EngineError.invalid("Unknown argument: \(args[i])")
@@ -286,6 +296,7 @@ func arguments() throws -> EngineOptions {
         throw EngineError.invalid("Arguments select incompatible engine actions")
     }
     guard options.verifyPlay == (options.inputs != nil) else { throw EngineError.invalid("--verify-play requires --inputs PATH, and inputs belong only to that verification") }
+    guard options.resume == nil || options.verifyPlay else { throw EngineError.invalid("--resume belongs only to --verify-play") }
     if options.verifyBattle && options.battleID == nil { throw EngineError.invalid("--verify-battle requires an explicit --battle ID") }
     return options
 }
@@ -299,7 +310,7 @@ do {
         try originalScriptActionSelfTests();try originalPartySelfTests();try originalPartyIntegrationSelfTests()
         try originalEndingSelfTests();try originalBattleSpriteSelfTests();try originalRetirementSelfTests()
         try originalStrategyFlowInputSelfTests();try originalPlayInputSelfTests();try originalExplorationInputSelfTests()
-        try originalAttackOperationSelfTests();try originalFrameworkSelfTests();exit(0)
+        try originalAttackOperationSelfTests();try originalFrameworkSelfTests();try originalResumeSelfTests();exit(0)
     }
     guard let root = options.data ?? Bundle.main.resourceURL?.appendingPathComponent("GameData",isDirectory:true) else {
         throw EngineError.invalid("Use --data PATH or an app bundle containing Resources/GameData")
@@ -328,7 +339,7 @@ do {
             guard let battle = catalog.battles.first(where:{$0.id == id}) else { throw EngineError.invalid("Unknown source battle ID: \(id)") }
             if options.experimental { try verifyBattle(battle,policy:.experimentalV1,input:data.root,output:output) }
             else { try verifyOriginalBattle(id,data:data,output:output) }
-        } else if options.verifyPlay,let inputs = options.inputs { try verifyOriginalPlay(data,inputs:inputs,output:output) }
+        } else if options.verifyPlay,let inputs = options.inputs { try verifyOriginalPlay(data,inputs:inputs,output:output,resume:options.resume) }
         else if options.verifyVM { try verifyOriginalCampaignHost(data,output:output) }
         else if options.verifyCampaign {
             let catalog = try CampaignCatalog.load(from:data.root.appendingPathComponent("campaign.json"))

@@ -13,34 +13,74 @@ from prepare_scene import SceneError, dialogue, source_span, span, text_at
 
 
 MAIN_DATA_SEGMENT = 0x37DA0
+MAIN_DATA_PARAGRAPH = 0x313A  # (0x37DA0 - 0x6A00) / 16
+SELECTOR = (0x0CF5, 0x3C5E)
 # main 1E5DD..1E5E7: push ds; push 2A2E; push 2; far call CF5:3C5E.
 RETRY_PROMPT_CALL = 0x1E5DD
 RETRY_PROMPT_CALL_LENGTH = 11
 RETRY_PROMPT_POINTER = 0x2A2E
-RETRY_PROMPT_SELECTOR = (0x0CF5, 0x3C5E)
+RETRY_PROMPT_SELECTOR = SELECTOR
+# Source 3D handler 22A62..22AA1: save question, then the decline check.
+SAVE_PROMPT_CALL, SAVE_PROMPT_POINTER = 0x22A63, 0x305A
+SAVE_DECLINE_CALL, SAVE_DECLINE_POINTER = 0x22A8C, 0x3073
+# Title menu CF5:C050 (1F9A0): push 4 items, lea bx,[2D38], handlers DS:2CEC.
+TITLE_MENU_COUNT_AT, TITLE_MENU_TABLE_AT = 0x1F9C5, 0x1F9D5
+TITLE_MENU_TABLE = 0x2D38
+TITLE_MENU_ACTIONS = ["new-game", "resume", "settings", "opening"]
+
+
+def selector_text(main: bytes, call_at: int, pointer: int) -> dict:
+    """Checked `push ds; push pointer; push 2; call CF5:3C5E` text."""
+    call = span(main, call_at, RETRY_PROMPT_CALL_LENGTH, "MAIN.EXE")
+    if (call[0], call[1], call[4], call[5], call[6]) != (0x1E, 0x68, 0x6A, 2, 0x9A) or \
+            struct.unpack_from("<H", call, 2)[0] != pointer or \
+            struct.unpack_from("<HH", call, 7) != SELECTOR[::-1]:
+        raise SceneError(f"MAIN.EXE selector call at {call_at:#x} does not match the examined profile")
+    at = MAIN_DATA_SEGMENT + pointer
+    value, after = text_at(main, at, len(main), "MAIN.EXE")
+    if not value:
+        raise SceneError(f"MAIN.EXE selector text at DS:{pointer:04X} is empty")
+    return {"text": value, "textSource": source_span("MAIN.EXE", main, at, after - at),
+            "callSource": source_span("MAIN.EXE", main, call_at, RETRY_PROMPT_CALL_LENGTH),
+            "selectorMode": 2, "yesResult": 1, "noResult": 0, "presentationOrder": [1, 0]}
+
+
+def title_menu(main: bytes) -> list[dict]:
+    """MAIN CF5:C050 item texts in source order; handlers 0..3 are fixed."""
+    count = span(main, TITLE_MENU_COUNT_AT, 2, "MAIN.EXE")
+    lea = span(main, TITLE_MENU_TABLE_AT, 4, "MAIN.EXE")
+    if count != bytes([0x6A, len(TITLE_MENU_ACTIONS)]) or lea[:2] != bytes([0x8D, 0x1E]) or \
+            struct.unpack_from("<H", lea, 2)[0] != TITLE_MENU_TABLE:
+        raise SceneError("MAIN.EXE title menu call does not match the examined profile")
+    items = []
+    for index, action in enumerate(TITLE_MENU_ACTIONS):
+        entry = MAIN_DATA_SEGMENT + TITLE_MENU_TABLE + index * 4
+        offset, paragraph = struct.unpack_from("<HH", span(main, entry, 4, "MAIN.EXE"))
+        if paragraph != MAIN_DATA_PARAGRAPH:
+            raise SceneError("MAIN.EXE title menu item is outside the data segment")
+        value, after = text_at(main, MAIN_DATA_SEGMENT + offset, len(main), "MAIN.EXE")
+        if not value:
+            raise SceneError("MAIN.EXE title menu item is empty")
+        items.append({"index": index, "action": action, "text": value,
+                      "textSource": source_span("MAIN.EXE", main, MAIN_DATA_SEGMENT + offset,
+                                                after - (MAIN_DATA_SEGMENT + offset)),
+                      "pointerSource": source_span("MAIN.EXE", main, entry, 4)})
+    return items
 
 
 def framework_prompts(main: bytes) -> dict:
     """Text owned by MAIN's outer framework rather than a scenario member.
 
-    After the framework map loop returns mask 20/40, main shows this text in
-    the two-button selector (Yes returns one, No returns zero). The producer
-    checks the examined push sequence instead of trusting a bare offset.
+    After the framework map loop returns mask 20/40, main shows the retry text
+    in the two-button selector (Yes returns one, No returns zero). The 3D
+    handler asks the save question and, after a cancelled slot dialog, the
+    decline check. Each producer checks the examined call sequence instead of
+    trusting a bare offset.
     """
-    call = span(main, RETRY_PROMPT_CALL, RETRY_PROMPT_CALL_LENGTH, "MAIN.EXE")
-    if (call[0], call[1], call[4], call[5], call[6]) != (0x1E, 0x68, 0x6A, 2, 0x9A) or \
-            struct.unpack_from("<H", call, 2)[0] != RETRY_PROMPT_POINTER or \
-            struct.unpack_from("<HH", call, 7) != RETRY_PROMPT_SELECTOR[::-1]:
-        raise SceneError("MAIN.EXE retry selector call does not match the examined profile")
-    at = MAIN_DATA_SEGMENT + RETRY_PROMPT_POINTER
-    value, after = text_at(main, at, len(main), "MAIN.EXE")
-    if not value:
-        raise SceneError("MAIN.EXE retry selector text is empty")
-    return {"retryPrompt": {"text": value,
-                            "textSource": source_span("MAIN.EXE", main, at, after - at),
-                            "callSource": source_span("MAIN.EXE", main, RETRY_PROMPT_CALL, RETRY_PROMPT_CALL_LENGTH),
-                            "selectorMode": 2, "yesResult": 1, "noResult": 0,
-                            "presentationOrder": [1, 0]}}
+    return {"retryPrompt": selector_text(main, RETRY_PROMPT_CALL, RETRY_PROMPT_POINTER),
+            "savePrompt": selector_text(main, SAVE_PROMPT_CALL, SAVE_PROMPT_POINTER),
+            "saveDeclinePrompt": selector_text(main, SAVE_DECLINE_CALL, SAVE_DECLINE_POINTER),
+            "titleMenu": title_menu(main)}
 
 
 def stock_caption_index(text: str) -> int:

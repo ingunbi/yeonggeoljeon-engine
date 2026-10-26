@@ -22,6 +22,7 @@ Swift/AppKit 자체 엔진입니다. **0.4.0 연구 개발판**은 원작 전투
 | 원작 턴 | 날씨, 진영별 회복·상태 회복, AI 우선순위, 이동 취소·대기, 원작 턴 제한 결과와 캠페인 이벤트 프로브. 일반 전멸 판정으로 승리를 만들지 않음. |
 | 캠페인 실행기 | 5장·18멤버·225블록·2,144레코드의 단계 그룹·반복·조건·플래그·선택·전환. 시나리오가 실행한 배치 프로그램을 사용하며 기록 목록의 다음 행으로 진행하지 않음. |
 | 장면 실행 | 동일 런타임에서 인물 배치·동시 이동·퇴장·대사·원작 삽화·초상화를 유지. 도시/인물 입력은 경로·인접 판정·상호 방향 확인 뒤 원작 이벤트를 호출. 목적지 도착은 원작대로 기록 종류2(세계지도는 5)를 찾음. 일치 기록이 없으면 원작 내장 전환으로 방 입장·궁전 출구(복귀 문맥)·마을 출구(세계지도)를 처리하고 기본 플레이어를 배치. 원작 창 테두리·전환 시간·진입 음악은 미복원. |
+| 저장·이어하기 | 원작 3D 저장 질문 시점의 자체 엔진 상태를 JSON으로 저장하고 그대로 이어서 진행. 타이틀 뒤 원작 MAIN 메뉴(개시·재개·기능설정·오프닝)를 원작 문구로 표시. 원작 세이브 슬롯(MSAVE)은 읽거나 쓰지 않음. |
 | 전투와 캠페인 연결 | 출전 선택·보존 부대의 재배치·승리 보너스·다음 전투 연결. 퇴장 이벤트 동안 물리 공격/반격/범위 책략을 중단·재개하며 공유 문맥과 새 대상 상태를 재조회. 전투 종료 뒤 원작 결과표로 스크립트가 고른 지도(09·11) 진입, 패배 마스크, 재시작을 구분. 패배하면 원작 MAIN의 재시작 선택(문구는 로컬 자료에서 읽음)을 띄우고 예는 새 캠페인으로, 아니요는 창 닫기로 처리. |
 | 전투 그림·엔딩 | 원본 전투 인물 및 일부 일기토 프레임을 로컬 해독. 엔딩은 원작 첫33프레임/43초까지만 복원되어 이후 경계를 명시. |
 
@@ -31,8 +32,8 @@ Swift/AppKit 자체 엔진입니다. **0.4.0 연구 개발판**은 원작 전투
 실제 시나리오 입력 재생과 별도로 확인해야 합니다. 이전 `experimentalV1`은
 `--experimental-rules`를 명시한 연구 모드에만 남아 있습니다.
 
-상점과 시민, 궁전7번 방의 특수 인물, 전투 결과1의 재시작, MAIN 타이틀 메뉴와
-진행 저장의 이어하기, 엔딩 후속 장면 등에는 미복원 경계가 남아 있습니다. 이 경계는
+상점과 시민, 궁전7번 방의 특수 인물, 전투 결과1의 재시작, 기능설정, 원작 세이브
+슬롯과 원작 불러오기 경로, 엔딩 후속 장면 등에는 미복원 경계가 남아 있습니다. 이 경계는
 생략해 진행하지 않습니다. 전체 캠페인 완주를 지원하거나 검증했다고 보고하지 않습니다.
 
 ## macOS 빌드
@@ -52,7 +53,9 @@ python3 tools/build.py --game /path/to/original/GAME --verify --install
 제공된 판본의 `OPGRP.R3` 타이틀 영역은 손상되어 있습니다. 정상 자료를 보유했다면
 `--title-opgrp /path/to/intact/OPGRP.R3`를 추가할 수 있습니다. 자동 다운로드는 하지 않습니다.
 
-기본 화면은 시나리오 첫 단계에서 시작하는 원작 캠페인 실행기입니다.
+기본 화면은 원작 캠페인 실행기입니다. 타이틀 뒤 원작 메뉴에서 새로 시작하거나,
+원작 저장 질문에서 만든 자체 엔진 저장 파일로 이어서 진행합니다. 저장 파일은 기본적으로
+`~/Library/Application Support/Yeonggeoljeon Engine/Saves`에 둡니다.
 메뉴 **연구 → 원작 캠페인 실행 연구**에서 새 실행 창을 열 수 있습니다. **원작 전투 복원 검증**에서는
 독립 전투를 엽니다. 클릭으로 선택·이동·공격, Space로 대기, Return으로 턴 종료,
 Backspace로 이동을 취소합니다. S 또는 책략 버튼으로 사용 가능한 명령을 고르고
@@ -77,6 +80,7 @@ swift run yeonggeoljeon-engine --data /path/to/GameData --battle 0:0:5
 swift run yeonggeoljeon-engine --data /path/to/GameData --verify-battle --battle 0:0:5 --output /path/to/new-battle-report
 swift run yeonggeoljeon-engine --data /path/to/GameData --verify-vm --output /path/to/new-campaign-report
 swift run yeonggeoljeon-engine --data /path/to/GameData --verify-play --inputs /path/to/local-inputs.json --output /path/to/new-play-report
+swift run yeonggeoljeon-engine --data /path/to/GameData --verify-play --resume /path/to/native-save.json --inputs /path/to/rest.json --output /path/to/new-resume-report
 swift run yeonggeoljeon-engine --data /path/to/GameData --list-campaign
 ```
 
@@ -88,7 +92,8 @@ swift run yeonggeoljeon-engine --data /path/to/GameData --list-campaign
 이벤트를 거쳐 다음 장면으로 복귀하고, 두 번째 전투의 수동 조작 단계까지
 이어졌습니다. 로컬 입력138개로는 두 번째 전투를 원작 이벤트로 이기고 서장 끝을
 지나 1장의 궁전·마을 이동과 출전 선택을 거쳐 1장 첫 전투(1:0:6)까지 진행했습니다.
-그 전투의 패배는 원작 재시작 선택으로 끝났습니다. 배치·승리·플래그를
+그 전투의 패배는 원작 재시작 선택으로 끝났습니다. 같은 입력의 세 저장 지점에서
+자체 저장 후 이어 진행한 최종 상태는 끊김 없이 진행한 상태와 같았습니다. 배치·승리·플래그를
 검사기가 주입하지 않습니다. 입력 경로와 화면·대사
 보고서는 로컬에만 보관합니다. 플레이어 입력을 고른 검사 정책은 원작 AI가 아니며,
 적과 비수동 아군의 행동은 복원한 엔진이 처리합니다. 원본69개 파일의 해시 불변과
@@ -108,7 +113,7 @@ swift run yeonggeoljeon-engine --data /path/to/GameData --list-campaign
 - [TF-DCE 그림 형식](research/tf-dce-format.md) · [그래픽 팔레트](research/graphics-formats.md)
 - [부대·출전 선택](research/original-party.md) · [퇴장 실행](research/original-retirement.md)
 - [시나리오 지도 반환](research/original-map-return.md) · [입력 재생 검사](research/original-play-verification.md)
-- [바깥 루프·전투 종료·재시작 선택](research/original-framework.md)
+- [바깥 루프·전투 종료·재시작 선택](research/original-framework.md) · [저장·타이틀 메뉴·이어하기](research/native-resume.md)
 - [전투 그림](research/original-battle-sprites.md) · [엔딩](research/original-ending.md)
 - [기여 안내](CONTRIBUTING.md)
 

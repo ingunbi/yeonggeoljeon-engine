@@ -8,8 +8,11 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import struct
 
-from campaign_vm_format import (MAIN_DATA_SEGMENT, RETRY_PROMPT_CALL, RETRY_PROMPT_POINTER, compile_instructions,
-                                framework_prompts, phase_groups, source_skip_target, stock_caption_index)
+from campaign_vm_format import (MAIN_DATA_PARAGRAPH, MAIN_DATA_SEGMENT, RETRY_PROMPT_CALL, RETRY_PROMPT_POINTER,
+                                SAVE_DECLINE_CALL, SAVE_DECLINE_POINTER, SAVE_PROMPT_CALL, SAVE_PROMPT_POINTER,
+                                TITLE_MENU_COUNT_AT, TITLE_MENU_TABLE, TITLE_MENU_TABLE_AT, compile_instructions,
+                                framework_prompts, phase_groups, selector_text, source_skip_target, stock_caption_index,
+                                title_menu)
 from prepare_campaign import prepare_campaign
 from prepare_scene import SceneError
 from scenario_format import Instruction, instructions
@@ -29,31 +32,58 @@ def compile_synthetic(code, text=b"", bounds=None):
                                 battle_ids={})
 
 
-def synthetic_main(text: bytes, pointer: int = RETRY_PROMPT_POINTER, mode: int = 2) -> bytes:
-    data = bytearray(MAIN_DATA_SEGMENT + 0x3000)
+def put_selector(data: bytearray, call_at: int, pointer: int, text: bytes, mode: int = 2) -> None:
     # push ds; push pointer; push mode; far call CF5:3C5E
     call = bytes([0x1E, 0x68]) + struct.pack("<H", pointer) + bytes([0x6A, mode, 0x9A]) + struct.pack("<HH", 0x3C5E, 0x0CF5)
-    data[RETRY_PROMPT_CALL:RETRY_PROMPT_CALL + len(call)] = call
-    at = MAIN_DATA_SEGMENT + RETRY_PROMPT_POINTER
+    data[call_at:call_at + len(call)] = call
+    at = MAIN_DATA_SEGMENT + pointer
     data[at:at + len(text) + 1] = text + b"\0"
+
+
+def synthetic_main(text: bytes, pointer: int = RETRY_PROMPT_POINTER, mode: int = 2) -> bytes:
+    data = bytearray(MAIN_DATA_SEGMENT + 0x3200)
+    put_selector(data, RETRY_PROMPT_CALL, pointer, text, mode)
+    put_selector(data, SAVE_PROMPT_CALL, SAVE_PROMPT_POINTER, "합성 저장?".encode("cp949"))
+    put_selector(data, SAVE_DECLINE_CALL, SAVE_DECLINE_POINTER, "합성 취소?".encode("cp949"))
+    data[TITLE_MENU_COUNT_AT:TITLE_MENU_COUNT_AT + 2] = bytes([0x6A, 4])
+    data[TITLE_MENU_TABLE_AT:TITLE_MENU_TABLE_AT + 4] = bytes([0x8D, 0x1E]) + struct.pack("<H", TITLE_MENU_TABLE)
+    for index in range(4):
+        offset = 0x2C00 + index * 0x10
+        struct.pack_into("<HH", data, MAIN_DATA_SEGMENT + TITLE_MENU_TABLE + index * 4, offset, MAIN_DATA_PARAGRAPH)
+        label = f"item{index}".encode("ascii")
+        data[MAIN_DATA_SEGMENT + offset:MAIN_DATA_SEGMENT + offset + len(label) + 1] = label + b"\0"
     return bytes(data)
 
 
 class CampaignVMFormatTests(unittest.TestCase):
-    def test_retry_prompt_comes_from_the_checked_main_selector_call(self):
-        prompt = framework_prompts(synthetic_main("합성 재시작?".encode("cp949")))["retryPrompt"]
+    def test_framework_texts_come_from_checked_main_call_sites(self):
+        prompts = framework_prompts(synthetic_main("합성 재시작?".encode("cp949")))
+        prompt = prompts["retryPrompt"]
         self.assertEqual(prompt["text"], "합성 재시작?")
         self.assertEqual((prompt["yesResult"], prompt["noResult"], prompt["presentationOrder"]), (1, 0, [1, 0]))
         self.assertEqual(prompt["textSource"]["offset"], MAIN_DATA_SEGMENT + RETRY_PROMPT_POINTER)
         self.assertEqual(prompt["callSource"]["offset"], RETRY_PROMPT_CALL)
+        self.assertEqual(prompts["savePrompt"]["text"], "합성 저장?")
+        self.assertEqual(prompts["saveDeclinePrompt"]["callSource"]["offset"], SAVE_DECLINE_CALL)
+        self.assertEqual([(i["index"], i["action"], i["text"]) for i in prompts["titleMenu"]],
+                         [(0, "new-game", "item0"), (1, "resume", "item1"), (2, "settings", "item2"), (3, "opening", "item3")])
 
-    def test_retry_prompt_rejects_an_unexamined_call_or_empty_text(self):
-        with self.assertRaisesRegex(SceneError, "retry selector call"):
+    def test_framework_texts_reject_an_unexamined_call_or_empty_text(self):
+        with self.assertRaisesRegex(SceneError, "selector call"):
             framework_prompts(synthetic_main(b"x", pointer=RETRY_PROMPT_POINTER + 2))
-        with self.assertRaisesRegex(SceneError, "retry selector call"):
+        with self.assertRaisesRegex(SceneError, "selector call"):
             framework_prompts(synthetic_main(b"x", mode=1))
         with self.assertRaisesRegex(SceneError, "empty"):
             framework_prompts(synthetic_main(b""))
+        bad = bytearray(synthetic_main(b"x"))
+        bad[TITLE_MENU_COUNT_AT + 1] = 5
+        with self.assertRaisesRegex(SceneError, "title menu call"):
+            title_menu(bytes(bad))
+        bad = bytearray(synthetic_main(b"x"))
+        struct.pack_into("<H", bad, MAIN_DATA_SEGMENT + TITLE_MENU_TABLE + 2, 0x1234)
+        with self.assertRaisesRegex(SceneError, "outside the data segment"):
+            title_menu(bytes(bad))
+        self.assertEqual(selector_text(synthetic_main(b"x"), SAVE_PROMPT_CALL, SAVE_PROMPT_POINTER)["text"], "합성 저장?")
 
     def test_stock_caption_selector_is_last_source_character_not_decimal_number(self):
         self.assertEqual(stock_caption_index("11"), 1)

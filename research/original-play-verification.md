@@ -7,11 +7,13 @@ All actual original-game scripts, exports, replay files and reports stay local.
 
 The input object uses format one, an `inputs` array, and optional explicit RNG
 seed, fixed microsecond step and per-input work bound. Supported operations are
-`talk`, `choice`, `save-skip`, `world-city`, `town-marker`, `town-cell`, `party-toggle`,
+`talk`, `choice`, `save-skip`, `save-native`, `world-city`, `town-marker`, `town-cell`, `party-toggle`,
 `party-confirm`, `expect-battle`, `battle-move`, `battle-attack`,
 `battle-strategy`, `battle-wait`, `battle-end-turn` and `retry-choice`.
 `town-cell` walks to an explicit settlement cell, which selects one cell of a
-marker that occupies several cells. Unknown operations,
+marker that occupies several cells. `save-native` writes a native resume file at a
+pending source save prompt into the output folder and then continues. A
+separate run with `--resume FILE` starts from that file without an input seed. Unknown operations,
 fields, explicit null operands and invalid operand combinations are rejected.
 A town marker that is ambiguous in the source map is rejected by the
 host; the driver does not choose an arbitrary matching cell.
