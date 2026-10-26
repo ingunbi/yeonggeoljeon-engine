@@ -13,7 +13,9 @@ from campaign_vm_format import (MAIN_DATA_PARAGRAPH, MAIN_DATA_SEGMENT, RETRY_PR
                                 TITLE_MENU_COUNT_AT, TITLE_MENU_TABLE, TITLE_MENU_TABLE_AT, BATTLE_MENU_COUNT_AT,
                                 BATTLE_MENU_TABLE, BATTLE_MENU_TABLE_AT, RETREAT_CONFIRM_CALL, RETREAT_CONFIRM_POINTER_VAR,
                                 RETREAT_REFUSED_CALL, RETREAT_REFUSED_POINTER, QUIT_CONFIRM_CALL, QUIT_CONFIRM_POINTER,
-                                RETREAT_RESULT_AT, QUIT_RESULT_AT, battle_menu, compile_instructions,
+                                RETREAT_RESULT_AT, QUIT_RESULT_AT, FIELD_MENU_TABLE_AT, FIELD_MENU_TABLE,
+                                FIELD_MENU_HANDLERS_AT, FIELD_MENU_HANDLERS, FIELD_QUIT_CALL, FIELD_QUIT_POINTER,
+                                battle_menu, compile_instructions, field_menu,
                                 framework_prompts, phase_groups, selector_text, source_skip_target, stock_caption_index,
                                 title_menu)
 from prepare_campaign import prepare_campaign
@@ -69,6 +71,14 @@ def synthetic_main(text: bytes, pointer: int = RETRY_PROMPT_POINTER, mode: int =
     put_selector(data, QUIT_CONFIRM_CALL, QUIT_CONFIRM_POINTER, b"quit?")
     for at, value in ((RETREAT_RESULT_AT, 1), (QUIT_RESULT_AT, 4)):
         data[at:at + 7] = bytes([0x8B, 0x5E, 0x06, 0xC6, 0x47, 0x01, value])
+    data[FIELD_MENU_TABLE_AT:FIELD_MENU_TABLE_AT + 4] = bytes([0x8D, 0x1E]) + struct.pack("<H", FIELD_MENU_TABLE)
+    data[FIELD_MENU_HANDLERS_AT:FIELD_MENU_HANDLERS_AT + 4] = bytes([0xFF, 0x9F]) + struct.pack("<H", FIELD_MENU_HANDLERS)
+    for index in range(10):
+        offset = 0x2E00 + index * 0x10
+        struct.pack_into("<HH", data, MAIN_DATA_SEGMENT + FIELD_MENU_TABLE + index * 4, offset, MAIN_DATA_PARAGRAPH)
+        label = f"field{index}".encode("ascii")
+        data[MAIN_DATA_SEGMENT + offset:MAIN_DATA_SEGMENT + offset + len(label) + 1] = label + b"\0"
+    put_selector(data, FIELD_QUIT_CALL, FIELD_QUIT_POINTER, b"leave?")
     return bytes(data)
 
 
@@ -98,6 +108,16 @@ class CampaignVMFormatTests(unittest.TestCase):
         bad[RETREAT_REFUSED_CALL + 5] = 2
         with self.assertRaisesRegex(SceneError, "refusal call"):
             battle_menu(bytes(bad))
+
+    def test_field_menu_labels_and_quit_question_are_checked(self):
+        menu = framework_prompts(synthetic_main(b"x"))["fieldMenu"]
+        self.assertEqual([(i["action"], i["text"]) for i in menu["items"]][:5],
+                         [("quit", "field0"), ("scroll", "field1"), ("speed", "field2"), ("load", "field3"), ("save", "field4")])
+        self.assertEqual((menu["quitConfirm"]["text"], menu["quitMask"]), ("leave?", 0x40))
+        bad = bytearray(synthetic_main(b"x"))
+        bad[FIELD_MENU_HANDLERS_AT + 2] ^= 1
+        with self.assertRaisesRegex(SceneError, "field menu call"):
+            field_menu(bytes(bad))
 
     def test_framework_texts_reject_an_unexamined_call_or_empty_text(self):
         with self.assertRaisesRegex(SceneError, "selector call"):

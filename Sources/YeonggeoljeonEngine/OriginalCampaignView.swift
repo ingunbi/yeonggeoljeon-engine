@@ -168,6 +168,22 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         alert.addButton(withTitle:"예 (Yes)");alert.addButton(withTitle:"아니요 (No)")
         return alert.runModal() == .alertFirstButtonReturn
     }
+    /// Writes one native resume file; returns false when cancelled or failed.
+    private func writeNativeSave() -> Bool {
+        do {
+            let snapshot = try host.resumeSnapshot()
+            let panel = NSSavePanel();panel.allowedContentTypes = [.json];panel.directoryURL = try Self.savesDirectory()
+            let state = host.vm.state
+            panel.nameFieldStringValue = "chapter\(state.chapter)-\(state.member)-\(state.block)-\(Int(Date().timeIntervalSince1970)).json"
+            guard panel.runModal() == .OK,let url = panel.url else { return false }
+            let encoder = JSONEncoder();encoder.outputFormatting = [.prettyPrinted,.sortedKeys,.withoutEscapingSlashes]
+            try encoder.encode(snapshot).write(to:url,options:.atomic)
+            return true
+        } catch {
+            let alert = NSAlert();alert.messageText = "저장하지 못했습니다.";alert.informativeText = "\(error)";alert.runModal()
+            return false
+        }
+    }
     /// Source3D (MAIN22A62..22AA1): Yes opens the save destination; a
     /// cancelled or failed save asks the decline check, whose No retries.
     /// The written file is native engine state, not an original MSAVE slot.
@@ -176,20 +192,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         let framework = host.framework
         let question = framework?.savePrompt?.text ?? "여기서 저장할까요?"
         if ask(question,detail:"자체 엔진 형식으로 저장합니다. 원작 세이브 슬롯과는 다른 파일입니다.") {
-            while true {
-                do {
-                    let snapshot = try host.resumeSnapshot()
-                    let panel = NSSavePanel();panel.allowedContentTypes = [.json];panel.directoryURL = try Self.savesDirectory()
-                    let state = host.vm.state
-                    panel.nameFieldStringValue = "chapter\(state.chapter)-\(state.member)-\(state.block)-\(Int(Date().timeIntervalSince1970)).json"
-                    if panel.runModal() == .OK,let url = panel.url {
-                        let encoder = JSONEncoder();encoder.outputFormatting = [.prettyPrinted,.sortedKeys,.withoutEscapingSlashes]
-                        try encoder.encode(snapshot).write(to:url,options:.atomic)
-                        break
-                    }
-                } catch {
-                    let alert = NSAlert();alert.messageText = "저장하지 못했습니다.";alert.informativeText = "\(error)";alert.runModal()
-                }
+            while !writeNativeSave() {
                 if ask(framework?.saveDeclinePrompt?.text ?? "저장하지 않고 진행할까요?") { break }
             }
         }
@@ -216,6 +219,38 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             default: return
             }
         } catch { recordInputError(error) }
+    }
+    /// MAIN's field menu (input code23, DS:3636/36E2 -> CF5:F382). The
+    /// engine opens it with a secondary click; the original key binding is
+    /// not established. Quit, load and save have native counterparts.
+    override func rightMouseDown(with event:NSEvent) {
+        guard host.fieldMenuReady,!presenting else { super.rightMouseDown(with:event);return }
+        let menu = NSMenu(title:"메뉴");menu.autoenablesItems = false
+        let labels = host.framework?.fieldMenu?.items.map(\.text) ?? OriginalFieldMenuTexts.actions
+        for (index,label) in labels.enumerated() {
+            let action = OriginalFieldMenuTexts.actions[index]
+            let item = NSMenuItem(title:label,action:#selector(fieldMenuChosen(_:)),keyEquivalent:"")
+            item.target = self;item.tag = index;item.isEnabled = ["quit","load","save"].contains(action)
+            if !item.isEnabled { item.toolTip = "아직 복원하지 않은 원작 기능입니다." }
+            menu.addItem(item)
+        }
+        NSMenu.popUpContextMenu(menu,with:event,for:self)
+    }
+    @objc private func fieldMenuChosen(_ sender:NSMenuItem) {
+        guard host.fieldMenuReady else { return }
+        presenting = true;defer { presenting = false;needsDisplay = true }
+        switch OriginalFieldMenuTexts.actions[sender.tag] {
+        case "quit":
+            guard ask(host.framework?.fieldMenu?.quitConfirm.text ?? "게임을 종료할까요?") else { return }
+            do { try host.fieldQuit() } catch { recordInputError(error) }
+        case "save": _ = writeNativeSave()
+        case "load":
+            do {
+                guard let resumed = try Self.chooseResume(data:host.data) else { return }
+                replace(with:try OriginalCampaignView(host:resumed))
+            } catch { recordInputError(error) }
+        default: return
+        }
     }
     private func replace(with next:OriginalCampaignView) {
         guard let window = window else { return }

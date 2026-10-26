@@ -132,6 +132,36 @@ def battle_menu(main: bytes) -> dict:
                      "rawResult": 4, "resultSource": source_span("MAIN.EXE", main, QUIT_RESULT_AT, 7)}}
 
 
+# Field system menu (MAIN 22CD2..22DB6): DS:34E8 items, DS:3478 handlers.
+FIELD_MENU_TABLE_AT, FIELD_MENU_TABLE, FIELD_MENU_HANDLERS_AT = 0x22D50, 0x34E8, 0x22D64
+FIELD_MENU_HANDLERS = 0x3478
+FIELD_MENU_ACTIONS = ["quit", "scroll", "speed", "load", "save", "monitor", "bgm", "sound", "volume", "music-time"]
+FIELD_QUIT_CALL, FIELD_QUIT_POINTER = 0x22994, 0x3018
+
+
+def field_menu(main: bytes) -> dict:
+    """Field menu labels and the quit question (handler CF5:F044).
+
+    Quit sets framework flag 40, load and save use CF5:F152 and the shared
+    slot routine CF5:F0CE. Only these three have a native counterpart.
+    """
+    lea = span(main, FIELD_MENU_TABLE_AT, 4, "MAIN.EXE")
+    call = span(main, FIELD_MENU_HANDLERS_AT, 4, "MAIN.EXE")
+    if lea[:2] != bytes([0x8D, 0x1E]) or struct.unpack_from("<H", lea, 2)[0] != FIELD_MENU_TABLE or \
+            call[:2] != bytes([0xFF, 0x9F]) or struct.unpack_from("<H", call, 2)[0] != FIELD_MENU_HANDLERS:
+        raise SceneError("MAIN.EXE field menu call does not match the examined profile")
+    items = []
+    for index, action in enumerate(FIELD_MENU_ACTIONS):
+        entry = MAIN_DATA_SEGMENT + FIELD_MENU_TABLE + index * 4
+        offset, paragraph = struct.unpack_from("<HH", span(main, entry, 4, "MAIN.EXE"))
+        if paragraph != MAIN_DATA_PARAGRAPH:
+            raise SceneError("MAIN.EXE field menu item is outside the data segment")
+        text, source = checked_text(main, offset, "field menu item")
+        items.append({"index": index, "action": action, "text": text, "textSource": source,
+                      "pointerSource": source_span("MAIN.EXE", main, entry, 4)})
+    return {"items": items, "quitConfirm": selector_text(main, FIELD_QUIT_CALL, FIELD_QUIT_POINTER), "quitMask": 0x40}
+
+
 def framework_prompts(main: bytes) -> dict:
     """Text owned by MAIN's outer framework rather than a scenario member.
 
@@ -145,7 +175,8 @@ def framework_prompts(main: bytes) -> dict:
             "savePrompt": selector_text(main, SAVE_PROMPT_CALL, SAVE_PROMPT_POINTER),
             "saveDeclinePrompt": selector_text(main, SAVE_DECLINE_CALL, SAVE_DECLINE_POINTER),
             "titleMenu": title_menu(main),
-            "battleMenu": battle_menu(main)}
+            "battleMenu": battle_menu(main),
+            "fieldMenu": field_menu(main)}
 
 
 def stock_caption_index(text: str) -> int:

@@ -31,7 +31,8 @@ struct OriginalCampaignResume:Codable {
     var format = 1
     var kind = "native-engine-resume"
     var checkpoint:OriginalCampaignCheckpoint
-    var saveOffset:Int
+    /// Source3D offset, or nil for an idle field-menu save (CF5:F0CE).
+    var saveOffset:Int?
     var controllerInvocationPending:Bool
     var controllerIdle:Bool
     var controllerAfterInvocationFacings:[OriginalExplorationFacing]
@@ -621,6 +622,13 @@ final class OriginalCampaignHost {
         currentEventPerson = host.currentEventPerson;waiting = nil
         try pump()
     }
+    /// Field menu quit (CF5:F044) sets map-loop flag40 after its question;
+    /// the framework then reaches MAIN's retry selector.
+    func fieldQuit() throws {
+        guard fieldMenuReady else { throw EngineError.invalid("The original field menu is not available now") }
+        frameworkReturn = OriginalFrameworkReturn(mask:0x40,producer:"field-menu-quit",recordID:nil,sourceOffset:nil)
+        waiting = nil
+    }
     func answerRetryPrompt(_ result:Int) throws {
         guard var value = frameworkReturn else { throw EngineError.invalid("No original retry selector is pending") }
         try value.answer(result);frameworkReturn = value
@@ -744,18 +752,31 @@ final class OriginalCampaignHost {
             rng:active?.rng ?? rng,money:money,stage:stage.snapshot(),
             liveUnits:active?.units.values.sorted{$0.slot < $1.slot},turns:active?.turns,battleValue24:active.map{Int($0.scriptValue24)})
     }
-    /// Produces a native resume point only at a pending source3D prompt with
-    /// an idle non-battle stage and no other owning source operation.
+    /// The field menu (input code23 through DS:3636/36E2) is reachable only
+    /// while the field controller is idle and no source script runs.
+    var fieldMenuReady:Bool { explorationInputReady && [0,1,2].contains(stage.palette) && saveRequest == nil }
+    /// Produces a native resume point at a pending source3D prompt, or at an
+    /// idle field where MAIN's field menu offers its save (CF5:F0CE). Either
+    /// way the stage is idle outside battle and no other source operation runs.
     func resumeSnapshot() throws -> OriginalCampaignResume {
-        guard started,let request = saveRequest,request.opcode == 0x3D,stage.palette != 3,stage.hostWaiting,
+        guard started,stage.palette != 3,stage.hostWaiting,
               stage.dialogue == nil,stage.batch == nil,failure == nil,choice == nil,partySelection == nil,ending == nil,
               frameworkReturn == nil,interpreterReturn == nil,explorationInput == nil,retirement == nil,
               pendingTurnHook == nil,!turnInvocationPending,invocationReturn == nil,retirementProbe == nil,
-              controllerMap == nil,pendingBattleMap == nil,battleReturnSelection == nil,pendingCache.isEmpty,
-              let pending = vm.state.pending,pending.kind == "host",pending.offset == request.offset else {
-            throw EngineError.invalid("Native resume is available only at an idle source save prompt outside battle")
+              controllerMap == nil,pendingBattleMap == nil,battleReturnSelection == nil,pendingCache.isEmpty else {
+            throw EngineError.invalid("Native resume is available only at an idle save point outside battle")
         }
-        return OriginalCampaignResume(checkpoint:snapshot(),saveOffset:request.offset,
+        let offset:Int?
+        if let request = saveRequest {
+            guard request.opcode == 0x3D,let pending = vm.state.pending,pending.kind == "host",pending.offset == request.offset else {
+                throw EngineError.invalid("Native resume save prompt lost its source cursor")
+            }
+            offset = request.offset
+        } else {
+            guard fieldMenuReady,vm.state.pending == nil else { throw EngineError.invalid("Native field save requires an idle field controller") }
+            offset = nil
+        }
+        return OriginalCampaignResume(checkpoint:snapshot(),saveOffset:offset,
             controllerInvocationPending:controllerInvocationPending,controllerIdle:controllerIdle,
             controllerAfterInvocationFacings:controllerAfterInvocationFacings,currentEventPerson:currentEventPerson,
             carryover:carryover,retryCheckpoint:checkpoint,retryHost:retryHost,uncertainReturnContext:uncertainReturnContext,
@@ -767,11 +788,22 @@ final class OriginalCampaignHost {
     static func resume(data:DataSet,from save:OriginalCampaignResume) throws -> OriginalCampaignHost {
         let saved = save.checkpoint
         let host = try OriginalCampaignHost(data:data,rng:saved.rng,vmState:saved.vm)
-        guard saved.stage.palette != 3,saved.liveUnits == nil,saved.turns == nil,
-              let pending = host.vm.state.pending,pending.kind == "host",pending.opcode == 0x3D,pending.offset == save.saveOffset,
-              let record = host.vm.program.records.first(where:{$0.id == pending.recordID}),
-              let instruction = record.instructions.first(where:{$0.offset == pending.offset}),instruction.kind == "save-prompt" else {
-            throw EngineError.invalid("Native resume file does not stop at a source save prompt outside battle")
+        guard saved.stage.palette != 3,saved.liveUnits == nil,saved.turns == nil else {
+            throw EngineError.invalid("Native resume file was not taken outside battle")
+        }
+        var prompt:OriginalCampaignInstruction?
+        if let offset = save.saveOffset {
+            guard let pending = host.vm.state.pending,pending.kind == "host",pending.opcode == 0x3D,pending.offset == offset,
+                  let record = host.vm.program.records.first(where:{$0.id == pending.recordID}),
+                  let instruction = record.instructions.first(where:{$0.offset == pending.offset}),instruction.kind == "save-prompt" else {
+                throw EngineError.invalid("Native resume file does not stop at a source save prompt")
+            }
+            prompt = instruction
+        } else {
+            guard host.vm.state.pending == nil,host.vm.state.currentRecordID == nil,host.vm.state.invocationActive != true,
+                  save.controllerIdle,!save.controllerInvocationPending,[0,1,2].contains(saved.stage.palette ?? 0) else {
+                throw EngineError.invalid("Native field resume file was not taken at an idle field")
+            }
         }
         if let money = saved.money,!(0...10000).contains(money) { throw EngineError.invalid("Native resume money is outside its source range") }
         guard saved.roster.slots.count == 45 else { throw EngineError.invalid("Native resume roster is invalid") }
@@ -790,8 +822,9 @@ final class OriginalCampaignHost {
             } else { throw EngineError.invalid("Native resume map is not an exploration map") }
         }
         try host.stage.restoreIdle(saved.stage)
-        host.started = true;host.saveRequest = instruction
-        try host.completeSaveRequest()
+        host.started = true
+        if let instruction = prompt { host.saveRequest = instruction;try host.completeSaveRequest() }
+        else { host.waiting = host.vm.waitingState() }
         return host
     }
 }

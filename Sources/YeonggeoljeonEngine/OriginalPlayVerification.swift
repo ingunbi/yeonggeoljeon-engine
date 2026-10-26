@@ -11,7 +11,7 @@ struct OriginalPlayInput: Codable, Equatable {
         case partyToggle = "party-toggle", partyConfirm = "party-confirm", expectBattle = "expect-battle"
         case battleMove = "battle-move", battleAttack = "battle-attack", battleStrategy = "battle-strategy"
         case battleWait = "battle-wait", battleEndTurn = "battle-end-turn"
-        case battleRetreat = "battle-retreat", battleQuit = "battle-quit"
+        case battleRetreat = "battle-retreat", battleQuit = "battle-quit", fieldQuit = "field-quit"
         case retryChoice = "retry-choice"
     }
     var kind: Kind
@@ -41,7 +41,7 @@ struct OriginalPlayInput: Codable, Equatable {
         case .worldCity: allowed = ["city"]
         case .townMarker: allowed = ["marker"]
         case .expectBattle: allowed = battleID == nil ? [] : ["battleID"]
-        case .saveSkip,.saveNative,.partyConfirm: allowed = []
+        case .saveSkip,.saveNative,.partyConfirm,.fieldQuit: allowed = []
         case .battleMove: allowed = ["slot","x","y"]
         case .townCell: allowed = ["x","y"]
         case .battleAttack: allowed = ["slot","target"]
@@ -262,12 +262,15 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
                 guard host.saveRequest != nil else { throw EngineError.invalid("Play save-skip has no matching source save request") }
                 try host.completeSaveRequest()
             case .saveNative:
-                guard host.saveRequest != nil else { throw EngineError.invalid("Play save-native has no matching source save request") }
+                guard host.saveRequest != nil || host.fieldMenuReady else {
+                    throw EngineError.invalid("Play save-native has no source save prompt or idle field menu")
+                }
                 let name = "native-save-\(nativeSaves.count).json"
                 let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys,.withoutEscapingSlashes]
                 try encoder.encode(try host.resumeSnapshot()).write(to: output.appendingPathComponent(name), options: .atomic)
                 nativeSaves.append(name)
-                try host.completeSaveRequest()
+                if host.saveRequest != nil { try host.completeSaveRequest() }
+            case .fieldQuit: try host.fieldQuit()
             case .worldCity: _ = try host.travel(toCity: input.city!)
             case .townMarker: _ = try host.townDestination(marker: input.marker!)
             case .townCell: try host.walk(to: GridPoint(x: input.x!, y: input.y!))

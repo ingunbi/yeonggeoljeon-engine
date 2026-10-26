@@ -50,6 +50,18 @@ func originalFrameworkSelfTests() throws {
         return OriginalCampaignProgram(format:1,records:[record],framework:OriginalFrameworkPrompts(retryPrompt:prompt))
     }
     try program(OriginalFrameworkText(text:"synthetic retry",yesResult:1,noResult:0,presentationOrder:[1,0])).validate();checks += 1
+    func fieldProgram(_ actions:[String],mask:Int = 0x40) -> OriginalCampaignProgram {
+        var value = program(nil)
+        value.framework = OriginalFrameworkPrompts(fieldMenu:OriginalFieldMenuTexts(
+            items:actions.enumerated().map{OriginalTitleMenuItem(index:$0.offset,action:$0.element,text:"f\($0.offset)")},
+            quitConfirm:OriginalFrameworkText(text:"q"),quitMask:mask))
+        return value
+    }
+    try fieldProgram(OriginalFieldMenuTexts.actions).validate();checks += 1
+    for bad in [fieldProgram(Array(OriginalFieldMenuTexts.actions.dropLast())),fieldProgram(OriginalFieldMenuTexts.actions,mask:0x20)] {
+        do { try bad.validate() } catch { checks += 1;continue }
+        throw EngineError.invalid("Original framework regression: invalid field menu facts were accepted")
+    }
     for prompt in [OriginalFrameworkText(text:""),OriginalFrameworkText(text:"x",yesResult:0),
                    OriginalFrameworkText(text:"x",presentationOrder:[0,1])] {
         do { try program(prompt).validate() } catch { checks += 1;continue }

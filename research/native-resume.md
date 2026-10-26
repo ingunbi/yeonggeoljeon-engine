@@ -20,6 +20,13 @@ framework loop; a nonzero index sets its first-entry flag and calls
 `CF5:C456` (`0x1E1E2..0x1E284`). Item three returns exit code zero, so
 HERO.COM runs OPEN before MAIN again. The original slots are `MSAVE0..4.R3S`.
 
+The field system menu (`0x22CD2..0x22DB6`) lists ten DS:`34E8` items and
+dispatches DS:`3478` handlers. The world and settlement input tables
+(DS:`3636`, DS:`36E2`) send input code `23` to it. Quit (`CF5:F044`) asks
+DS:`3018` and sets map-loop flag `40`; load is `CF5:F152`; save calls the
+same slot routine `CF5:F0CE` as `3D`. The other items configure scrolling,
+speed, monitor, music and sound.
+
 ## Native mapping
 
 The producer exports the four menu texts and both save questions into local
@@ -28,16 +35,24 @@ the menu after the title picture. New game starts the source program,
 resume asks for a native file, settings stays an explicit unrestored notice,
 and opening returns to the title.
 
+A secondary click on an idle town, palace or world map opens the field menu
+with the exported labels. Quit reaches the retry selector through mask
+`40`, load opens a native resume file, save writes one, and the remaining
+items stay disabled as unrestored. The original physical binding of input
+code `23` is not established.
+
 At a source `3D` prompt the window asks the original question and writes an
 `OriginalCampaignResume` JSON file, by default under the user's Application
 Support folder. It is native engine state, not an MSAVE slot; original slots
 are neither read nor written. A resume point is produced only when the stage
 is idle outside the battle palette and no other source operation owns the
-host. It retains the VM state with its pending `3D`, shared person objects,
+host: either at a pending `3D`, or at an idle field controller with no
+running script (the field-menu save, recorded without a save offset). It retains the VM state with its pending `3D`, shared person objects,
 roster, RNG, money, stage snapshot, party carryover, the source `36`
 checkpoint, the uncertain-return marker and the controller continuation
 flags. Resume restores those values, configures the saved map, restores the
-idle stage, and completes the pending `3D` as a performed save.
+idle stage, and completes a pending `3D` as a performed save; a field save
+resumes the idle field controller.
 
 MAIN's own load path (slot dialog, `CF5:C456`, first-entry spawn) is not
 replicated. A native resume therefore restores the saved native stage rather
@@ -48,7 +63,8 @@ than re-entering the map through the original load path.
 `--verify-play` accepts a `save-native` input and a `--resume FILE` option.
 Locally, three save points in a 138-input replay (before the first battle,
 after it on the world map, and on the chapter-one world map) were saved and
-resumed. Each resumed run's final checkpoint equals the uninterrupted run's,
+resumed, and one field-menu save was taken in the chapter-one town after the
+palace exit. Each resumed run's final checkpoint equals the uninterrupted run's,
 apart from the stage command cursor. The first resumed frame matched the
 uninterrupted frame at the same point. Synthetic tests cover idle stage
 restore, rejected non-idle or inconsistent snapshots, all-or-nothing person

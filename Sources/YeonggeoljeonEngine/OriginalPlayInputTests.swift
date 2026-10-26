@@ -71,6 +71,10 @@ func originalPlayInputSelfTests() throws {
         #"{"kind":"retry-choice","index":2}"#,
         #"{"kind":"retry-choice","index":1,"person":0}"#
     ] {try rejected("{\"format\":1,\"inputs\":[\(row)]}")}
+    try rejected("{\"format\":1,\"inputs\":[{\"kind\":\"field-quit\",\"index\":0}]}")
+    guard try accepted(#"{"format":1,"inputs":[{"kind":"field-quit"}]}"#).inputs.first?.kind == .fieldQuit else {
+        throw EngineError.invalid("Original play field quit input was not accepted")
+    };checks += 1
     guard try accepted(#"{"format":1,"inputs":[{"kind":"save-native"}]}"#).inputs.first?.kind == .saveNative else {
         throw EngineError.invalid("Original play native save input was not accepted")
     };checks += 1

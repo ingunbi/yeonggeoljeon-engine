@@ -77,9 +77,18 @@ struct OriginalBattleMenuTexts: Codable, Equatable {
     var quit: OriginalBattleMenuEntry
 }
 
+/// Field system menu (MAIN22CD2..22DB6) labels and its quit question.
+struct OriginalFieldMenuTexts: Codable, Equatable {
+    var items: [OriginalTitleMenuItem]
+    var quitConfirm: OriginalFrameworkText
+    var quitMask: Int
+    static let actions = ["quit", "scroll", "speed", "load", "save", "monitor", "bgm", "sound", "volume", "music-time"]
+}
+
 struct OriginalFrameworkPrompts: Codable, Equatable {
     var retryPrompt: OriginalFrameworkText?
     var battleMenu: OriginalBattleMenuTexts?
+    var fieldMenu: OriginalFieldMenuTexts?
     var savePrompt: OriginalFrameworkText?
     var saveDeclinePrompt: OriginalFrameworkText?
     var titleMenu: [OriginalTitleMenuItem]?
@@ -123,6 +132,13 @@ struct OriginalCampaignProgram: Codable {
             guard menu.retreat.rawResult == 1, menu.quit.rawResult == 4, menu.retreat.refused != nil,
                   texts.allSatisfy({ !$0.isEmpty && $0.count <= 256 }) else {
                 throw EngineError.invalid("Original battle menu facts are invalid")
+            }
+        }
+        if let menu = framework?.fieldMenu {
+            guard menu.items.map(\.index) == Array(0..<OriginalFieldMenuTexts.actions.count),
+                  menu.items.map(\.action) == OriginalFieldMenuTexts.actions, menu.quitMask == 0x40,
+                  menu.items.allSatisfy({ !$0.text.isEmpty && $0.text.count <= 64 }), !menu.quitConfirm.text.isEmpty else {
+                throw EngineError.invalid("Original field menu facts are invalid")
             }
         }
         if let menu = framework?.titleMenu {
