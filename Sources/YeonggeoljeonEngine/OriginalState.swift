@@ -85,6 +85,15 @@ final class OriginalPeople {
         try OriginalPersonCatalog(format:1,people:list).validate()
         values = Dictionary(uniqueKeysWithValues:list.map{($0.id,$0)})
     }
+    /// CF5:ADB4 restores only persons named by the saved setup rows.
+    func restore(people ids:Set<Int>,from list:[OriginalPersonDefinition]) throws {
+        let saved = Dictionary(list.map{($0.id,$0)},uniquingKeysWith:{first,_ in first})
+        guard ids.allSatisfy({ saved[$0] != nil && values[$0] != nil }) else {
+            throw EngineError.invalid("Source36 checkpoint lacks a referenced person")
+        }
+        try OriginalPersonCatalog(format:1,people:values.values.map{ saved[$0.id].flatMap{ v in ids.contains(v.id) ? v : nil } ?? $0 }).validate()
+        for id in ids { values[id] = saved[id] }
+    }
     func person(_ id:Int) throws -> OriginalPersonDefinition {
         guard let value = values[id] else { throw BattleError.invalid("Original shared person identity \(id) is unavailable") }
         return value

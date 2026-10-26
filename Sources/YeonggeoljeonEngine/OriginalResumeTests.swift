@@ -68,5 +68,27 @@ func originalResumeSelfTests() throws {
     try check(rejected { _ = try OriginalCampaignResume.read(from:wrong) }, "a file of another kind is not a native resume")
     let empty = folder.appendingPathComponent("empty.json");try Data().write(to:empty)
     try check(rejected { _ = try OriginalCampaignResume.read(from:empty) }, "an empty file is rejected before decoding")
+    // Source36 restart restores only named persons and the script context.
+    try people.restore(rows)
+    var later = rows;later[5].level = 9;later[6].level = 9
+    try people.restore(people:[5],from:later)
+    try check(try people.person(5).level == 9 && people.person(6).level == 1, "battle restart restores only setup-named persons")
+    try check(rejected { try people.restore(people:[999],from:later) }, "an unknown named person is rejected")
+    let instruction = OriginalCampaignInstruction(opcode:0xFF,offset:0,kind:"end-record",arguments:[],commands:[])
+    let record = OriginalCampaignRecord(id:"r",chapter:0,member:0,block:0,ordinal:0,kind:0,inverted:false,rawKind:0,
+        words:[0,0,0],group:OriginalCampaignGroup(base:0,count:1,repeating:false),instructions:[instruction])
+    let program = OriginalCampaignProgram(format:1,records:[record],sourceDigest:"synthetic")
+    var current = OriginalCampaignState();current.gameCity = 4;current.cityFlags = [3,2];current.cityFlagsChapter = 0
+    current.returnContext = OriginalCampaignReturnContext(packedMap:0,x:5,y:6);current.currentMusic = 9;current.completedRecords = 40
+    current.currentCity = 4;try current.setFlag(3,true)
+    let vm = try CampaignVM(program:program,state:current)
+    var context = vm.state;context.currentCity = 2;context.completedRecords = 7;context.currentMusic = 1;context.gameCity = 1
+    try context.setFlag(3,false);context.returnContext = nil;context.cityFlags = [3,3]
+    try vm.restoreRetryContext(context)
+    try check(vm.state.currentCity == 2 && (try !vm.state.flag(3)) && vm.state.gameCity == 4 && vm.state.cityFlags == [3,2] &&
+              vm.state.returnContext?.x == 5 && vm.state.currentMusic == 9 && vm.state.completedRecords == 40,
+              "restart restores script context and player city but keeps game, city, 7A76 and device state")
+    var foreign = context;foreign.programDigest = "other"
+    try check(rejected { try vm.restoreRetryContext(foreign) }, "a checkpoint from another source program is rejected")
     print("Native resume self-tests passed: \(checks)")
 }

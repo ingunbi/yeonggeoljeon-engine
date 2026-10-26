@@ -17,13 +17,33 @@ result is interpreted at `0x1E324..0x1E344`:
 | 4 | Add framework mask `40`. |
 | other | Call `CF5:C86C` (`0x201BC..0x2022E`), which enters script context `+0A`. |
 
+Raw result one comes from the battle system menu (`0x27D12..0x27EA3`,
+nine DS:`3AA0` items). Retreat asks the DS:`[3D1E]` question and writes
+result one (`0x27D77..0x27DA3`) unless script context `+1CB` is set; that
+field is the setup header's preserved-slot byte (`0x1C427..0x1C42D`), and
+the refusal shows DS:`3D2E`. Quit asks DS:`3D4F` and writes result four
+(`0x27E87..0x27EA3`). Source `36` saves the script context with its setup
+rows (`CF5:7E4A`), the persons those rows name and the player object
+(`CF5:AD5A`). Result one restores the same three (`CF5:7FE0`, `CF5:ADB4`)
+and reruns the battle loop. RNG, cities, the game object and `7A76` are not
+restored.
+
 Opcodes `09` and `11` both write context `+0A`. A source `11` inside a
 battle sets the raw result through `336FA` and selects the next map without
 an interpreter return. The native host therefore records both producers and
 enters the map only after the battle loop ends. The latest producer that
 agrees with the VM's context map supplies provenance. A context map of kind
 three would re-enter a battle through C86C; that path is not restored and
-stops explicitly. Result one is also an explicit boundary.
+stops explicitly.
+
+The native host records continuation owners when source `36` runs inside a
+battle. On result one it restores the script context (keeping game field 4,
+city objects, `7A76` and the device music), the setup-named persons, the
+roster and money, then rebuilds the battle session with the continuing RNG.
+The battle view shows retreat and quit with the exported labels and
+questions. Locally, retreating after three rounds of chapter one's first
+battle returned the units, person values, money and script position to the
+battle start; quitting produced mask `40` and the retry selector.
 
 After the dispatcher, `0x1E399..0x1E39D` leaves the framework loop when the
 mask contains `04`, `08`, `20` or `40`. World and town loops translate

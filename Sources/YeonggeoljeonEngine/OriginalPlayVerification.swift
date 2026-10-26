@@ -11,6 +11,7 @@ struct OriginalPlayInput: Codable, Equatable {
         case partyToggle = "party-toggle", partyConfirm = "party-confirm", expectBattle = "expect-battle"
         case battleMove = "battle-move", battleAttack = "battle-attack", battleStrategy = "battle-strategy"
         case battleWait = "battle-wait", battleEndTurn = "battle-end-turn"
+        case battleRetreat = "battle-retreat", battleQuit = "battle-quit"
         case retryChoice = "retry-choice"
     }
     var kind: Kind
@@ -46,7 +47,7 @@ struct OriginalPlayInput: Codable, Equatable {
         case .battleAttack: allowed = ["slot","target"]
         case .battleStrategy: allowed = target == nil ? ["slot","ability"] : ["slot","ability","target"]
         case .battleWait: allowed = ["slot"]
-        case .battleEndTurn: allowed = []
+        case .battleEndTurn,.battleRetreat,.battleQuit: allowed = []
         }
         guard operandKeys == allowed,
               person.map({ (0..<384).contains($0) }) ?? true,
@@ -76,6 +77,8 @@ struct OriginalPlayInput: Codable, Equatable {
         case .battleStrategy:_ = try flow.manualStrategy(slot!,abilityID:ability!,target:target)
         case .battleWait:try flow.manualWait(slot!)
         case .battleEndTurn:try flow.finishManual()
+        case .battleRetreat:try flow.requestRetreat()
+        case .battleQuit:try flow.requestQuit()
         default:throw EngineError.invalid("Original play input is not a battle primitive")
         }
     }
@@ -203,6 +206,7 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
             view.onHook = { try host.beginTurnHook($0) }
             view.onRetirement = { try host.beginRetirement($0) }
             view.inputReady = { host.battleInputReady }
+            view.menuTexts = host.framework?.battleMenu
             battleView = view
             if !reachedBattles.contains(session.definition.id) { reachedBattles.append(session.definition.id) }
         }
@@ -274,7 +278,7 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
                       input.battleID.map({ $0 == battle.definition.id }) ?? true else {
                     throw EngineError.invalid("Play expectation did not reach its selected source battle")
                 }
-            case .battleMove,.battleAttack,.battleStrategy,.battleWait,.battleEndTurn:
+            case .battleMove,.battleAttack,.battleStrategy,.battleWait,.battleEndTurn,.battleRetreat,.battleQuit:
                 guard host.stage.palette == 3,let view = battleView,let session = host.battle,view.session === session else {
                     throw EngineError.invalid("Original play battle primitive has no current native battle")
                 }

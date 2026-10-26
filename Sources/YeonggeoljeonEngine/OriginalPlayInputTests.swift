@@ -127,6 +127,15 @@ func originalPlayInputSelfTests() throws {
     let roundBefore = flow.session.turns.roundIndex
     try primitive(#"{"kind":"battle-end-turn"}"#).performBattle(in:flow,enabled:true)
     guard flow.session.turns.roundIndex == roundBefore+1,flow.acceptsManualInput else {throw EngineError.invalid("Play end-turn did not return through source native phases")};checks += 1
+    let menuFlow = try battleFlow()
+    try rejectedAction {try menuFlow.requestRetreat()}
+    try menuFlow.start()
+    guard menuFlow.retreatAllowed else {throw EngineError.invalid("Non-preserved battle refused source retreat")}
+    try primitive(#"{"kind":"battle-retreat"}"#).performBattle(in:menuFlow,enabled:true)
+    guard menuFlow.session.turns.result == 1,menuFlow.canLeaveBattle else {throw EngineError.invalid("Retreat did not write raw battle result one")};checks += 1
+    let quitFlow = try battleFlow();try quitFlow.start()
+    try primitive(#"{"kind":"battle-quit"}"#).performBattle(in:quitFlow,enabled:true)
+    guard quitFlow.session.turns.result == 4 else {throw EngineError.invalid("Quit did not write raw battle result four")};checks += 1
     let strategyFlow = try battleFlow();try strategyFlow.start()
     let mp = strategyFlow.session.units[0]!.mp
     try move.performBattle(in:strategyFlow,enabled:true)

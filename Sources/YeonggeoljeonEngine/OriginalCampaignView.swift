@@ -88,6 +88,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
                 return try self.host.beginRetirement(value)
             }
             board.inputReady = { [weak self] in self?.host.battleInputReady == true }
+            board.menuTexts = host.framework?.battleMenu
             let scroll = NSScrollView(frame:CGRect(x:0,y:0,width:bounds.width,height:bounds.height-40))
             scroll.autoresizingMask = [.width,.height];scroll.hasVerticalScroller = true;scroll.hasHorizontalScroller = true;scroll.documentView = board
             addSubview(scroll);battleView = board;battleScroll = scroll

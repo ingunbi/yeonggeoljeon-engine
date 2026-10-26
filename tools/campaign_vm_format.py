@@ -68,6 +68,70 @@ def title_menu(main: bytes) -> list[dict]:
     return items
 
 
+# Battle system menu (MAIN 27D12..27EA3): nine DS:3AA0 items.
+BATTLE_MENU_COUNT_AT, BATTLE_MENU_TABLE_AT, BATTLE_MENU_TABLE = 0x27D12, 0x27D21, 0x3AA0
+BATTLE_RETREAT_ITEM, BATTLE_QUIT_ITEM = 1, 8
+RETREAT_CONFIRM_CALL, RETREAT_CONFIRM_POINTER_VAR = 0x27D83, 0x3D1E
+RETREAT_REFUSED_CALL, RETREAT_REFUSED_POINTER = 0x27DA6, 0x3D2E
+QUIT_CONFIRM_CALL, QUIT_CONFIRM_POINTER = 0x27E87, 0x3D4F
+RETREAT_RESULT_AT, QUIT_RESULT_AT = 0x27D9C, 0x27E9C
+
+
+def checked_text(main: bytes, pointer: int, label: str) -> tuple[str, dict]:
+    at = MAIN_DATA_SEGMENT + pointer
+    value, after = text_at(main, at, len(main), "MAIN.EXE")
+    if not value:
+        raise SceneError(f"MAIN.EXE {label} text is empty")
+    return value, source_span("MAIN.EXE", main, at, after - at)
+
+
+def battle_menu(main: bytes) -> dict:
+    """Retreat and quit entries of the battle system menu.
+
+    Retreat asks the DS:[3D1E] question and writes raw battle result one,
+    unless script context+1CB forbids it (DS:3D2E notice). Quit asks DS:3D4F
+    and writes raw result four. Labels come from the DS:3AA0 item table.
+    """
+    count = span(main, BATTLE_MENU_COUNT_AT, 2, "MAIN.EXE")
+    lea = span(main, BATTLE_MENU_TABLE_AT, 4, "MAIN.EXE")
+    if count != bytes([0x6A, 9]) or lea[:2] != bytes([0x8D, 0x1E]) or \
+            struct.unpack_from("<H", lea, 2)[0] != BATTLE_MENU_TABLE:
+        raise SceneError("MAIN.EXE battle menu call does not match the examined profile")
+    labels = {}
+    for item in (BATTLE_RETREAT_ITEM, BATTLE_QUIT_ITEM):
+        offset, paragraph = struct.unpack_from("<HH", span(main, MAIN_DATA_SEGMENT + BATTLE_MENU_TABLE + item * 4, 4, "MAIN.EXE"))
+        if paragraph != MAIN_DATA_PARAGRAPH:
+            raise SceneError("MAIN.EXE battle menu item is outside the data segment")
+        labels[item] = checked_text(main, offset, "battle menu item")
+    # push ds; push word [3D1E]; push 2; far call CF5:3C5E
+    call = span(main, RETREAT_CONFIRM_CALL, 12, "MAIN.EXE")
+    if (call[0], call[1], call[2], call[5], call[6], call[7]) != (0x1E, 0xFF, 0x36, 0x6A, 2, 0x9A) or \
+            struct.unpack_from("<H", call, 3)[0] != RETREAT_CONFIRM_POINTER_VAR or \
+            struct.unpack_from("<HH", call, 8) != SELECTOR[::-1]:
+        raise SceneError("MAIN.EXE retreat confirmation call does not match the examined profile")
+    pointer = struct.unpack_from("<H", span(main, MAIN_DATA_SEGMENT + RETREAT_CONFIRM_POINTER_VAR, 2, "MAIN.EXE"))[0]
+    retreat_text, retreat_source = checked_text(main, pointer, "retreat confirmation")
+    refused = span(main, RETREAT_REFUSED_CALL, 11, "MAIN.EXE")
+    if (refused[0], refused[1], refused[4], refused[5], refused[6]) != (0x1E, 0x68, 0x6A, 1, 0x9A) or \
+            struct.unpack_from("<H", refused, 2)[0] != RETREAT_REFUSED_POINTER:
+        raise SceneError("MAIN.EXE retreat refusal call does not match the examined profile")
+    refused_text, refused_source = checked_text(main, RETREAT_REFUSED_POINTER, "retreat refusal")
+    for at, value in ((RETREAT_RESULT_AT, 1), (QUIT_RESULT_AT, 4)):
+        # mov bx,[bp+6]; mov byte [bx+1],value
+        if span(main, at, 7, "MAIN.EXE") != bytes([0x8B, 0x5E, 0x06, 0xC6, 0x47, 0x01, value]):
+            raise SceneError("MAIN.EXE battle menu result write does not match the examined profile")
+    return {"retreat": {"label": labels[BATTLE_RETREAT_ITEM][0], "labelSource": labels[BATTLE_RETREAT_ITEM][1],
+                        "confirm": {"text": retreat_text, "textSource": retreat_source,
+                                    "callSource": source_span("MAIN.EXE", main, RETREAT_CONFIRM_CALL, 12),
+                                    "selectorMode": 2, "yesResult": 1, "noResult": 0, "presentationOrder": [1, 0]},
+                        "refused": {"text": refused_text, "textSource": refused_source,
+                                    "callSource": source_span("MAIN.EXE", main, RETREAT_REFUSED_CALL, 11), "selectorMode": 1},
+                        "rawResult": 1, "resultSource": source_span("MAIN.EXE", main, RETREAT_RESULT_AT, 7)},
+            "quit": {"label": labels[BATTLE_QUIT_ITEM][0], "labelSource": labels[BATTLE_QUIT_ITEM][1],
+                     "confirm": selector_text(main, QUIT_CONFIRM_CALL, QUIT_CONFIRM_POINTER),
+                     "rawResult": 4, "resultSource": source_span("MAIN.EXE", main, QUIT_RESULT_AT, 7)}}
+
+
 def framework_prompts(main: bytes) -> dict:
     """Text owned by MAIN's outer framework rather than a scenario member.
 
@@ -80,7 +144,8 @@ def framework_prompts(main: bytes) -> dict:
     return {"retryPrompt": selector_text(main, RETRY_PROMPT_CALL, RETRY_PROMPT_POINTER),
             "savePrompt": selector_text(main, SAVE_PROMPT_CALL, SAVE_PROMPT_POINTER),
             "saveDeclinePrompt": selector_text(main, SAVE_DECLINE_CALL, SAVE_DECLINE_POINTER),
-            "titleMenu": title_menu(main)}
+            "titleMenu": title_menu(main),
+            "battleMenu": battle_menu(main)}
 
 
 def stock_caption_index(text: str) -> int:

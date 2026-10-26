@@ -14,6 +14,14 @@ struct OriginalCampaignCheckpoint:Codable {
     var battleValue24:Int?
 }
 
+/// Host continuation owners when source36 captured a battle checkpoint.
+struct OriginalRetryHostState:Codable,Equatable {
+    var battleID:String
+    var controllerInvocationPending:Bool
+    var controllerIdle:Bool
+    var currentEventPerson:Int?
+}
+
 /// Native engine resume point taken at a source3D save prompt. This is not
 /// an original MSAVE slot: MAIN's own save/load (CF5:B58C, title item one)
 /// is not replicated. It retains host-owned continuation state so the same
@@ -30,6 +38,7 @@ struct OriginalCampaignResume:Codable {
     var currentEventPerson:Int?
     var carryover:OriginalPartyCarryover?
     var retryCheckpoint:OriginalCampaignCheckpoint?
+    var retryHost:OriginalRetryHostState?
     var uncertainReturnContext:OriginalCampaignReturnContext?
     var limitations:[String]
 
@@ -65,6 +74,7 @@ final class OriginalCampaignHost {
     private(set) var money:Int? = 0
     private(set) var battle:OriginalBattleSession?
     private(set) var checkpoint:OriginalCampaignCheckpoint?
+    private var retryHost:OriginalRetryHostState?
     private(set) var waiting:CampaignVMWaiting?
     private(set) var choice:CampaignVMChoice?
     private(set) var saveRequest:OriginalCampaignInstruction?
@@ -512,7 +522,12 @@ final class OriginalCampaignHost {
                     return
                 }
                 try vm.resumeHostAction(opcode:instruction.opcode,sourceOffset:instruction.offset)
-                if instruction.kind == "checkpoint-capture" { checkpoint = snapshot() }
+                if instruction.kind == "checkpoint-capture" {
+                    checkpoint = snapshot()
+                    retryHost = stage.palette == 3 ? battle.map { OriginalRetryHostState(battleID:$0.definition.id,
+                        controllerInvocationPending:controllerInvocationPending,controllerIdle:controllerIdle,
+                        currentEventPerson:currentEventPerson) } : nil
+                }
             case .choice(let value):choice = value;return
             case .waiting(let value):waiting = value;return
             case .unsupported(let value):failure = value;return
@@ -571,8 +586,8 @@ final class OriginalCampaignHost {
         let selections = [pendingBattleMap,battleReturnSelection].compactMap{$0}
         switch OriginalBattleExit.decide(result:battle.turns.result,contextMap:vm.state.packedMap,selectionMaps:selections.map(\.packedMap)) {
         case .restoreCheckpoint:
-            failure = CampaignVMFailure(recordID:nil,opcode:nil,sourceOffset:nil,
-                reason:"Original battle result1 checkpoint restoration (MAIN1E347..1E368) is not restored")
+            do { try restartBattleFromCheckpoint(battle) }
+            catch { failure = CampaignVMFailure(recordID:nil,opcode:nil,sourceOffset:nil,reason:"\(error)") }
         case .framework(let mask):
             frameworkReturn = OriginalFrameworkReturn(mask:mask,producer:"battle-result-\(battle.turns.result)",recordID:nil,sourceOffset:nil)
             pendingBattleMap = nil;battleReturnSelection = nil;waiting = nil
@@ -583,6 +598,28 @@ final class OriginalCampaignHost {
             guard completeSelectedMap(selections[index]) else { return }
             pendingBattleMap = nil;battleReturnSelection = nil;controllerIdle = false;waiting = vm.waitingState()
         }
+    }
+    /// MAIN1E347..1E368: result one restores the source36 script context,
+    /// the persons named by its setup rows and the player object (CF5:7FE0,
+    /// ADB4), then reruns the battle loop. RNG, cities and 7A76 continue.
+    /// A preserved-slot battle refuses retreat, so it has no carryover here.
+    private func restartBattleFromCheckpoint(_ finished:OriginalBattleSession) throws {
+        guard let saved = checkpoint,let host = retryHost,host.battleID == finished.definition.id,
+              saved.stage.palette == 3,!finished.header.preserveFriendlySlots,saved.roster.slots.count == 45 else {
+            throw EngineError.invalid("Original battle restart has no source36 checkpoint for this battle")
+        }
+        let named = Set(saved.roster.slots.map(\.person).filter{(0..<384).contains($0)})
+        try people.transaction {
+            try people.restore(people:named,from:saved.people)
+            try vm.restoreRetryContext(saved.vm)
+        }
+        roster = saved.roster;money = saved.money
+        battle = try OriginalBattleSession(definition:finished.definition,roster:&roster,people:people,
+            combat:source.combat,movement:source.movement,rng:finished.rng,carryover:nil)
+        pendingBattleMap = nil;battleReturnSelection = nil
+        controllerInvocationPending = host.controllerInvocationPending;controllerIdle = host.controllerIdle
+        currentEventPerson = host.currentEventPerson;waiting = nil
+        try pump()
     }
     func answerRetryPrompt(_ result:Int) throws {
         guard var value = frameworkReturn else { throw EngineError.invalid("No original retry selector is pending") }
@@ -721,7 +758,7 @@ final class OriginalCampaignHost {
         return OriginalCampaignResume(checkpoint:snapshot(),saveOffset:request.offset,
             controllerInvocationPending:controllerInvocationPending,controllerIdle:controllerIdle,
             controllerAfterInvocationFacings:controllerAfterInvocationFacings,currentEventPerson:currentEventPerson,
-            carryover:carryover,retryCheckpoint:checkpoint,uncertainReturnContext:uncertainReturnContext,
+            carryover:carryover,retryCheckpoint:checkpoint,retryHost:retryHost,uncertainReturnContext:uncertainReturnContext,
             limitations:["Native engine state, not an original MSAVE slot; MAIN's own load path is not replicated.",
                          "Resume continues the same source cursor after the 3D prompt with the saved native stage."])
     }
@@ -740,7 +777,7 @@ final class OriginalCampaignHost {
         guard saved.roster.slots.count == 45 else { throw EngineError.invalid("Native resume roster is invalid") }
         try host.people.restore(saved.people)
         host.roster = saved.roster;host.money = saved.money
-        host.carryover = save.carryover;host.checkpoint = save.retryCheckpoint
+        host.carryover = save.carryover;host.checkpoint = save.retryCheckpoint;host.retryHost = save.retryHost
         host.uncertainReturnContext = save.uncertainReturnContext;host.currentEventPerson = save.currentEventPerson
         host.controllerInvocationPending = save.controllerInvocationPending;host.controllerIdle = save.controllerIdle
         host.controllerAfterInvocationFacings = save.controllerAfterInvocationFacings

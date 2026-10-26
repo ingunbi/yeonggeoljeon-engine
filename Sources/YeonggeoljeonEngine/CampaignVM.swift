@@ -62,8 +62,24 @@ struct OriginalTitleMenuItem: Codable, Equatable {
     var pointerSource: JSONValue?
 }
 
+/// Battle system menu entry (MAIN27D12..27EA3) and its raw result write.
+struct OriginalBattleMenuEntry: Codable, Equatable {
+    var label: String
+    var labelSource: JSONValue?
+    var confirm: OriginalFrameworkText
+    var refused: OriginalFrameworkText?
+    var rawResult: Int
+    var resultSource: JSONValue?
+}
+
+struct OriginalBattleMenuTexts: Codable, Equatable {
+    var retreat: OriginalBattleMenuEntry
+    var quit: OriginalBattleMenuEntry
+}
+
 struct OriginalFrameworkPrompts: Codable, Equatable {
     var retryPrompt: OriginalFrameworkText?
+    var battleMenu: OriginalBattleMenuTexts?
     var savePrompt: OriginalFrameworkText?
     var saveDeclinePrompt: OriginalFrameworkText?
     var titleMenu: [OriginalTitleMenuItem]?
@@ -99,6 +115,14 @@ struct OriginalCampaignProgram: Codable {
                   prompt.yesResult.map({ $0 == 1 }) ?? true, prompt.noResult.map({ $0 == 0 }) ?? true,
                   prompt.presentationOrder.map({ $0 == [1, 0] }) ?? true else {
                 throw EngineError.invalid("Original framework selector prompt facts are invalid")
+            }
+        }
+        if let menu = framework?.battleMenu {
+            let texts = [menu.retreat.label, menu.retreat.confirm.text, menu.retreat.refused?.text ?? "",
+                         menu.quit.label, menu.quit.confirm.text]
+            guard menu.retreat.rawResult == 1, menu.quit.rawResult == 4, menu.retreat.refused != nil,
+                  texts.allSatisfy({ !$0.isEmpty && $0.count <= 256 }) else {
+                throw EngineError.invalid("Original battle menu facts are invalid")
             }
         }
         if let menu = framework?.titleMenu {
@@ -467,6 +491,26 @@ final class CampaignVM {
         if clearFirst { for id in flags.indices { flags[id] |= 1 } }
         for id in cities where flags.indices.contains(id) { flags[id] &= ~UInt8(1) }
         state.cityFlags = flags
+    }
+
+    /// Battle result one (MAIN1E347..1E368) restores the source36 script
+    /// context (7E4A/7FE0). Player field10 is restored with the player object
+    /// (CF5:ADB4). Game field4, city objects, 7A76, the device music and the
+    /// diagnostic record counter are separate objects and stay current.
+    func restoreRetryContext(_ saved: OriginalCampaignState) throws {
+        guard saved.programDigest == state.programDigest else {
+            throw EngineError.invalid("Source36 checkpoint belongs to a different source program")
+        }
+        var next = saved
+        next.gameCity = state.gameCity
+        next.cityFlags = state.cityFlags
+        next.cityFlagsChapter = state.cityFlagsChapter
+        next.returnContext = state.returnContext
+        next.currentMusic = state.currentMusic
+        next.completedRecords = state.completedRecords
+        let previous = state
+        state = next
+        do { try validateState() } catch { state = previous; throw error }
     }
 
     func setReturnContext(packedMap: Int, x: Int, y: Int) throws {

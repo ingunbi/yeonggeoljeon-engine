@@ -7,9 +7,10 @@ All actual original-game scripts, exports, replay files and reports stay local.
 
 The input object uses format one, an `inputs` array, and optional explicit RNG
 seed, fixed microsecond step and per-input work bound. Supported operations are
-`talk`, `choice`, `save-skip`, `save-native`, `world-city`, `town-marker`, `town-cell`, `party-toggle`,
+`talk`, `choice`, `save-skip`, `save-native`, `battle-retreat`, `battle-quit`, `world-city`, `town-marker`, `town-cell`, `party-toggle`,
 `party-confirm`, `expect-battle`, `battle-move`, `battle-attack`,
 `battle-strategy`, `battle-wait`, `battle-end-turn` and `retry-choice`.
+`battle-retreat` and `battle-quit` use the battle system menu entries.
 `town-cell` walks to an explicit settlement cell, which selects one cell of a
 marker that occupies several cells. `save-native` writes a native resume file at a
 pending source save prompt into the output folder and then continues. A

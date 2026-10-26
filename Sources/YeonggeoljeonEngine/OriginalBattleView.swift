@@ -21,6 +21,11 @@ final class OriginalBattleView:NSView {
     private let strategyButton = NSButton(title:"책략 (S)",target:nil,action:nil)
     private let strategyConfirmButton = NSButton(title:"책략 실행 (Enter)",target:nil,action:nil)
     private let strategyCancelButton = NSButton(title:"취소 (Esc)",target:nil,action:nil)
+    private let retreatButton = NSButton(title:"총퇴각",target:nil,action:nil)
+    private let quitButton = NSButton(title:"게임종료",target:nil,action:nil)
+    /// Battle system menu texts exported from the caller's MAIN. Without a
+    /// campaign host the retreat/quit results have no outer dispatcher.
+    var menuTexts:OriginalBattleMenuTexts? { didSet { applyMenuTexts() } }
     var suspended:Bool { flow.suspended }
     var inputReady:(()->Bool)?
     private var message = "클릭: 선택·이동·공격 / S: 책략 / Space: 대기 / Return: 턴 종료 / Backspace: 이동 취소"
@@ -32,7 +37,9 @@ final class OriginalBattleView:NSView {
     init(session:OriginalBattleSession,background:CGImage?,sprites:OriginalBattleSpriteRenderer? = nil) throws {
         self.session = session; self.background = background;self.sprites = sprites;flow = OriginalBattleFlow(session:session)
         super.init(frame:CGRect(x:0,y:0,width:max(920,CGFloat(session.width)*32+48),height:max(680,CGFloat(session.height)*32+260)))
-        for button in [strategyButton,strategyConfirmButton,strategyCancelButton] {button.target = self;button.bezelStyle = .rounded;addSubview(button)}
+        for button in [strategyButton,strategyConfirmButton,strategyCancelButton,retreatButton,quitButton] {button.target = self;button.bezelStyle = .rounded;addSubview(button)}
+        retreatButton.action = #selector(requestRetreat(_:));quitButton.action = #selector(requestQuit(_:))
+        retreatButton.isHidden = true;quitButton.isHidden = true
         strategyButton.action = #selector(showStrategyMenu(_:))
         strategyConfirmButton.action = #selector(confirmStrategy(_:))
         strategyCancelButton.action = #selector(cancelStrategy(_:))
@@ -54,6 +61,34 @@ final class OriginalBattleView:NSView {
         strategyButton.frame = CGRect(x:24,y:footerY+52,width:128,height:28)
         strategyConfirmButton.frame = CGRect(x:164,y:footerY+52,width:170,height:28)
         strategyCancelButton.frame = CGRect(x:346,y:footerY+52,width:128,height:28)
+        retreatButton.frame = CGRect(x:486,y:footerY+52,width:110,height:28)
+        quitButton.frame = CGRect(x:608,y:footerY+52,width:110,height:28)
+    }
+    private func applyMenuTexts() {
+        retreatButton.title = menuTexts?.retreat.label ?? "총퇴각";quitButton.title = menuTexts?.quit.label ?? "게임종료"
+        retreatButton.isHidden = menuTexts == nil;quitButton.isHidden = menuTexts == nil;refreshControls()
+    }
+    private func confirm(_ text:String) -> Bool {
+        let alert = NSAlert();alert.messageText = text
+        alert.addButton(withTitle:"예 (Yes)");alert.addButton(withTitle:"아니요 (No)")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+    /// MAIN27D77..27DA3. The campaign host restarts from source36 afterwards.
+    @objc private func requestRetreat(_ sender:Any?) {
+        guard canInput,let texts = menuTexts else { return }
+        if !flow.retreatAllowed {
+            let alert = NSAlert();alert.messageText = texts.retreat.refused?.text ?? texts.retreat.label;alert.runModal();return
+        }
+        guard confirm(texts.retreat.confirm.text) else { return }
+        do { try flow.requestRetreat();selected = nil;message = "총퇴각: 전투 개시 시점의 원작 체크포인트로 돌아갑니다." }
+        catch { message = "\(error)" }
+        refreshControls();needsDisplay = true
+    }
+    /// MAIN27E87..27EA3. The framework then shows MAIN's retry selector.
+    @objc private func requestQuit(_ sender:Any?) {
+        guard canInput,let texts = menuTexts,confirm(texts.quit.confirm.text) else { return }
+        do { try flow.requestQuit();selected = nil } catch { message = "\(error)" }
+        refreshControls();needsDisplay = true
     }
     private func refreshControls() {
         let unit = selected.flatMap{try? session.requireManualUnit($0)}
@@ -62,6 +97,8 @@ final class OriginalBattleView:NSView {
         strategyCancelButton.isHidden = strategySelection == nil
         strategyConfirmButton.isEnabled = canInput && strategySelection != nil
         strategyCancelButton.isEnabled = canInput && strategySelection != nil
+        retreatButton.isEnabled = canInput && strategySelection == nil
+        quitButton.isEnabled = canInput && strategySelection == nil
     }
     private func strategyTitle(_ id:Int)->String {strategyName?(id) ?? "책략 #\(id)"}
     /// Source range owner followed by the dispatcher's nonmutating preflight:

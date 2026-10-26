@@ -140,6 +140,19 @@ final class OriginalBattleFlow {
             }
         }
     }
+    /// MAIN27D77..27DA3: retreat is refused when script context+1CB (the
+    /// setup header's preserved-slot byte) is set; otherwise raw result one.
+    var retreatAllowed:Bool { !session.header.preserveFriendlySlots }
+    func requestRetreat() throws {
+        guard acceptsManualInput else { throw BattleError.illegalAction("Original battle menu is outside the manual phase") }
+        guard retreatAllowed else { throw BattleError.illegalAction("Original retreat is refused for a preserved-slot battle") }
+        try session.acceptSourceResult(1)
+    }
+    /// MAIN27E87..27EA3: quit writes raw result four after its question.
+    func requestQuit() throws {
+        guard acceptsManualInput else { throw BattleError.illegalAction("Original battle menu is outside the manual phase") }
+        try session.acceptSourceResult(4)
+    }
     func finishManual() throws {
         guard acceptsManualInput else { throw BattleError.illegalAction("Original manual phase has a pending source operation") }
         try session.finishManualFriendly();try drivePhases()
