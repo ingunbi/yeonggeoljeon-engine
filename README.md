@@ -19,6 +19,7 @@ Swift/AppKit 자체 엔진입니다. **0.4.0 연구 개발판**은 원작 전투
 | 원작 전투 수치 | 병과·레벨·장비·사기 기반 능력, 상성·지형·병력 피해, 반격, 경험치·레벨 상승, 사기·상태이상·회복·MP. 인물 상태는 캠페인과 유닛이 공유. |
 | 원작 책략 | 0~35 명령의 사용 가능 조건, 피해·상태·사기·단일/범위 회복, 확산 순서·비용·경험치. 실제 명령과 AI 예상 점수를 분리. |
 | 전투 도구 | 속성 변경·전직, 공격서, 혼란서, 단일/범위 회복, 폭탄의 조건·대상 범위·난수 순서·소모. 거부와 취소는 도구와 행동을 소모하지 않음. |
+| 도구상 | 세계지도 도착 시 입장 질문, 궁전7번 방의 상인 배치와 방 음악, 도시별 재고, 구매·판매 가격, 소지금 상한, 장수별 8칸 소지품, 원작 문구. 원작 효과음과 창 모양은 복원하지 않음. |
 | 원작 이동·AI | 병과별 이동 비용, 진영 점유·ZOC, 원작 공격 패턴, 명령0~4의 목표·영향권·후보 평가, 물리/책략 비교와 후보별 RNG 소비. 미해석 점유 상태에서는 중단. |
 | 원작 턴 | 날씨, 진영별 회복·상태 회복, AI 우선순위, 이동 취소·대기, 원작 턴 제한 결과와 캠페인 이벤트 프로브. 일반 전멸 판정으로 승리를 만들지 않음. |
 | 캠페인 실행기 | 5장·18멤버·225블록·2,144레코드의 단계 그룹·반복·조건·플래그·선택·전환. 시나리오가 실행한 배치 프로그램을 사용하며 기록 목록의 다음 행으로 진행하지 않음. |
@@ -34,7 +35,7 @@ Swift/AppKit 자체 엔진입니다. **0.4.0 연구 개발판**은 원작 전투
 실제 시나리오 입력 재생과 별도로 확인해야 합니다. 이전 `experimentalV1`은
 `--experimental-rules`를 명시한 연구 모드에만 남아 있습니다.
 
-상점과 시민, 궁전7번 방의 특수 인물, 기능설정, 원작 세이브
+시민, 기능설정, 원작 세이브
 슬롯과 원작 불러오기 경로, 엔딩 후속 장면 등에는 미복원 경계가 남아 있습니다. 이 경계는
 생략해 진행하지 않습니다. 전체 캠페인 완주를 지원하거나 검증했다고 보고하지 않습니다.
 
@@ -116,7 +117,7 @@ swift run yeonggeoljeon-engine --data /path/to/GameData --list-campaign
 - [부대·출전 선택](research/original-party.md) · [퇴장 실행](research/original-retirement.md)
 - [시나리오 지도 반환](research/original-map-return.md) · [입력 재생 검사](research/original-play-verification.md)
 - [바깥 루프·전투 종료·재시작 선택](research/original-framework.md) · [저장·타이틀 메뉴·이어하기](research/native-resume.md)
-- [필드·전투 화면 틀·HUD·화면 안 선택 창](research/original-screen.md) · [전투 도구 사용](research/original-items.md)
+- [필드·전투 화면 틀·HUD·화면 안 선택 창](research/original-screen.md) · [전투 도구 사용](research/original-items.md) · [도구상과 도시 입장](research/original-shop.md)
 - [전투 그림](research/original-battle-sprites.md) · [엔딩](research/original-ending.md)
 - [기여 안내](CONTRIBUTING.md)
 

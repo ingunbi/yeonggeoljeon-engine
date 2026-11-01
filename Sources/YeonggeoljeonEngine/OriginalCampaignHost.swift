@@ -67,6 +67,7 @@ final class OriginalCampaignHost {
     let exploration:OriginalExplorationCatalog
     let story:OriginalStoryCatalog
     let retirementCatalog:OriginalRetirementCatalog
+    let shopCatalog:OriginalShopCatalog
     let people:OriginalPeople
     private(set) var roster = OriginalRoster()
     private(set) var rng:OriginalRNG
@@ -100,6 +101,9 @@ final class OriginalCampaignHost {
     private var controllerInvocationPending = false
     private var controllerIdle = false
     private var controllerAfterInvocationFacings:[OriginalExplorationFacing] = []
+    private(set) var shop:OriginalShopOperation?
+    /// A world arrival waiting for the source yes/no question.
+    private(set) var cityEntry:(city:Int,question:String)?
     private(set) var retirementPresentation:OriginalRetirementPresentation?
     private(set) var retirementText:String?
     private var retirementPresentationStep:OriginalRetirementStep?
@@ -124,7 +128,7 @@ final class OriginalCampaignHost {
     var explorationInputReady:Bool {
         waiting != nil && stage.hostWaiting && failure == nil && choice == nil && saveRequest == nil &&
         partySelection == nil && pendingTurnHook == nil && retirement == nil && interpreterReturn == nil && frameworkReturn == nil && explorationInput == nil &&
-        controllerIdle && !controllerInvocationPending && vm.state.currentRecordID == nil
+        shop == nil && cityEntry == nil && controllerIdle && !controllerInvocationPending && vm.state.currentRecordID == nil
     }
     var status:String {
         if let ending = ending {
@@ -154,6 +158,7 @@ final class OriginalCampaignHost {
         exploration = try OriginalExplorationCatalog.load(from:data.root.appendingPathComponent("exploration.json"))
         story = try OriginalStoryCatalog.load(from:data.root.appendingPathComponent("story.json"))
         retirementCatalog = try OriginalRetirementCatalog.load(from:data.root.appendingPathComponent("retirement.json"))
+        shopCatalog = try OriginalShopCatalog.load(from:data.root.appendingPathComponent("shop.json"))
         let program = try OriginalCampaignProgram.load(from:data.root.appendingPathComponent("campaign.json"))
         vm = try CampaignVM(program:program,state:vmState ?? OriginalCampaignState(),supportedHostOpcodes:[2,3,7,0x10,0x11,0x1B,0x1C,0x20,0x22,0x23,0x24,0x26,0x27,0x28,0x29,0x2A,0x2D,0x2F,0x33,0x34,0x35,0x37,0x39,0x3A,0x2B,0x36,0x38,0x3B,0x3C,0x3D])
         stage = Runtime(data,hostDriven:true)
@@ -229,6 +234,7 @@ final class OriginalCampaignHost {
         var event = arrival.event
         if plan.kind == .worldCity { event = try vm.commitWorldArrival(city:arrival.currentCity) }
         explorationInput = nil
+        if arrival.opensShop { try openShop(facings:arrival.afterInvocationFacings);return }
         if let event = event {
             controllerAfterInvocationFacings = arrival.afterInvocationFacings
             let matched = try dispatch(event,currentPerson:plan.targetPerson)
@@ -239,6 +245,7 @@ final class OriginalCampaignHost {
             if !matched,plan.kind == .townActor {
                 notice = "원작 기본 대사(MAIN DS:397A)는 원작 글꼴 코드라 아직 표시하지 않습니다."
             }
+            if !matched,plan.kind == .worldCity { try offerCityEntry(arrival.currentCity) }
             if let builtin = arrival.builtin {
                 // MAIN252B8..2535A: room and world fallbacks require query
                 // FFFF (or the unreached 4); marker7D also accepts zero.
@@ -250,6 +257,45 @@ final class OriginalCampaignHost {
                 }
             }
         }
+    }
+    /// MAIN23F96..23FE9: an unmatched arrival at a town asks before entering.
+    /// The source also skips the question while the cursor is disabled (player
+    /// field 0C); a native arrival always comes from a pointer input.
+    private func offerCityEntry(_ id:Int) throws {
+        guard let facts = exploration.cityEntry,let city = exploration.cities.first(where:{$0.chapter == vm.state.chapter && $0.id == id}) else {
+            throw EngineError.invalid("Original world arrival has no city entry facts")
+        }
+        if let question = facts.question(city:city) { cityEntry = (id,question) }
+    }
+    /// MAIN23FF3..2402B selects the town map with native entry byte7=1.
+    func answerCityEntry(_ enter:Bool) throws {
+        guard let pending = cityEntry,let facts = exploration.cityEntry else { throw EngineError.invalid("No original city entry question is pending") }
+        cityEntry = nil
+        guard enter else { return }
+        do { try enterNativeMap(packedMap:pending.city,spawn:GridPoint(x:facts.x,y:facts.y),sourceFacing:0) }
+        catch {
+            failure = CampaignVMFailure(recordID:vm.activeRecord?.id,opcode:nil,sourceOffset:nil,reason:"\(error)")
+            throw error
+        }
+    }
+    /// MAIN36B47..36B7B picks the stock row before the greeting.
+    private func openShop(facings:[OriginalExplorationFacing]) throws {
+        guard let city = vm.state.currentCity,let mapping = exploration.chapterMappings.first(where:{$0.chapter == vm.state.chapter}),money != nil else {
+            throw EngineError.invalid("Original shop has no player city, chapter mapping or money")
+        }
+        let names = source.combat.items
+        shop = OriginalShopOperation(catalog:shopCatalog,stock:try shopCatalog.stock(cityBase:mapping.cityBase,city:city),
+            itemName:{ item in names.first{$0.id == item}?.name ?? "" })
+        controllerAfterInvocationFacings = facings
+    }
+    var shopPrompt:OriginalShopPrompt? { try? shop?.prompt(people:people) }
+    /// Answers the routine's current blocking call. The end restores the
+    /// merchant's facing (MAIN26AA1..26AAD).
+    func answerShop(_ value:Int?) throws {
+        guard var operation = shop,var current = money else { throw EngineError.invalid("No original shop is open") }
+        try operation.answer(value,people:people,money:&current)
+        money = current;shop = operation.finished ? nil : operation
+        if operation.finished { try restoreInputFacings() }
     }
     /// MAIN252C5..253B4 rewrites the game object, then the framework loop
     /// enters that map with native entry byte7=1 (MAIN1E1FE..1E242).
@@ -285,14 +331,13 @@ final class OriginalCampaignHost {
     /// Native game-object entry (byte7=1). World entry places the default
     /// player at the current city (MAIN20B46); settlement entry places player
     /// 0200 at the game position (MAIN2464A..24691), then replays the cache
-    /// (MAIN24C6A). Native entry music (MAIN24BD6..24C1A) is not modeled.
+    /// (MAIN24C6A). Between them MAIN24BD6..24C1A selects the entry music and
+    /// puts the merchant in palace room seven.
+    private static let shopRoom = 0x2007
     private func enterNativeMap(packedMap:Int,spawn:GridPoint?,sourceFacing:Int) throws {
         let kind = packedMap>>12
         guard [0,1,2].contains(kind),(0...0xFFFF).contains(packedMap) else {
             throw EngineError.invalid("Original native entry selected a non-exploration map")
-        }
-        if packedMap == 0x2007 {
-            throw EngineError.invalid("Original palace7 native entry places special actor 0376 (MAIN24BD6..24BEF), which is not restored")
         }
         try constructCitiesIfNeeded()
         try vm.enterMapContext(packedMap:packedMap)
@@ -311,6 +356,17 @@ final class OriginalCampaignHost {
             var after = rng
             _ = try OriginalExplorationInput.placementEffects(packedMap:packedMap,person:0,rng:&after)
             try stage.enqueue([Command("place",person:0,x:spawn.x,y:spawn.y,sourcePlacementFacing:sourceFacing)]);rng = after
+            if kind == 0 {
+                let music = shopCatalog.townMusic
+                try vm.setSourceMusic(selection:vm.state.chapter == music.chapter && vm.state.currentCity == music.city ? music.special : music.normal)
+            } else if packedMap == Self.shopRoom {
+                let merchant = shopCatalog.merchant
+                try vm.setSourceMusic(selection:merchant.music)
+                if try people.person(merchant.person).sourceFlags&0x80 != 0 {
+                    try OriginalExplorationInput.merchantPlacement(rng:&rng)
+                    try stage.enqueue([Command("place",person:merchant.person,x:merchant.x,y:merchant.y,sourcePlacementFacing:merchant.sourceFacing)])
+                }
+            }
             let facts = try vm.replaySettlementCache()
             let replay = try OriginalExplorationInput.settlementCacheReplay(replay:facts,packedMap:packedMap,rng:rng)
             try stage.enqueue(replay.commands);rng = replay.rngAfter
@@ -331,7 +387,7 @@ final class OriginalCampaignHost {
     /// interpreter itself must not consume the following automatic record.
     private func controllerAutomaticTick() throws {
         guard started,waiting != nil,stage.hostWaiting,choice == nil,saveRequest == nil,partySelection == nil,
-              failure == nil,interpreterReturn == nil,explorationInput == nil,retirement == nil,
+              failure == nil,interpreterReturn == nil,explorationInput == nil,retirement == nil,shop == nil,cityEntry == nil,
               pendingTurnHook == nil,!controllerInvocationPending,
               stage.palette != 3 || battle?.turns.stage == .unstarted else { return }
         let matched = try vm.queryInvocation(event:.automatic)
@@ -784,7 +840,7 @@ final class OriginalCampaignHost {
     func resumeSnapshot() throws -> OriginalCampaignResume {
         guard started,stage.palette != 3,stage.hostWaiting,
               stage.dialogue == nil,stage.batch == nil,failure == nil,choice == nil,partySelection == nil,ending == nil,
-              frameworkReturn == nil,interpreterReturn == nil,explorationInput == nil,retirement == nil,
+              frameworkReturn == nil,interpreterReturn == nil,explorationInput == nil,retirement == nil,shop == nil,cityEntry == nil,
               pendingTurnHook == nil,!turnInvocationPending,invocationReturn == nil,retirementProbe == nil,
               controllerMap == nil,pendingBattleMap == nil,battleReturnSelection == nil,pendingCache.isEmpty else {
             throw EngineError.invalid("Native resume is available only at an idle save point outside battle")

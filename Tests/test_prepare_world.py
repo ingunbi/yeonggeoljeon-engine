@@ -8,11 +8,29 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from prepare_world import DGROUP, chapter_mappings, prepare, world_layout
+from prepare_world import DGROUP, chapter_mappings, city_entry_facts, prepare, world_layout
 from resource_formats import ResourceError, settlement_map
 
 
 class ExplorationFormatTests(unittest.TestCase):
+    def test_city_entry_question_comes_from_its_checked_sites(self):
+        main = bytearray(DGROUP + 0x4000)
+        main[0x23FCC:0x23FD0] = b"\xff\xb7\x1e\x37"
+        main[0x23FD8:0x23FDB] = b"\x68\x22\x37"
+        main[0x24024:0x2402B] = b"\x6a\x0b\x6a\x0d\x68\x6c\x7a"
+        struct.pack_into("<2H", main, DGROUP + 0x371E, 0x3718, 0x371D)
+        main[DGROUP + 0x3718:DGROUP + 0x371A] = b"c\0"
+        main[DGROUP + 0x371D] = 0
+        main[DGROUP + 0x3722:DGROUP + 0x3728] = b"%s%s?\0"
+        facts = city_entry_facts(bytes(main))
+        self.assertEqual((facts["cityWord"], facts["villageWord"], facts["questionTail"], facts["x"], facts["y"]), ("c", "", "?", 11, 13))
+        main[DGROUP + 0x3722:DGROUP + 0x3728] = b"%s?\0\0\0"
+        with self.assertRaises(ResourceError):
+            city_entry_facts(bytes(main))
+        main[0x24024] = 0
+        with self.assertRaises(ResourceError):
+            city_entry_facts(bytes(main))
+
     def test_world_walk_grid_is_half_picture_extent_and_msb_first(self):
         payload = bytes(8 * 4) + bytes([0x81])
         layout = world_layout(payload, 8, 4)

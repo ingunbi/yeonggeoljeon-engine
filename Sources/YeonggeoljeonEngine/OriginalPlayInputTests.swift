@@ -19,6 +19,17 @@ func originalPlayInputSelfTests() throws {
     """)
     guard valid.inputs.count == 6, valid.seed == 4 else { throw EngineError.invalid("Original play input lost caller order/seed") }
     checks += 1
+    let shopping = try accepted("""
+    {"format":1,"inputs":[{"kind":"city-entry","index":1},{"kind":"shop-answer","index":2},{"kind":"shop-answer"},
+      {"kind":"battle-item","slot":0,"item":27}]}
+    """)
+    guard shopping.inputs.count == 4,shopping.inputs[2].index == nil,shopping.inputs[3].item == 27 else {
+        throw EngineError.invalid("Original play input lost a shop, city entry or item operand")
+    }
+    checks += 1
+    try rejected("{\"format\":1,\"inputs\":[{\"kind\":\"city-entry\",\"index\":2}]}")
+    try rejected("{\"format\":1,\"inputs\":[{\"kind\":\"city-entry\"}]}")
+    try rejected("{\"format\":1,\"inputs\":[{\"kind\":\"shop-answer\",\"person\":1}]}")
     try rejected("{\"format\":1,\"inputs\":[{\"kind\":\"win-battle\"}]}")
     try rejected("{\"format\":1,\"inputs\":[{\"kind\":\"talk\"}]}")
     try rejected("{\"format\":1,\"inputs\":[{\"kind\":\"talk\",\"person\":3,\"city\":2}]}")

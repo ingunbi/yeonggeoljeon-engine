@@ -13,6 +13,7 @@ struct OriginalPlayInput: Codable, Equatable {
         case battleWait = "battle-wait", battleEndTurn = "battle-end-turn"
         case battleRetreat = "battle-retreat", battleQuit = "battle-quit", fieldQuit = "field-quit"
         case retryChoice = "retry-choice"
+        case shopAnswer = "shop-answer", cityEntry = "city-entry"
     }
     var kind: Kind
     var person: Int?
@@ -38,7 +39,8 @@ struct OriginalPlayInput: Codable, Equatable {
         let allowed: Set<String>
         switch kind {
         case .talk,.partyToggle: allowed = ["person"]
-        case .choice,.retryChoice: allowed = ["index"]
+        case .choice,.retryChoice,.cityEntry: allowed = ["index"]
+        case .shopAnswer: allowed = index == nil ? [] : ["index"]
         case .worldCity: allowed = ["city"]
         case .townMarker: allowed = ["marker"]
         case .expectBattle: allowed = battleID == nil ? [] : ["battleID"]
@@ -53,7 +55,7 @@ struct OriginalPlayInput: Codable, Equatable {
         }
         guard operandKeys == allowed,
               person.map({ (0..<384).contains($0) }) ?? true,
-              index.map({ $0 >= 0 }) ?? true, kind != .retryChoice || [0,1].contains(index ?? -1),
+              index.map({ $0 >= 0 }) ?? true, ![.retryChoice,.cityEntry].contains(kind) || [0,1].contains(index ?? -1),
               city.map({ (0...255).contains($0) }) ?? true,
               marker.map({ (0...255).contains($0) }) ?? true,
               battleID.map({ !$0.isEmpty }) ?? true,
@@ -114,7 +116,7 @@ struct OriginalPlayInputs: Codable {
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys).isSubset(of: ["format","seed","fixedStepMicroseconds","maximumTicksPerInput","inputs"]),
               let rows = object["inputs"] as? [[String: Any]],
-              rows.allSatisfy({ Set($0.keys).isSubset(of: ["kind","person","index","city","marker","battleID","slot","x","y","target","ability"]) }) else {
+              rows.allSatisfy({ Set($0.keys).isSubset(of: ["kind","person","index","city","marker","battleID","slot","x","y","target","ability","item"]) }) else {
             throw EngineError.invalid("Original play input file has an unsupported shape, field or resource size")
         }
         let value = try JSONDecoder().decode(Self.self, from: data)
@@ -152,6 +154,8 @@ struct OriginalPlayObservation: Codable {
     var battleID: String?
     var battleStage: OriginalTurnStage?
     var frame: String
+    var money: Int?
+    var shopText: String?
 }
 struct OriginalPlayVerification: Codable {
     var format = 1
@@ -229,7 +233,7 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
             try synchronizeBattle()
             if let source = host.failure { throw EngineError.invalid("Reached unrestored source operation: \(source.reason)") }
             if host.interpreterReturn != nil || host.frameworkReturn != nil { return totalTicks - started }
-            if host.choice != nil || host.saveRequest != nil || host.partySelection != nil { return totalTicks - started }
+            if host.choice != nil || host.saveRequest != nil || host.partySelection != nil || host.shop != nil || host.cityEntry != nil { return totalTicks - started }
             if host.retirementPresentation != nil { try host.acknowledgeRetirement(); continue }
             if host.stage.dialogue != nil { try host.acknowledge(); continue }
             if host.explorationInputReady || (host.stage.palette == 3 && host.battleInputReady) { return totalTicks - started }
@@ -248,7 +252,8 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
             chapter: state.chapter, member: state.member, block: state.block, groupBase: state.groupBase,
             choiceID: host.choice?.id, savePending: host.saveRequest != nil, partyPending: host.partySelection != nil,
             battleID: host.stage.palette == 3 ? host.battle?.definition.id : nil,
-            battleStage: host.stage.palette == 3 ? host.battle?.turns.stage : nil, frame: name))
+            battleStage: host.stage.palette == 3 ? host.battle?.turns.stage : nil, frame: name,
+            money: host.money, shopText: host.shopPrompt?.text))
     }
     do {
         if resumeURL == nil { try host.acknowledge() }
@@ -262,6 +267,8 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
             switch input.kind {
             case .retryChoice: try host.answerRetryPrompt(input.index!)
             case .talk: _ = try host.talk(to: input.person!)
+            case .shopAnswer: try host.answerShop(input.index)
+            case .cityEntry: try host.answerCityEntry(input.index == 1)
             case .choice: try host.choose(input.index!)
             case .saveSkip:
                 guard host.saveRequest != nil else { throw EngineError.invalid("Play save-skip has no matching source save request") }

@@ -259,7 +259,9 @@ def prepare(game: Path, output: Path) -> dict:
         raise ResourceError("world direction tables exceed the examined geometry")
     if inventory(game) != before:
         raise ResourceError("original file hashes changed during exploration export")
+    city_entry = city_entry_facts(main)
     result = {"format": 2, "worldBankKey": "person-field-2B", "maps": maps, "chapterMappings": chapters, "cities": cities,
+              "cityEntry": city_entry,
               "actorBanks": actors, "peopleBanks": people_banks,
               "worldNeighbors": [{"dx": x, "dy": y, "direction": index} for index, (x, y) in enumerate(zip(dx, dy))],
               "worldDirectionFrames": frames,
@@ -274,11 +276,30 @@ def prepare(game: Path, output: Path) -> dict:
                               "Default town/world palettes are exported; grayscale and dynamic palette changes remain unsupported.",
                               "World bank keys are SSCCHR1 members selected by person field2B; peopleBanks keep raw BAKDATA state byte one separately.",
                               "Non-person world actors use SSCCHR1 member three in the source allocator; script placement here covers person actors only.",
-                              "City scripts, citizens, interactive destinations and shop flows require their own source execution models."]}
+                              "City scripts, citizens and interactive destinations require their own source execution models."]}
     temporary = output / ".exploration.json.tmp"
     temporary.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(output / "exploration.json")
     return result
+
+
+def city_entry_facts(main: bytes) -> dict:
+    """MAIN23F96..2402B asks before a kind3 or kind4 city, then enters at (11,13)."""
+    for name, offset, expected in (("suffix table", 0x23FCC, b"\xff\xb7\x1e\x37"), ("question", 0x23FD8, b"\x68\x22\x37"),
+                                   ("position", 0x24024, b"\x6a\x0b\x6a\x0d\x68\x6c\x7a")):
+        if main[offset:offset + len(expected)] != expected:
+            raise ResourceError(f"city entry {name} differs from the examined source")
+
+    def text(pointer: int) -> str:
+        start = DGROUP + pointer
+        return main[start:main.index(0, start)].decode("cp949")
+
+    city_word, village_word = struct.unpack_from("<2H", main, DGROUP + 0x371E)
+    question = text(0x3722)
+    if not question.startswith("%s%s") or question.count("%s") != 2:
+        raise ResourceError("city entry question no longer has its two examined substitutions")
+    return {"cityWord": text(city_word), "villageWord": text(village_word), "questionTail": question[4:], "x": 0x0B, "y": 0x0D,
+            "source": {"resource": "MAIN.EXE", "method": "MAIN.EXE:0x23F96..0x2402B", "question": DGROUP + 0x3722, "words": DGROUP + 0x371E}}
 
 
 def main() -> int:

@@ -266,9 +266,11 @@ final class Runtime {
         if mode == "scene" { pump() }
     }
     var busy: Bool { batch != nil || waitRemaining > 0 || fadeRemaining > 0 }
-    func sourceRoute(person:Int,to target:GridPoint) throws -> [RouteNode] {
+    /// MAIN25C57 seeds the flood at the goal without testing it, so an actor
+    /// standing on a blocked cell (the merchant's counter) is still reached.
+    func sourceRoute(person:Int,to target:GridPoint,actorGoal:Bool = false) throws -> [RouteNode] {
         guard hostWaiting,let actor = actors[person] else { throw EngineError.invalid("Original exploration route requires an idle live actor") }
-        return try route(from:actor,to:target)
+        return try route(from:actor,to:target,actorGoal:actorGoal)
     }
     func setNativeFacing(person:Int,direction:Int) throws {
         guard hostWaiting,var actor = actors[person],(0..<(currentMap?.geometry == "world" ? 8 : 4)).contains(direction) else {
@@ -578,7 +580,7 @@ final class Runtime {
     }
     /// Destination flood followed by source-ordered strict-lower selection.
     /// Geometry, blocked bits and neighbor directions are resource-owner facts.
-    private func route(from actor: ActorState, to target: GridPoint) throws -> [RouteNode] {
+    private func route(from actor: ActorState, to target: GridPoint, actorGoal: Bool = false) throws -> [RouteNode] {
         try validateGridPosition(actor.position); try validateGridPosition(target)
         guard let map = currentMap, let width = map.walkWidth, let height = map.walkHeight,
               let grid = map.walkGrid, grid.count == height,
@@ -596,7 +598,7 @@ final class Runtime {
             // actor IDs below80 are not obstacles, including queued movers.
             p.x >= 0 && p.y >= 0 && p.x < width && p.y < height && cells[p.y][p.x] == "."
         }
-        guard passable(target) else { throw EngineError.invalid("Movement destination is blocked") }
+        guard actorGoal || passable(target) else { throw EngineError.invalid("Movement destination is blocked") }
         var distances = [GridPoint: Int](), queue = [target], at = 0
         distances[target] = 0
         while at < queue.count {

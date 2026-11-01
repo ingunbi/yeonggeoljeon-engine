@@ -30,7 +30,7 @@ func originalExplorationInputSelfTests() throws {
             stepMicroseconds:10,placementDirections:map.kind == "world" ? Array(0..<8) : nil)
         let actor = ActorResource(image:"actor.png",frameWidth:32,frameHeight:40,frames:8,anchorX:0,anchorY:24,
             directions:(0..<8).map{Direction(frame:($0/2)*2,flip:false)})
-        try stage.configureMap(packed,resource:resource,actors:["0":actor,"1":actor,"2":actor]);try stage.enqueue([Command("map",map:packed)])
+        try stage.configureMap(packed,resource:resource,actors:["0":actor,"1":actor,"2":actor,"374":actor]);try stage.enqueue([Command("map",map:packed)])
         return stage
     }
     var state = OriginalCampaignState();state.packedMap = 0x1000;state.currentCity = 0;state.cityFlags = [3,3,3];state.cityFlagsChapter = 0
@@ -105,6 +105,26 @@ func originalExplorationInputSelfTests() throws {
     try palace.enqueueSourceRoute(person:0,route:palaceMarker.route,finalFacing:palaceMarker.route.last!.facing);palace.advance(microseconds:100_000)
     let palaceArrival = try OriginalExplorationInput.arrive(palaceMarker,catalog:catalog,state:palaceState,stage:palace)
     try check(palaceArrival.event == .townDestination(marker:124,currentCity:9) && palaceArrival.builtin == .worldExit,"palace marker uses active PMAP walk facts and retains its unmatched built-in fallback")
+    // The merchant stands on a blocked cell and opens the shop instead of kind3.
+    var counter = townMap
+    counter.walkGrid = [".....",".....","...#.",".....","....."];counter.walkBytes[13] = 255
+    let shopTown = try runtime(counter,packed:0)
+    try shopTown.enqueue([Command("place",person:0,x:0,y:2),Command("place",person:374,x:3,y:2)])
+    try check(try rejected{_ = try shopTown.sourceRoute(person:0,to:GridPoint(x:3,y:2))},"a walk still refuses a blocked destination")
+    let merchantTalk = try OriginalExplorationInput.townActor(state:townState,stage:shopTown,person:374,enabled:true)
+    try check(merchantTalk.route.last?.position != GridPoint(x:3,y:2),"the actor route floods from the blocked goal and stops beside it")
+    try shopTown.enqueueSourceRoute(person:0,route:merchantTalk.route,finalFacing:merchantTalk.route.last!.facing);shopTown.advance(microseconds:100_000)
+    let shopArrival = try OriginalExplorationInput.arrive(merchantTalk,catalog:catalog,state:townState,stage:shopTown)
+    try check(shopArrival.opensShop && shopArrival.event == nil && shopArrival.afterInvocationFacings.count == 1,"person374 opens the shop and keeps the facing restore")
+    var rng = OriginalRNG(state:5),standing = OriginalRNG(state:5)
+    try OriginalExplorationInput.merchantPlacement(rng:&rng);_ = try standing.next(bound:16)
+    try check(rng == standing,"merchant placement draws only its standing period")
+    let entry = OriginalCityEntry(cityWord:"C",villageWord:"V",questionTail:"?",x:11,y:13)
+    func city(_ type:Int?) -> OriginalCity {
+        OriginalCity(chapter:0,id:1,name:"N",worldX:0,worldY:0,worldPositionKnown:true,worldMapKey:"w",townMapKey:"t",sourceCityType:type)
+    }
+    try check(entry.question(city:city(3)) == "NC?" && entry.question(city:city(4)) == "NV?","city types three and four ask with their word")
+    try check(entry.question(city:city(0)) == nil && entry.question(city:city(2)) == nil && entry.question(city:city(nil)) == nil,"other types only pass through")
     try check(OriginalSettlementBuiltin.forMarker(125) == .returnToContext && OriginalSettlementBuiltin.forMarker(126) == nil &&
               OriginalSettlementBuiltin.forMarker(2) == .roomEntry(marker:2) && OriginalSettlementBuiltin.forMarker(0x81) == nil,
               "settlement fallback follows the source marker switch")

@@ -130,6 +130,11 @@ final class OriginalPeople {
             person.itemIDs[slot] = 255
         }
     }
+    /// CF5:7590 writes one inventory slot; 255 clears it.
+    func setItem(person id:Int,slot:Int,item:Int) throws {
+        guard (0..<8).contains(slot),item == 255 || (0..<64).contains(item) else { throw BattleError.invalid("Original inventory write is outside its source range") }
+        try update(id) { $0.itemIDs[slot] = item }
+    }
     /// MAIN2DF95..2DFF4: the receiver takes its first empty slot, then the
     /// giver clears its first match. False means the receiver is full.
     func giveItem(from giver:Int,to receiver:Int,item:Int) throws -> Bool {

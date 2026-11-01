@@ -17,6 +17,18 @@ struct OriginalCity:Codable {
     var worldPositionKnown:Bool; var worldMapKey:String; var townMapKey:String
     var sourceCityType:Int? = nil
 }
+/// MAIN23F96..2402B: the question asked on arrival and the town entry cell.
+struct OriginalCityEntry:Codable {
+    var cityWord:String; var villageWord:String; var questionTail:String; var x:Int; var y:Int
+    /// Source city types three and four ask; other types only pass through.
+    func question(city:OriginalCity) -> String? {
+        switch city.sourceCityType {
+        case 3:return city.name+cityWord+questionTail
+        case 4:return city.name+villageWord+questionTail
+        default:return nil
+        }
+    }
+}
 struct OriginalExplorationCatalog:Codable {
     var format:Int; var maps:[OriginalExplorationMap]; var chapterMappings:[OriginalChapterMapping]
     var cities:[OriginalCity]; var actorBanks:[String:[String:ActorResource]]
@@ -25,6 +37,7 @@ struct OriginalExplorationCatalog:Codable {
     /// Format2 keys world banks by the constructed person field2B, which is
     /// the SSCCHR1 member the source allocator loads (MAIN1FC24..18448).
     var worldBankKey:String?
+    var cityEntry:OriginalCityEntry? = nil
     var source:JSONValue?; var limitations:[String]?
     static func load(from url:URL) throws -> Self {
         let value = try JSONDecoder().decode(Self.self,from:Data(contentsOf:url))

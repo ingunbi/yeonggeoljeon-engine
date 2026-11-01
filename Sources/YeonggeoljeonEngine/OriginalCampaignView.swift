@@ -80,6 +80,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             else if host.saveRequest != nil { presentSave() }
             else if let choice = host.choice,choice.kind == "choice-skip" || !choice.options.isEmpty { present(choice) }
             else if host.partySelection != nil { presentParty() }
+            else if host.shop != nil { presentShop() }
+            else if let entry = host.cityEntry { yesNo(entry.question) { [weak self] enter in self?.act { try self?.host.answerCityEntry(enter) } } }
             else if host.retirementPresentation != nil { presentRetirement() }
             else if host.stage.palette == 3,host.stage.dialogue != nil { presentBattleDialogue() }
         } catch { errorText = "\(error)";needsDisplay = true }
@@ -141,6 +143,50 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             guard let self = self else { return }
             self.act { try self.host.acknowledge() }
         })
+    }
+    /// One blocking call of the shop routine. The merchant's line stays up
+    /// behind lists and questions (speech modes C0 and 80).
+    private func presentShop() {
+        guard let prompt = host.shopPrompt else { return }
+        let catalog = host.shopCatalog,person = catalog.merchant.person,palette = host.stage.palette
+        func reply(_ value:Int?) {
+            act { try host.answerShop(value) }
+            if host.shop != nil,errorText == nil { presentShop() }
+        }
+        var line = CanvasNotice(speaker:(try? host.people.person(person).name) ?? "",text:prompt.text,portrait:portrait(person,palette:palette)) {}
+        let rows = prompt.rows.map { CanvasMenu.Option(label:$0) }
+        switch prompt.kind {
+        case .say:
+            line.timeout = 2;line.onDismiss = { reply(0) }
+            overlay.show(line)
+        case .top:
+            overlay.show(CanvasMenu(title:"",options:rows,cancellable:true,anchor:CGPoint(x:catalog.windows.top.x,y:catalog.windows.top.y)) { reply($0) },message:line)
+        case .list:
+            let list = catalog.windows.list
+            overlay.show(CanvasMenu(title:"",options:rows,cancellable:true,anchor:CGPoint(x:list.x,y:list.y),visibleRows:list.rows) { reply($0) },message:line)
+        case .ask:
+            let yes = image(host.story.choiceButtonImage(value:1,palette:palette)),no = image(host.story.choiceButtonImage(value:0,palette:palette))
+            // The engine's line sits above a source window it would cover.
+            let panels = shopPanels(prompt)
+            line.atTop = !panels.isEmpty
+            let place = CGPoint(x:overlay.viewport.maxX-192,y:line.atTop ? overlay.viewport.minY+46 : overlay.viewport.maxY-66)
+            overlay.show(CanvasMenu(title:"",options:[.init(label:"예",image:yes),.init(label:"아니요",image:no)],horizontal:true,anchor:place) { reply($0 == 0 ? 1 : 0) },
+                         panels:panels,message:line)
+        }
+    }
+    /// The item window (MAIN36244) or the receiver's slots (MAIN3668E).
+    private func shopPanels(_ prompt:OriginalShopPrompt) -> [CanvasPanel] {
+        let windows = host.shopCatalog.windows
+        if let item = prompt.item,let facts = host.source.combat.items.first(where:{$0.id == item}) {
+            let shape = windows.description
+            return [CanvasPanel(rect:CGRect(x:shape.x,y:shape.y,width:shape.width,height:shape.height),heading:facts.name ?? "",text:facts.description ?? "")]
+        }
+        guard let person = prompt.inventory,let held = try? host.people.person(person).itemIDs else { return [] }
+        let shape = windows.inventory
+        let names = held.filter{$0 != 255}.map { item in host.source.combat.items.first{$0.id == item}?.name ?? "" }
+        return [CanvasPanel(rect:CGRect(x:shape.x,y:shape.y,width:shape.width,height:shape.height),
+                            rows:names.isEmpty ? [host.shopCatalog.texts.noItems] : names,
+                            rowOrigin:CGPoint(x:shape.textColumn*8,y:shape.firstRow),rowStep:CGFloat(shape.rowStep))]
     }
     private func presentRetirement() {
         guard let text = host.retirementText else { return }

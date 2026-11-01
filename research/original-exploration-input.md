@@ -60,7 +60,8 @@ opcode20 updates. A selected world destination uses Runtime's native two-
 halfstep route. Arrival (`23F3C..23F83`) writes current city before the
 kind2/kind5 `[255,newCity]` probe. That producer does not write the saved `7A76` return
 context; only the live actor owns its arrival position. No event is emitted
-when a plan is created.
+when a plan is created. An unanswered probe asks to enter a type three or four
+city ([original-shop.md](original-shop.md)).
 
 `currentCity` belongs to player object+10, `gameCity` to native game field4,
 and `city` to the script map context. The source2E and world-arrival producers
@@ -101,23 +102,26 @@ the chapter mapping. Marker7D copies kind, index and position from
 The framework loop then enters the game-object map. Settlement entry with
 byte one places player `0200` at the game position with raw facing four when
 +9 is one, otherwise zero (`2464A..24691`), then replays the actor cache
-(`24C6A`). World entry uses the existing current-city default spawn. Palace
-seven's special actor `0376` and entry music (`24BD6..24C1A`) are not restored
-and palace seven stops explicitly. The native host also follows the
+(`24C6A`). World entry uses the existing current-city default spawn. Between
+placement and replay, `24BD6..24C1A` selects the entry music and puts actor
+`0376` in palace room seven ([original-shop.md](original-shop.md)). The native
+host also follows the
 settlement wrapper's status-two rule (`264B2..264B7`): a script map selection
 from a town or palace event saves `7A76` before C86C. If no player actor is
 displayed then, the saved position is unknown and a later marker7D exit stops.
 A matched marker7D script followed by the built-in exit is not restored.
 
 Actor approach (`25D9E..25E67`) builds the route to the actor's target tile and
-removes its final step through the shared route producer. It does not find a
+removes its final step through the shared route producer. The producer seeds its
+flood at the goal without testing it, so a blocked target tile is reachable. It does not find a
 new path to a separately chosen adjacent cell. The planner preserves that
 prefix. At arrival, `25B60..25C04` requires adjacency (or the same tile), and
 `26A48..26A85` faces both participants toward one another before kind3's
 person probe. When that probe finds no record, `26A8D..26A9C` makes the
 person say the DS:`397A` line. Those bytes are not cp949 text and use the
 original font's own codes, so the native host shows an explicit notice instead
-of inventing a rendering. The special person374 shop/controller branch remains explicit.
+of inventing a rendering. Person374 runs the shop instead of kind3
+([original-shop.md](original-shop.md)).
 `26AA1..26AAD` restores the target's saved facing after that invocation while
 the player keeps the new facing; the arrival returns that separate after-call
 effect. An actor that moved away cannot receive the stale interaction event.

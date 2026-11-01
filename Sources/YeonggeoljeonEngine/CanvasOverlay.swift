@@ -23,6 +23,8 @@ struct CanvasMenu {
     /// Top-left corner for a window that opens beside a map cell. The panel
     /// keeps a compact width and stays inside the viewport.
     var anchor:CGPoint? = nil
+    /// A source list that shows this many rows and scrolls the rest.
+    var visibleRows:Int? = nil
     var onChoose:(Int?) -> Void
 }
 
@@ -34,7 +36,19 @@ struct CanvasNotice {
     /// Seconds before a source timed message closes by itself; input closes
     /// it sooner. Nil waits for input.
     var timeout:TimeInterval? = nil
+    /// Moves the line to the top of the viewport to clear a window below it.
+    var atTop = false
     var onDismiss:() -> Void
+}
+
+/// A plain text window placed by source coordinates behind a selector.
+struct CanvasPanel {
+    var rect:CGRect
+    var heading = ""
+    var text = ""
+    var rows:[String] = []
+    var rowOrigin = CGPoint.zero
+    var rowStep:CGFloat = 16
 }
 
 /// The terrain window of one map cell, placed by source coordinates.
@@ -68,6 +82,9 @@ final class CanvasOverlayView:NSView {
     private var noticeTimer:Timer?
     /// Parent windows still on screen behind the active selector.
     private var parents:[CanvasMenu] = []
+    /// Source windows and the speaker's line that stay up behind the selector.
+    private var panels:[CanvasPanel] = []
+    private var message:CanvasNotice?
     /// First vertical row shown when a list is taller than the viewport.
     private var firstVisible = 0
     /// The canvas area panels stay inside: the field map window by default,
@@ -76,7 +93,7 @@ final class CanvasOverlayView:NSView {
     var viewport = fieldViewport
     private func noticeRect(_ value:CanvasNotice) -> CGRect {
         guard value.portrait == nil,value.speaker.isEmpty else {
-            return CGRect(x:viewport.minX+8,y:viewport.maxY-104,width:viewport.width-16,height:96)
+            return CGRect(x:viewport.minX+8,y:value.atTop ? viewport.minY+8 : viewport.maxY-104,width:viewport.width-16,height:96)
         }
         // A plain refusal is a small box in the middle of the map window.
         let width = min(viewport.width-16,ceil((value.text as NSString).size(withAttributes:attributes()).width)+32)
@@ -93,22 +110,22 @@ final class CanvasOverlayView:NSView {
 
     /// keepScroll preserves the list position when a menu is shown again
     /// after one of its rows changed (party toggles).
-    func show(_ value:CanvasMenu,keepScroll:Bool = false,behind:[CanvasMenu] = []) {
+    func show(_ value:CanvasMenu,keepScroll:Bool = false,behind:[CanvasMenu] = [],panels:[CanvasPanel] = [],message:CanvasNotice? = nil) {
         var value = value
         if !value.options.indices.contains(value.selected) || !value.options[value.selected].enabled {
             value.selected = value.options.firstIndex(where:\.enabled) ?? 0
         }
         if !keepScroll { firstVisible = 0 }
-        parents = behind
+        parents = behind;self.panels = panels;self.message = message
         selector = value;notice = nil;brief = nil;terrain = nil;revealSelection();present()
     }
     func show(_ value:CanvasNotice) {
-        notice = value;selector = nil;brief = nil;terrain = nil;parents = [];present()
+        notice = value;selector = nil;brief = nil;terrain = nil;parents = [];panels = [];message = nil;present()
         guard let timeout = value.timeout else { return }
         noticeTimer = Timer.scheduledTimer(withTimeInterval:timeout,repeats:false) { [weak self] _ in self?.dismissNotice() }
     }
-    func show(_ value:CanvasBrief) { brief = value;terrain = nil;notice = nil;selector = nil;parents = [];present() }
-    func show(_ value:CanvasTerrain) { terrain = value;brief = nil;notice = nil;selector = nil;parents = [];present() }
+    func show(_ value:CanvasBrief) { brief = value;terrain = nil;notice = nil;selector = nil;parents = [];panels = [];message = nil;present() }
+    func show(_ value:CanvasTerrain) { terrain = value;brief = nil;notice = nil;selector = nil;parents = [];panels = [];message = nil;present() }
     private func present() {
         noticeTimer?.invalidate();noticeTimer = nil
         isHidden = false;needsDisplay = true
@@ -116,7 +133,7 @@ final class CanvasOverlayView:NSView {
     }
     private func close() {
         noticeTimer?.invalidate();noticeTimer = nil
-        selector = nil;notice = nil;brief = nil;terrain = nil;parents = [];needsDisplay = true
+        selector = nil;notice = nil;brief = nil;terrain = nil;parents = [];panels = [];message = nil;needsDisplay = true
         restoreFocus?()
     }
     private func choose(_ index:Int?) {
@@ -163,11 +180,12 @@ final class CanvasOverlayView:NSView {
     private func metrics(_ value:CanvasMenu) -> (width:CGFloat,title:CGFloat,footer:CGFloat,shown:Int) {
         let check:CGFloat = value.options.contains(where:{ $0.checked != nil }) ? 20 : 0
         let labelWidth = value.options.map { ceil(($0.label as NSString).size(withAttributes:attributes()).width) }.max() ?? 0
-        let width:CGFloat = value.horizontal ? 280 : value.anchor != nil ? min(viewport.width-16,max(88,labelWidth+40+check)) :
+        let width:CGFloat = value.horizontal ? (value.anchor != nil ? 176 : 280) : value.anchor != nil ? min(viewport.width-16,max(88,labelWidth+40+check)) :
             min(viewport.width-16,max(240,labelWidth+56+check))
         let title = textHeight(value.title,width:width-32),footer = textHeight(value.footer,width:width-32)
         let chrome = 26+(title > 0 ? title+10 : 0)+(footer > 0 ? footer+8 : 0)
-        let shown = value.horizontal ? value.options.count : min(value.options.count,max(1,Int((viewport.height-8-chrome)/Self.row)))
+        let fits = max(1,Int((viewport.height-8-chrome)/Self.row))
+        let shown = value.horizontal ? value.options.count : min(value.options.count,value.visibleRows.map{min($0,fits)} ?? fits)
         return (width,title,footer,shown)
     }
     private func revealSelection() {
@@ -246,6 +264,36 @@ final class CanvasOverlayView:NSView {
             context.addLine(to:CGPoint(x:x,y:base+dy));context.closePath();context.fillPath()
         }
     }
+    private func drawPanel(_ value:CanvasPanel,in context:CGContext) {
+        panel(value.rect,in:context,opaque:true)
+        var y = value.rect.minY+8
+        if !value.heading.isEmpty {
+            (value.heading as NSString).draw(at:CGPoint(x:value.rect.minX+12,y:y),withAttributes:attributes(NSColor(red:1,green:0.85,blue:0.45,alpha:1)))
+            y += 20
+        }
+        if !value.text.isEmpty {
+            (value.text as NSString).draw(with:CGRect(x:value.rect.minX+12,y:y,width:value.rect.width-24,height:value.rect.maxY-y-8),
+                                          options:[.usesLineFragmentOrigin],attributes:attributes())
+        }
+        for (index,text) in value.rows.enumerated() {
+            (text as NSString).draw(at:CGPoint(x:value.rowOrigin.x,y:value.rowOrigin.y+CGFloat(index)*value.rowStep-1),withAttributes:attributes())
+        }
+    }
+    private func drawNotice(_ value:CanvasNotice,in context:CGContext) {
+        let rect = noticeRect(value)
+        panel(rect,in:context)
+        var textX = rect.minX+12
+        if let portrait = value.portrait {
+            Renderer.image(portrait,in:CGRect(x:rect.minX+8,y:rect.minY+8,width:min(CGFloat(portrait.width),64),height:min(CGFloat(portrait.height),80)),context:context)
+            textX = rect.minX+84
+        }
+        if !value.speaker.isEmpty {
+            (value.speaker as NSString).draw(in:CGRect(x:textX,y:rect.minY+6,width:rect.maxX-textX-8,height:20),
+                withAttributes:attributes(NSColor(red:1,green:0.85,blue:0.45,alpha:1)))
+        }
+        (value.text as NSString).draw(with:CGRect(x:textX,y:rect.minY+(value.speaker.isEmpty ? 12 : 26),width:rect.maxX-textX-(value.speaker.isEmpty ? 12 : 8),height:rect.height-(value.speaker.isEmpty ? 16 : 30)),
+                                      options:[.usesLineFragmentOrigin],attributes:attributes())
+    }
     private func drawTerrain(_ value:CanvasTerrain,in context:CGContext) {
         let facts = value.layout,x = Int(value.origin.x),y = Int(value.origin.y)
         panel(CGRect(x:x,y:y,width:facts.size[0],height:facts.size[1]),in:context,opaque:true)
@@ -282,27 +330,15 @@ final class CanvasOverlayView:NSView {
         context.translateBy(x:origin.x,y:origin.y);context.scaleBy(x:scale,y:scale)
         context.interpolationQuality = .none
         if let value = selector {
+            for item in panels { drawPanel(item,in:context) }
+            if let line = message { drawNotice(line,in:context) }
             for parent in parents { drawMenu(parent,in:context) }
             drawMenu(value,in:context)
         } else if let value = brief {
             drawBrief(value,in:context)
         } else if let value = terrain {
             drawTerrain(value,in:context)
-        } else if let value = notice {
-            let rect = noticeRect(value)
-            panel(rect,in:context)
-            var textX = rect.minX+12
-            if let portrait = value.portrait {
-                Renderer.image(portrait,in:CGRect(x:rect.minX+8,y:rect.minY+8,width:min(CGFloat(portrait.width),64),height:min(CGFloat(portrait.height),80)),context:context)
-                textX = rect.minX+84
-            }
-            if !value.speaker.isEmpty {
-                (value.speaker as NSString).draw(in:CGRect(x:textX,y:rect.minY+6,width:rect.maxX-textX-8,height:20),
-                    withAttributes:attributes(NSColor(red:1,green:0.85,blue:0.45,alpha:1)))
-            }
-            (value.text as NSString).draw(with:CGRect(x:textX,y:rect.minY+(value.speaker.isEmpty ? 12 : 26),width:rect.maxX-textX-(value.speaker.isEmpty ? 12 : 8),height:rect.height-(value.speaker.isEmpty ? 16 : 30)),
-                                          options:[.usesLineFragmentOrigin],attributes:attributes())
-        }
+        } else if let value = notice { drawNotice(value,in:context) }
         context.restoreGState()
     }
     override func keyDown(with event:NSEvent) {

@@ -38,6 +38,8 @@ struct OriginalExplorationArrival:Codable {
     var currentCity:Int
     var facings:[OriginalExplorationFacing] = []
     var afterInvocationFacings:[OriginalExplorationFacing] = []
+    /// MAIN26A66..26A77 runs the shop instead of a kind3 source event.
+    var opensShop = false
     var builtin:OriginalSettlementBuiltin?
 }
 enum OriginalWorldEntryMode {case script,nativeCityDefault}
@@ -73,6 +75,10 @@ enum OriginalExplorationInput {
         let autonomous = kind != 1 && person != 0 ? try rng.next(bound:3)+1 : nil
         return OriginalExplorationPlacementEffects(standingPeriod:standing,autonomousPeriod:autonomous)
     }
+    /// Actor 0376 is person 374. MAIN25FE0 draws only the standing period for
+    /// this class, and drops the placement when the person is not available.
+    static let shopMerchant = 374
+    static func merchantPlacement(rng:inout OriginalRNG)throws { _ = try rng.next(bound:16) }
     private static func city(_ id:Int,catalog:OriginalExplorationCatalog,state:OriginalCampaignState)throws->OriginalCity {
         guard let value = catalog.cities.first(where:{$0.chapter == state.chapter && $0.id == id}) else {
             throw EngineError.invalid("Original exploration city identity is unavailable")
@@ -151,7 +157,7 @@ enum OriginalExplorationInput {
         guard let current = state.currentCity,let target = stage.actors[person],target.person != player.person,!target.walking else {
             throw EngineError.invalid("Original town talk target is absent or not settled")
         }
-        var route = try stage.sourceRoute(person:player.person,to:target.position)
+        var route = try stage.sourceRoute(person:player.person,to:target.position,actorGoal:true)
         if route.count > 1 {route.removeLast()}
         return OriginalExplorationInputPlan(kind:.townActor,packedMap:state.packedMap,chapter:state.chapter,
             currentCity:current,playerPerson:player.person,route:route,targetPerson:person)
@@ -194,11 +200,11 @@ enum OriginalExplorationInput {
                 }
                 facings = [.init(person:player.person,nativeDirection:forward.direction),.init(person:person,nativeDirection:reverse.direction)]
             }
-            // Native person374 invokes a dedicated shop/controller before the
-            // ordinary kind3 source event. Do not silently convert that branch.
-            guard person != 374 else {throw EngineError.invalid("Original special town participant requires its native user-input controller")}
-            return OriginalExplorationArrival(event:.townActor(person:person),currentCity:plan.currentCity,facings:facings,
-                afterInvocationFacings:[.init(person:person,nativeDirection:target.facing)])
+            let restore = [OriginalExplorationFacing(person:person,nativeDirection:target.facing)]
+            if person == shopMerchant {
+                return OriginalExplorationArrival(event:nil,currentCity:plan.currentCity,facings:facings,afterInvocationFacings:restore,opensShop:true)
+            }
+            return OriginalExplorationArrival(event:.townActor(person:person),currentCity:plan.currentCity,facings:facings,afterInvocationFacings:restore)
         }
     }
 }
