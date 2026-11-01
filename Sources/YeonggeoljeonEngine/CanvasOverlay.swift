@@ -31,12 +31,28 @@ struct CanvasNotice {
     var speaker:String
     var text:String
     var portrait:CGImage?
+    /// Seconds before a source timed message closes by itself; input closes
+    /// it sooner. Nil waits for input.
+    var timeout:TimeInterval? = nil
+    var onDismiss:() -> Void
+}
+
+/// The victory conditions window, placed by source coordinates.
+struct CanvasBrief {
+    var layout:OriginalBattleLayout.Conditions
+    var title:String
+    var heading:String
+    var lines:[String]
+    var turns:String
+    var button:CGImage?
     var onDismiss:() -> Void
 }
 
 final class CanvasOverlayView:NSView {
     private(set) var selector:CanvasMenu?
     private(set) var notice:CanvasNotice?
+    private(set) var brief:CanvasBrief?
+    private var noticeTimer:Timer?
     /// Parent windows still on screen behind the active selector.
     private var parents:[CanvasMenu] = []
     /// First vertical row shown when a list is taller than the viewport.
@@ -56,7 +72,7 @@ final class CanvasOverlayView:NSView {
     }
     /// Called after the overlay closes so the owner can restore focus.
     var restoreFocus:(() -> Void)?
-    var active:Bool { selector != nil || notice != nil }
+    var active:Bool { selector != nil || notice != nil || brief != nil }
     override var isFlipped:Bool { true }
     override var acceptsFirstResponder:Bool { active }
     override func hitTest(_ point:NSPoint) -> NSView? { active ? super.hitTest(point) : nil }
@@ -71,15 +87,22 @@ final class CanvasOverlayView:NSView {
         }
         if !keepScroll { firstVisible = 0 }
         parents = behind
-        selector = value;notice = nil;revealSelection();present()
+        selector = value;notice = nil;brief = nil;revealSelection();present()
     }
-    func show(_ value:CanvasNotice) { notice = value;selector = nil;parents = [];present() }
+    func show(_ value:CanvasNotice) {
+        notice = value;selector = nil;brief = nil;parents = [];present()
+        guard let timeout = value.timeout else { return }
+        noticeTimer = Timer.scheduledTimer(withTimeInterval:timeout,repeats:false) { [weak self] _ in self?.dismissNotice() }
+    }
+    func show(_ value:CanvasBrief) { brief = value;notice = nil;selector = nil;parents = [];present() }
     private func present() {
+        noticeTimer?.invalidate();noticeTimer = nil
         isHidden = false;needsDisplay = true
         window?.makeFirstResponder(self)
     }
     private func close() {
-        selector = nil;notice = nil;parents = [];needsDisplay = true
+        noticeTimer?.invalidate();noticeTimer = nil
+        selector = nil;notice = nil;brief = nil;parents = [];needsDisplay = true
         restoreFocus?()
     }
     private func choose(_ index:Int?) {
@@ -89,6 +112,10 @@ final class CanvasOverlayView:NSView {
     }
     private func dismissNotice() {
         guard let value = notice else { return }
+        close();value.onDismiss()
+    }
+    private func dismissBrief() {
+        guard let value = brief else { return }
         close();value.onDismiss()
     }
 
@@ -201,6 +228,22 @@ final class CanvasOverlayView:NSView {
             context.addLine(to:CGPoint(x:x,y:base+dy));context.closePath();context.fillPath()
         }
     }
+    private func drawBrief(_ value:CanvasBrief,in context:CGContext) {
+        let facts = value.layout
+        panel(OriginalBattleLayout.rect(facts.window),in:context,opaque:true)
+        for box in [facts.textBox,facts.turnBox] {
+            context.setStrokeColor(CGColor(gray:0.6,alpha:1));context.setLineWidth(1)
+            context.stroke(OriginalBattleLayout.rect(box).insetBy(dx:0.5,dy:0.5))
+        }
+        func line(_ text:String,_ column:Int,_ y:Int,_ color:NSColor = .white) {
+            (text as NSString).draw(at:CGPoint(x:column*8,y:y-1),withAttributes:attributes(color))
+        }
+        line(value.title,facts.titleColumn,facts.headerY)
+        line(value.heading,facts.headingColumn,facts.headerY,NSColor(red:1,green:0.85,blue:0.45,alpha:1))
+        for (index,text) in value.lines.enumerated() { line(text,facts.textColumn,facts.textY+index*facts.lineStep) }
+        line(value.turns,facts.turnColumn,facts.turnY)
+        if let picture = value.button { Renderer.image(picture,in:OriginalBattleLayout.rect(facts.button),context:context) }
+    }
     override func draw(_ dirtyRect:NSRect) {
         guard active,let context = NSGraphicsContext.current?.cgContext else { return }
         context.saveGState()
@@ -209,6 +252,8 @@ final class CanvasOverlayView:NSView {
         if let value = selector {
             for parent in parents { drawMenu(parent,in:context) }
             drawMenu(value,in:context)
+        } else if let value = brief {
+            drawBrief(value,in:context)
         } else if let value = notice {
             let rect = noticeRect(value)
             panel(rect,in:context)
@@ -231,6 +276,10 @@ final class CanvasOverlayView:NSView {
             if [36,49,76,53].contains(event.keyCode),!event.isARepeat { dismissNotice() }
             return
         }
+        if brief != nil {
+            if [36,49,76,53].contains(event.keyCode),!event.isARepeat { dismissBrief() }
+            return
+        }
         guard var value = selector else { super.keyDown(with:event);return }
         func step(_ delta:Int) {
             guard !value.options.isEmpty else { return }
@@ -251,6 +300,7 @@ final class CanvasOverlayView:NSView {
     }
     override func mouseDown(with event:NSEvent) {
         if notice != nil { dismissNotice();return }
+        if brief != nil { dismissBrief();return }
         guard let value = selector else { return }
         let point = canvasPoint(event),shape = layout(value)
         if let hit = shape.options.first(where:{ $0.rect.insetBy(dx:-3,dy:-2).contains(point) }) { choose(hit.index) }
@@ -267,6 +317,6 @@ final class CanvasOverlayView:NSView {
         needsDisplay = true
     }
     override func rightMouseDown(with event:NSEvent) {
-        if let value = selector,value.cancellable { choose(nil) } else if notice != nil { dismissNotice() }
+        if let value = selector,value.cancellable { choose(nil) } else if notice != nil { dismissNotice() } else if brief != nil { dismissBrief() }
     }
 }

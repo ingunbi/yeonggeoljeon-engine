@@ -207,6 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let source = try OriginalGameData(root:data.root),session = try source.isolatedBattle(id,rng:rng)
         let board = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:data.root),sprites:OriginalBattleSpriteRenderer(root:data.root),
                                            style:OriginalBattleStyle.load(definition:session.definition,root:data.root))
+        board.announcesPhases = true
         try board.start();show(board,title:"원작 전투 복원 · \(id)")
         board.window?.makeFirstResponder(board)
     }

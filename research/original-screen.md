@@ -107,8 +107,36 @@ through `0xD5FC`. The producer applies the same rule to the map tiles. Units are
 (`0x2988A`). The visible cells are outlined in colour 6 (`0x291CC`).
 
 The 기능 button lists nine DS:`3AA0` items. The native menu shows all nine and
-enables 턴 종료, 총퇴각 and 게임종료, whose handlers are restored; the others stay
-disabled.
+enables 턴 종료, 총퇴각, 승리조건 and 게임종료, whose handlers are restored; the others
+stay disabled.
+
+### Victory conditions
+
+`0x27876` draws a 320×192 window at `(64,96)` with two inner boxes. The header
+joins the chapter label, from DS:`3C78`, and the battle name through DS:`3C82`, and
+the right side prints DS:`3C8F`. The text box shows the interpreter's objective
+buffer at `D4DC+0x3C8`, which source opcode `30` fills. The drawer at `0x16110`
+fills a line up to 34 half-width columns, never splits a double-byte character and
+stops at a line feed. The window calls it from row 152 in steps of 32 while the row
+stays above 216, so two lines fit.
+
+The routine has one flag. The menu passes zero, and the turn box then shows the
+current turn over the limit through DS:`3C98`. The first friendly phase passes one,
+and it shows only the limit through DS:`3CB0`. Both wait on the button, which is the
+third MARK member 0 picture at `0x19F0`.
+
+The friendly phase routine at `0x27A3E` opens the window while the round is zero,
+then shows the DS:`3D20` side notice every friendly phase. Replays skip this opening
+because it changes no game state.
+
+The formatter at `0x172D8` sends `%u` and `%w` to the same branch.
+
+### Message modes
+
+The message routine at `0x175AE` takes a mode. Modes 0 and 3 wait a fixed number of
+timer units and close early on input. Mode 1 waits for the button and mode 2 asks
+yes or no. The native view gives mode 0 messages a two-second timeout. The real
+duration depends on a timer rate that was not established.
 
 ### Unit commands
 

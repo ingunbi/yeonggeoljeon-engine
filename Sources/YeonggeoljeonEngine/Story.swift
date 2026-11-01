@@ -57,6 +57,7 @@ struct OriginalStoryCatalog:Codable {
                   battle.texts.forces.count == 15,battle.texts.forces.allSatisfy({ !$0.isEmpty }),!battle.texts.retired.isEmpty,
                   battle.parts.side.count == 2,battle.parts.side.allSatisfy({ $0.count == 2 && $0.allSatisfy({ $0.width == 32 && $0.height == 32 }) }),
                   battle.parts.function.width == 64,battle.parts.function.height == 16,battle.commands.isValid,
+                  battle.parts.ok.width == 48,battle.parts.ok.height == 20,
                   Set(battle.parts.gauge.keys) == ["high","middle","low"],battle.parts.gauge.values.allSatisfy({ $0.width == 8 && $0.height == 10 }) else {
                 throw EngineError.invalid("Original battle screen facts are invalid")
             }

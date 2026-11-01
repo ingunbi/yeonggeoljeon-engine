@@ -119,11 +119,14 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             }
             board.inputReady = { [weak self] in self?.host.battleInputReady == true }
             board.menuTexts = host.framework?.battleMenu
+            board.objective = { [weak self] in (self?.host.vm.state.chapter ?? 0,self?.host.vm.state.objectiveText) }
+            board.announcesPhases = true
             board.frame = bounds
             addSubview(board,positioned:.below,relativeTo:overlay);battleView = board
             window?.makeFirstResponder(board)
         }
         battleView?.isHidden = false;overlay.viewport = battleView?.style.layout.viewportRect ?? overlay.viewport
+        battleView?.announcePhase()
         if host.battleInputReady,let board = battleView {
             if session.turns.stage == .unstarted { try board.start() }
             else if board.suspended { try board.resumeSourceFlow() }

@@ -30,6 +30,11 @@ final class OriginalBattleView:NSView {
     var externalStatus:String? { didSet { if externalStatus != oldValue { needsDisplay = true } } }
     /// Replay captures label slots, because input files address units by slot.
     var showsSlotNumbers = false
+    /// Chapter and scenario objective text, when a campaign owns this battle.
+    var objective:(() -> (chapter:Int,text:String?))?
+    /// Live play shows the phase opening; replays drive the flow directly.
+    var announcesPhases = false
+    private var announcedRound:Int?
     private var message = "클릭: 부대 선택·이동 / 오른쪽 클릭·Esc: 취소, 기능 메뉴 / Return: 턴 종료 / 방향키·휠: 지도 이동"
     /// Steps of MAIN's unit command routine (2D9D4), one at a time.
     private enum Phase:Equatable { case idle,moving(Int),command(Int),attackTarget(Int),giveTarget(Int,item:Int),itemTarget(Int,item:Int) }
@@ -64,13 +69,13 @@ final class OriginalBattleView:NSView {
         addSubview(overlay)
     }
     required init?(coder:NSCoder) { fatalError("init(coder:) is not supported") }
-    func start() throws { try flow.start();needsDisplay = true }
+    func start() throws { try flow.start();announcePhase();needsDisplay = true }
     func resumeSourceFlow() throws {
         try flow.resumeSourceFlow()
         if waitingForStrategy,let result = flow.lastStrategy {showStrategyResult(result);waitingForStrategy = false}
         if waitingForAttack,let result = flow.lastAttack {showAttackResult(result);waitingForAttack = false}
         if waitingForItem,let result = flow.lastItem {waitingForItem = false;finishItem(result)}
-        needsDisplay = true
+        announcePhase();needsDisplay = true
     }
     private var canInput:Bool {flow.acceptsManualInput && (inputReady?() ?? true)}
     // Canvas mapping matches the campaign view: fit 640×400 above a 40pt status bar.
@@ -116,12 +121,38 @@ final class OriginalBattleView:NSView {
         }
         else if !suspended { try flow.start() }
         message = "복원된 원작 순서로 턴을 진행했습니다."
+        announcePhase()
+    }
+    /// MAIN27876..27A3A. The opening view states the turn limit; the menu
+    /// view states the current turn too.
+    private func showConditions(opening:Bool,then done:@escaping () -> Void = { }) {
+        guard let texts = style.commands?.conditions,let state = objective?() else { done();return }
+        let facts = layoutFacts.conditions
+        let chapter = texts.chapterLabels.indices.contains(state.chapter) ? texts.chapterLabels[state.chapter] : ""
+        let turns = opening ? OriginalBattleConditions.numbered(texts.turnLimit,[session.header.turnLimit]) :
+            OriginalBattleConditions.numbered(texts.currentTurn,[session.turns.roundIndex+1,session.header.turnLimit])
+        overlay.show(CanvasBrief(layout:facts,title:OriginalBattleConditions.title(texts.titleFormat,chapter:chapter,name:session.definition.name ?? session.definition.id),
+            heading:texts.heading,lines:OriginalBattleConditions.lines(state.text ?? "",width:facts.lineWidth,count:(facts.lineEnd-facts.textY)/facts.lineStep),
+            turns:turns,button:style.ok,onDismiss:done))
+    }
+    /// MAIN27AC6..27AE8: the first friendly phase opens with the conditions,
+    /// and every friendly phase with the side notice.
+    func announcePhase() {
+        guard announcesPhases,session.turns.stage == .manualFriendly,canInput,!overlay.active,
+              announcedRound != session.turns.roundIndex else { return }
+        announcedRound = session.turns.roundIndex
+        let notice:() -> Void = { [weak self] in
+            guard let self = self,let text = self.style.commands?.conditions.playerPhase else { return }
+            self.say(text)
+        }
+        if session.turns.roundIndex == 0 { showConditions(opening:true,then:notice) } else { notice() }
     }
     /// The 기능 button opens MAIN27D12's list. Items without a restored
     /// handler stay visible and disabled.
     private func openFunctionMenu() {
         guard canInput,phase == .idle,strategySelection == nil else { return }
-        let restored:Set<String> = menuTexts == nil ? ["end-turn"] : ["end-turn","retreat","quit"]
+        var restored:Set<String> = menuTexts == nil ? ["end-turn"] : ["end-turn","retreat","quit"]
+        if objective != nil,style.commands != nil { restored.insert("conditions") }
         let items = menuTexts?.items ?? [OriginalTitleMenuItem(index:0,action:"end-turn",text:"End turn")]
         functionOpen = true;needsDisplay = true
         overlay.show(CanvasMenu(title:"",options:items.map { .init(label:$0.text,enabled:restored.contains($0.action)) },cancellable:true) { [weak self] index in
@@ -131,6 +162,7 @@ final class OriginalBattleView:NSView {
             switch items[index].action {
             case "end-turn": do { try self.endTurn() } catch { self.message = "\(error)" }
             case "retreat": self.requestRetreat()
+            case "conditions": self.showConditions(opening:false)
             case "quit": self.requestQuit()
             default: break
             }
@@ -208,7 +240,7 @@ final class OriginalBattleView:NSView {
     private func beginAttack(_ slot:Int) throws {
         let cells = try attackCells(slot)
         guard session.units.values.contains(where:{ $0.status == 2 && $0.enemy && cells.contains($0.position) }) else {
-            overlay.show(CanvasNotice(speaker:"",text:refusal("noEnemyInRange"),portrait:nil) { [weak self] in self?.openCommand(slot) })
+            say(refusal("noEnemyInRange")) { [weak self] in self?.openCommand(slot) }
             return
         }
         phase = .attackTarget(slot);message = "공격할 적을 클릭하세요. 오른쪽 클릭·Esc: 취소"
@@ -221,7 +253,7 @@ final class OriginalBattleView:NSView {
         let rain = session.combat.strategyEnvironmentLookup[Int(session.turns.weatherIndex)] == 2
         let rows = OriginalBattleCommand.strategyRows(classID:person.classID,level:person.level,mp:unit.mp,rain:rain,levels:levels,costs:costs)
         guard !rows.isEmpty else {
-            overlay.show(CanvasNotice(speaker:"",text:refusal("noStrategy"),portrait:nil) { [weak self] in self?.openCommand(slot) })
+            say(refusal("noStrategy")) { [weak self] in self?.openCommand(slot) }
             return
         }
         let options = rows.map { CanvasMenu.Option(label:"\(strategyTitle($0.ability))  \($0.cost)",enabled:$0.enabled) }
@@ -244,7 +276,7 @@ final class OriginalBattleView:NSView {
     /// MAIN2DE42..2DEF7: the item command needs at least one held item.
     private func openItems(_ slot:Int) {
         guard !heldItems(slot).isEmpty else {
-            overlay.show(CanvasNotice(speaker:"",text:refusal("noItems"),portrait:nil) { [weak self] in self?.openCommand(slot) })
+            say(refusal("noItems")) { [weak self] in self?.openCommand(slot) }
             return
         }
         overlay.show(itemActionMenu(slot) { [weak self] action in
@@ -271,8 +303,9 @@ final class OriginalBattleView:NSView {
             return text.replacingCharacters(in:range,with:value)
         }
     }
+    /// MAIN3C5E mode0 waits a fixed time unless input arrives.
     private func say(_ text:String,then done:@escaping () -> Void = { }) {
-        overlay.show(CanvasNotice(speaker:"",text:text,portrait:nil,onDismiss:done))
+        overlay.show(CanvasNotice(speaker:"",text:text,portrait:nil,timeout:2,onDismiss:done))
     }
     private func kindLabel(_ kind:Int) -> String { style.commands?.kindLabels[kind] ?? String(kind) }
     private func className(_ id:Int) -> String { style.commands?.classNames[id] ?? String(id) }
@@ -390,7 +423,7 @@ final class OriginalBattleView:NSView {
         case 2:
             guard let unit = session.units[slot] else { return }
             try session.people.discardItem(person:unit.person,item:item)
-            overlay.show(CanvasNotice(speaker:"",text:filled("discarded",itemName(item)),portrait:nil,onDismiss:again))
+            say(filled("discarded",itemName(item)),then:again)
         default:
             overlay.show(CanvasNotice(speaker:itemName(item),text:itemRecord(item)?.description ?? "",portrait:nil,onDismiss:again))
         }
@@ -689,7 +722,7 @@ final class OriginalBattleView:NSView {
             guard let unit = target else { return }
             if let denial = OriginalBattleCommand.denial(unit) {
                 previewSlot = unit.slot;inspected = unit.slot
-                overlay.show(CanvasNotice(speaker:"",text:refusal(denial),portrait:nil) { [weak self] in self?.previewSlot = nil;self?.needsDisplay = true })
+                say(refusal(denial)) { [weak self] in self?.previewSlot = nil;self?.needsDisplay = true }
                 return
             }
             _ = try session.requireManualUnit(unit.slot)
@@ -700,18 +733,18 @@ final class OriginalBattleView:NSView {
             guard let unit = session.units[slot] else { return }
             if point == unit.position { openCommand(slot);return }
             guard try session.reachable(slot).contains(point) else {
-                overlay.show(CanvasNotice(speaker:"",text:refusal("outOfMoveRange"),portrait:nil) { })
+                say(refusal("outOfMoveRange"))
                 return
             }
             _ = try session.move(slot,to:point)
             openCommand(slot)
         case .attackTarget(let slot):
             guard try attackCells(slot).contains(point) else {
-                overlay.show(CanvasNotice(speaker:"",text:refusal("outOfAttackRange"),portrait:nil) { });return
+                say(refusal("outOfAttackRange"));return
             }
             guard let target = target else { return }
             guard target.enemy else {
-                overlay.show(CanvasNotice(speaker:"",text:refusal("cannotAttackAlly"),portrait:nil) { });return
+                say(refusal("cannotAttackAlly"));return
             }
             if let result = try flow.manualAttack(slot,target:target.slot) { showAttackResult(result) }
             else {waitingForAttack = true;message = "공격의 퇴장 대사·이벤트가 끝나기를 기다립니다."}
@@ -719,16 +752,16 @@ final class OriginalBattleView:NSView {
         case .giveTarget(let slot,let item):
             guard let unit = session.units[slot] else { return }
             guard try giveCells(slot).contains(point) || point == unit.position else {
-                overlay.show(CanvasNotice(speaker:"",text:refusal("outOfItemRange"),portrait:nil) { });return
+                say(refusal("outOfItemRange"));return
             }
             guard let target = target else { return }
-            if target.enemy { overlay.show(CanvasNotice(speaker:"",text:refusal("enemyUnit"),portrait:nil) { });return }
+            if target.enemy { say(refusal("enemyUnit"));return }
             if target.slot == slot { openItemList(slot,action:1);return }
             if try flow.manualGive(slot,to:target.slot,item:item) {
                 resetCommand()
-                overlay.show(CanvasNotice(speaker:"",text:filled("gave",itemName(item)),portrait:nil) { })
+                say(filled("gave",itemName(item)))
             } else {
-                overlay.show(CanvasNotice(speaker:"",text:refusal("inventoryFull"),portrait:nil) { [weak self] in self?.openItemList(slot,action:1) })
+                say(refusal("inventoryFull")) { [weak self] in self?.openItemList(slot,action:1) }
             }
         case .itemTarget(let slot,let item): try pickItemTarget(slot,item:item,point:point,target:target)
         case .command: break

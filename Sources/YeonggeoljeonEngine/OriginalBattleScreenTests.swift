@@ -135,5 +135,23 @@ func originalBattleScreenSelfTests() throws {
     try check(giver == [255,255,7,255,255,255,255,255] && receiver[3] == 9,"the receiver fills its first empty slot")
     try check(try !people.giveItem(from:0,to:2,item:7),"a full receiver refuses")
     try check(try people.person(0).itemIDs.contains(7),"a refused gift keeps the item")
+
+    // MAIN1610..161B2 line filling and the window's two text rows.
+    let conditions = layout.conditions
+    let rowsAvailable = (conditions.lineEnd-conditions.textY)/conditions.lineStep
+    try check(rowsAvailable == 2,"the window fits two text rows above row 216")
+    try check(OriginalBattleConditions.lines("short",width:34,count:2) == ["short"],"a short text keeps one line")
+    let wide = String(repeating:"\u{AC00}",count:18)
+    let wrapped = OriginalBattleConditions.lines(wide,width:34,count:2)
+    try check(wrapped.map(\.count) == [17,1],"a double-byte run breaks at width without splitting")
+    let narrow = OriginalBattleConditions.lines(String(repeating:"a",count:36),width:34,count:2)
+    try check(narrow.map(\.count) == [35,1],"the single-byte test allows one column past the width")
+    try check(OriginalBattleConditions.lines("a\nb\nc",width:34,count:2) == ["a","b"],"line feeds break and a third row is dropped")
+    try check(OriginalBattleConditions.lines("a\r\nb",width:34,count:2) == ["a","b"],"carriage returns do not add rows")
+    try check(OriginalBattleConditions.lines("",width:34,count:2).isEmpty,"an empty objective has no rows")
+    try check(OriginalBattleConditions.numbered("T  %2u/%2u",[3,30]) == "T   3/30","the width pads numbers")
+    try check(OriginalBattleConditions.numbered("L  %2w",[9]) == "L   9","%w formats like %u")
+    try check(OriginalBattleConditions.numbered("%2u",[120]) == "120","a wider number is not cut")
+    try check(OriginalBattleConditions.title("%s-%s",chapter:"a",name:"b") == "a-b","the title takes chapter then name")
     print("Original battle screen self-tests passed: \(checks)")
 }

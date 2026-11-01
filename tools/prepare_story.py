@@ -147,6 +147,17 @@ TERRAIN_SHAPES = {
     "kindLabels": (0x2E4C0, "81c3e247"), "familyLabels": (0x2E26E, "ffb7fa47"), "classNames": (0x2E778, "81c3d80f"),
 }
 TERRAIN_TABLE, TERRAIN_NAMES, KIND_LABELS, FAMILY_LABELS, CLASS_NAMES = 0x47BC, 0x3E74, 0x47E2, 0x47FA, 0xFD8
+# Victory conditions window (MAIN 0x27876..0x27A3A) and the friendly phase notice.
+CONDITION_SHAPES = {
+    "window": (0x2788B, "6a40 6a60 684001 68c000"), "textBox": (0x2792F, "6a48 688800 683001 6a60"),
+    "turnBox": (0x27945, "6a48 68e800 68f000 6a30"), "title": (0x278ED, "6a0a 6a70"), "heading": (0x2790A, "6a26 6a70"),
+    "textStart": (0x27968, "bf9800"), "textStep": (0x27986, "83c720 81ffd800"), "textLine": (0x27978, "b80c00 8bd7 b322"),
+    "turn": (0x2798F, "6a0b 68f800"), "button": (0x279E4, "6a28 68f800 6a06 6a10"), "chapters": (0x278DD, "ffb7783c"),
+    "headingText": (0x27916, "688f3c"), "objective": (0x2795B, "68dcd4 9ada0eb61c"),
+}
+CONDITION_TEXTS = {"titleFormat": (0x278E1, 0x3C82), "currentTurn": (0x279B0, 0x3C98), "turnLimit": (0x279C7, 0x3CB0),
+                   "playerPhase": (0x27ADD, 0x3D20)}
+OK_BUTTON = 0x19F0
 DATA_SEGMENT, DATA_PARAGRAPH = 0x37DA0, 0x313A
 FUNCTION_PICTURE, SIDE_PICTURES = 0x800, {(0, 0): 0xA00, (0, 1): 0xC00, (1, 0): 0xE00, (1, 1): 0x1000}
 GAUGE_TILES = {"high": 0x2230, "middle": 0x21E0, "low": 0x2208}
@@ -219,6 +230,21 @@ def item_texts(main: bytes) -> dict:
             "terrainRefusals": [terrain_refusal(main, family) for family in range(3)]}
 
 
+def battle_conditions(main: bytes) -> dict:
+    """Texts of the victory conditions window, from checked sites."""
+    for name, (at, shape) in CONDITION_SHAPES.items():
+        expected = bytes.fromhex(shape.replace(" ", ""))
+        if main[at:at + len(expected)] != expected:
+            raise ResourceError(f"MAIN conditions site {name} at {at:#x} does not match the examined profile")
+    texts = {}
+    for name, (at, pointer) in CONDITION_TEXTS.items():
+        if main[at:at + 4] != b"\x1e\x68" + struct.pack("<H", pointer):
+            raise ResourceError(f"MAIN conditions text {name} at {at:#x} does not match the examined profile")
+        texts[name] = data_text(main, pointer)
+    return {**texts, "heading": data_text(main, 0x3C8F), "chapterLabels": near_texts(main, 0x3C78, 5),
+            "source": {"window": "MAIN.EXE:0x27876..0x27A3A", "phaseNotice": "MAIN.EXE:0x27AC6..0x27AE8"}}
+
+
 def battle_commands(main: bytes) -> dict:
     """Labels and refusals of the unit command routine, from checked sites."""
     for name, (at, shape) in COMMAND_SHAPES.items():
@@ -235,6 +261,7 @@ def battle_commands(main: bytes) -> dict:
     return {"labels": labels, "ambush": far_texts(main, 0x4866, AMBUSH_ACTIONS),
             "itemActions": far_texts(main, 0x4346, ITEM_ACTIONS),
             "strategyNames": far_texts(main, 0x4438, STRATEGY_COUNT), "messages": messages, **item_texts(main),
+            "conditions": battle_conditions(main),
             "source": {"routine": "MAIN.EXE:0x2D9D4..0x2DE42", "window": "MAIN.EXE:0x2AA26..0x2AAC4",
                        "picker": "MAIN.EXE:0x29ADE..0x29CAF", "moveDenials": "MAIN.EXE:0x30ED2..0x31083"}}
 
@@ -249,6 +276,10 @@ def battle_layout(panel_size: tuple[int, int]) -> dict:
                      "hover": [0x1C6, 0x94]},
             "minimap": {"panel": [0x1C0, 0x110, panel_size[0], panel_size[1]], "base": [0x39 * 8, 0x23 * 8], "span": [0x28, 0x18],
                         "cellPixels": 4},
+            "conditions": {"window": [0x40, 0x60, 0x140, 0xC0], "textBox": [0x48, 0x88, 0x130, 0x60], "turnBox": [0x48, 0xE8, 0xF0, 0x30],
+                           "button": [0x28 * 8, 0xF8 - 2, 0x30, 0x14], "titleColumn": 0x0A, "headingColumn": 0x26, "headerY": 0x70,
+                           "textColumn": 0x0C, "textY": 0x98, "lineStep": 0x20, "lineWidth": 0x22, "lineEnd": 0xD8,
+                           "turnColumn": 0x0B, "turnY": 0xF8},
             "followMargin": 6}
 
 
@@ -268,7 +299,8 @@ def battle_parts(selected: dict, palette: list, output: Path) -> dict:
     return {"function": export("function", hexgrp.data, FUNCTION_PICTURE, 64, 16, hexgrp),
             "side": [[export(f"side-{side}-{state}", hexgrp.data, SIDE_PICTURES[side, state], 32, 32, hexgrp) for state in (0, 1)]
                      for side in (0, 1)],
-            "gauge": {name: export(f"gauge-{name}", mark.data, offset, 8, 10, mark) for name, offset in GAUGE_TILES.items()}}
+            "gauge": {name: export(f"gauge-{name}", mark.data, offset, 8, 10, mark) for name, offset in GAUGE_TILES.items()},
+            "ok": export("ok", mark.data, OK_BUTTON, 48, 20, mark)}
 
 
 def prepare(game: Path, output: Path) -> dict:

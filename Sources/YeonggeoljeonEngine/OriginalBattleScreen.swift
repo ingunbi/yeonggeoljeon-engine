@@ -11,16 +11,26 @@ struct OriginalBattleLayout:Codable,Equatable {
         var textY:Int; var gauge:[Int]; var track:[Int]; var hover:[Int]
     }
     struct Minimap:Codable,Equatable { var panel:[Int]; var base:[Int]; var span:[Int]; var cellPixels:Int }
+    /// The victory conditions window (MAIN27876..27A3A).
+    struct Conditions:Codable,Equatable {
+        var window:[Int]; var textBox:[Int]; var turnBox:[Int]; var button:[Int]
+        var titleColumn:Int; var headingColumn:Int; var headerY:Int
+        var textColumn:Int; var textY:Int; var lineStep:Int; var lineWidth:Int; var lineEnd:Int
+        var turnColumn:Int; var turnY:Int
+    }
     var viewport:[Int]; var cell:Int; var functionButton:[Int]
     var title:TextBox; var force:TextBox; var sideButtons:[[Int]]
-    var list:UnitList; var minimap:Minimap; var followMargin:Int
+    var list:UnitList; var minimap:Minimap; var conditions:Conditions; var followMargin:Int
 
     static let source = Self(viewport:[16,32,416,352],cell:32,functionButton:[16,8,64,16],
         title:TextBox(column:28,width:22,y:8),force:TextBox(column:56,width:10,y:40),
         sideButtons:[[528,32,32,32],[560,32,32,32]],
         list:UnitList(rect:[448,72,160,200],rowHeight:20,rows:10,nameColumn:57,statusColumn:65,textY:74,
                       gauge:[512,77,88,10],track:[608,72,16,200],hover:[454,148]),
-        minimap:Minimap(panel:[448,272,176,112],base:[456,280],span:[40,24],cellPixels:4),followMargin:6)
+        minimap:Minimap(panel:[448,272,176,112],base:[456,280],span:[40,24],cellPixels:4),
+        conditions:Conditions(window:[64,96,320,192],textBox:[72,136,304,96],turnBox:[72,232,240,48],button:[320,246,48,20],
+                              titleColumn:10,headingColumn:38,headerY:112,textColumn:12,textY:152,lineStep:32,lineWidth:34,lineEnd:216,
+                              turnColumn:11,turnY:248),followMargin:6)
     static func rect(_ value:[Int]) -> CGRect { CGRect(x:value[0],y:value[1],width:value[2],height:value[3]) }
     var viewportRect:CGRect { Self.rect(viewport) }
     var columns:Int { viewport[2]/cell }
@@ -40,6 +50,12 @@ struct OriginalBattleParts:Codable,Equatable {
     /// Indexed by side (friendly, enemy), then by lit state (MAIN287B0..28805).
     var side:[[OriginalBattlePart]]
     var gauge:[String:OriginalBattlePart]
+    var ok:OriginalBattlePart
+}
+
+struct OriginalBattleConditionTexts:Codable,Equatable {
+    var titleFormat:String; var currentTurn:String; var turnLimit:String
+    var playerPhase:String; var heading:String; var chapterLabels:[String]; var source:JSONValue?
 }
 
 /// Labels and refusals of the unit command routine (MAIN2D9D4..2DE42).
@@ -47,7 +63,8 @@ struct OriginalBattleCommands:Codable,Equatable {
     var labels:[String]; var ambush:[String]; var itemActions:[String]
     var strategyNames:[String]; var messages:[String:String]
     var itemMessages:[String:String]; var kindLabels:[String]; var familyLabels:[String]
-    var classNames:[String]; var terrainRefusals:[String]; var source:JSONValue?
+    var classNames:[String]; var terrainRefusals:[String]
+    var conditions:OriginalBattleConditionTexts; var source:JSONValue?
     static let messageKeys:Set<String> = ["outOfMoveRange","notOurs","cannotControl","confused","finished","noStrategy",
         "releaseAmbush","noItems","gave","inventoryFull","discarded","noAllyInRange","noEnemyInRange","enemyUnit",
         "cannotAttackAlly","outOfItemRange","outOfAttackRange"]
@@ -60,7 +77,8 @@ struct OriginalBattleCommands:Codable,Equatable {
             Set(messages.keys) == Self.messageKeys && (labels+ambush+itemActions+strategyNames).allSatisfy({ !$0.isEmpty }) &&
             messages.values.allSatisfy({ !$0.isEmpty }) && Set(itemMessages.keys) == Self.itemMessageKeys &&
             itemMessages.values.allSatisfy({ !$0.isEmpty }) && kindLabels.count == 4 && familyLabels.count == 3 &&
-            classNames.count == 19 && terrainRefusals.count == 3
+            classNames.count == 19 && terrainRefusals.count == 3 && conditions.chapterLabels.count == 5 &&
+            ![conditions.titleFormat,conditions.currentTurn,conditions.turnLimit,conditions.playerPhase,conditions.heading].contains("")
     }
 }
 
@@ -164,6 +182,43 @@ enum OriginalBattleCommand {
     }
 }
 
+/// Text rules of the victory conditions window.
+enum OriginalBattleConditions {
+    /// MAIN1610..161B2 fills one line up to `width` half-width columns, stops
+    /// at a line feed, and a double-byte character never splits. The window
+    /// calls it while its row stays above `lineEnd`.
+    static func lines(_ text:String,width:Int,count:Int) -> [String] {
+        var result:[String] = [],current = "",columns = 0
+        func flush() { result.append(current);current = "";columns = 0 }
+        for character in text where result.count < count && character != "\r" {
+            if character == "\n" || character == "\r\n" { flush();continue }
+            let wide = !character.isASCII
+            if wide ? columns+2 > width : columns > width { flush() }
+            guard result.count < count else { break }
+            current.append(character);columns += wide ? 2 : 1
+        }
+        if !current.isEmpty && result.count < count { flush() }
+        return result
+    }
+    /// The message formatter treats %u and %w alike; a digit sets the width.
+    static func numbered(_ format:String,_ values:[Int]) -> String {
+        var text = format
+        for value in values {
+            guard let range = text.range(of:"%[0-9]?[uw]",options:.regularExpression) else { break }
+            let width = text[range].first(where:\.isNumber)?.wholeNumberValue ?? 0
+            let digits = String(value)
+            text.replaceSubrange(range,with:String(repeating:" ",count:max(0,width-digits.count))+digits)
+        }
+        return text
+    }
+    static func title(_ format:String,chapter:String,name:String) -> String {
+        [chapter,name].reduce(format) { text,value in
+            guard let range = text.range(of:"%s") else { return text }
+            return text.replacingCharacters(in:range,with:value)
+        }
+    }
+}
+
 /// MAIN28806..2895A: filled width and the tile chosen from the tenths ratio.
 struct OriginalBattleGauge:Equatable {
     var fill:Int; var tile:String
@@ -185,6 +240,7 @@ struct OriginalBattleStyle {
     var gauge:[String:CGImage] = [:]
     var yes:CGImage?
     var no:CGImage?
+    var ok:CGImage?
     var colors:[NSColor] = (0..<16).map { NSColor(white:CGFloat($0)/15,alpha:1) }
     var texts:OriginalBattleTexts?
     var commands:OriginalBattleCommands?
@@ -209,6 +265,7 @@ struct OriginalBattleStyle {
         style.functionPressed = try picture(screen.parts.function.image)
         style.side = try screen.parts.side.map { try $0.compactMap { try picture($0.image) } }
         style.gauge = try screen.parts.gauge.compactMapValues { try picture($0.image) }
+        style.ok = try picture(screen.parts.ok.image)
         style.yes = try picture(catalog.choiceButtonImage(value:1,palette:3))
         style.no = try picture(catalog.choiceButtonImage(value:0,palette:3))
         style.colors = screen.colors.map { NSColor(srgbRed:CGFloat($0[0])/255,green:CGFloat($0[1])/255,blue:CGFloat($0[2])/255,alpha:1) }
