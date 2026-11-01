@@ -715,11 +715,22 @@ final class OriginalBattleView:NSView {
         } catch { message = "\(error)" }
         needsDisplay = true
     }
+    /// MAIN27C7A: a click with no unit under it shows that cell's terrain.
+    private func showTerrain(_ point:GridPoint) {
+        guard let texts = style.commands?.terrain else { return }
+        let id = Int(session.terrain[point.y*session.width+point.x]),facts = layoutFacts.terrain,cell = layoutFacts.cell
+        let tile = background?.cropping(to:CGRect(x:point.x*cell,y:point.y*cell,width:cell,height:cell))
+        overlay.show(CanvasTerrain(layout:facts,origin:OriginalBattleTerrain.windowOrigin(cell:point,camera:camera),tile:tile,
+            name:texts.names.indices.contains(id) ? texts.names[id] : String(id),heading:texts.defense,
+            percent:OriginalBattleTerrain.defenseText(session.combat.terrainDefensePercent[id],none:texts.none,percent:texts.percent),
+            recovery:OriginalBattleTerrain.recovers(terrain:id) ? texts.recovery : nil) { })
+    }
     /// One map click in the current step of the unit command routine.
     private func clickField(_ point:GridPoint,_ target:OriginalLiveUnit?) throws {
         switch phase {
         case .idle:
-            guard let unit = target else { return }
+            // MAIN27BB2..27BC7: a hidden enemy counts as an empty cell.
+            guard let unit = target,!(unit.enemy && unit.scriptFlags&0x20 == 0) else { showTerrain(point);return }
             if let denial = OriginalBattleCommand.denial(unit) {
                 previewSlot = unit.slot;inspected = unit.slot
                 say(refusal(denial)) { [weak self] in self?.previewSlot = nil;self?.needsDisplay = true }

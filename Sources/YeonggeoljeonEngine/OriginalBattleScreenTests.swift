@@ -153,5 +153,19 @@ func originalBattleScreenSelfTests() throws {
     try check(OriginalBattleConditions.numbered("L  %2w",[9]) == "L   9","%w formats like %u")
     try check(OriginalBattleConditions.numbered("%2u",[120]) == "120","a wider number is not cut")
     try check(OriginalBattleConditions.title("%s-%s",chapter:"a",name:"b") == "a-b","the title takes chapter then name")
+
+    // MAIN2A6A0..2A8C3 terrain window.
+    let flat = OriginalBattleCamera(width:28,height:16)
+    try check(OriginalBattleTerrain.windowOrigin(cell:GridPoint(x:0,y:0),camera:flat) == CGPoint(x:48,y:32),"the window opens two units right of the cell")
+    try check(OriginalBattleTerrain.windowOrigin(cell:GridPoint(x:6,y:0),camera:flat) == CGPoint(x:240,y:32),"column 13 still opens to the right")
+    try check(OriginalBattleTerrain.windowOrigin(cell:GridPoint(x:7,y:0),camera:flat) == CGPoint(x:112,y:32),"column 15 opens to the left")
+    try check(OriginalBattleTerrain.windowOrigin(cell:GridPoint(x:0,y:4),camera:flat) == CGPoint(x:48,y:160),"row 10 keeps its height")
+    try check(OriginalBattleTerrain.windowOrigin(cell:GridPoint(x:0,y:5),camera:flat) == CGPoint(x:48,y:144),"row 12 moves up three units")
+    var moved = OriginalBattleCamera(width:28,height:16)
+    moved.center(on:GridPoint(x:14,y:8))
+    let same = OriginalBattleTerrain.windowOrigin(cell:GridPoint(x:moved.x/2,y:moved.y/2),camera:moved)
+    try check(same == CGPoint(x:48,y:32),"placement follows the scrolled window")
+    try check(OriginalBattleTerrain.defenseText(20,none:"x",percent:"%") == "20%" && OriginalBattleTerrain.defenseText(255,none:"x",percent:"%") == "x%","a 255 entry prints the fallback")
+    try check(OriginalBattleTerrain.recovers(terrain:8) && OriginalBattleTerrain.recovers(terrain:13) && OriginalBattleTerrain.recovers(terrain:14) && !OriginalBattleTerrain.recovers(terrain:7),"three terrains recover")
     print("Original battle screen self-tests passed: \(checks)")
 }

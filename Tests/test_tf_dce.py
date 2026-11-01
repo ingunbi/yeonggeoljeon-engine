@@ -9,6 +9,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from prepare_story import (BATTLE_FRAME_CALL, BATTLE_SHAPES, CLASS_NAMES, COMMAND_MESSAGES, COMMAND_SHAPES, CONDITION_SHAPES, CONDITION_TEXTS, DATA_PARAGRAPH, DATA_SEGMENT, FAMILY_LABELS,
+                           TERRAIN_WINDOW_SHAPES,
                            FIELD_FRAME_CALL, HUD_FIELDS, ITEM_MESSAGES, ITEM_WORDS, KIND_LABELS, PORTRAIT_CALL, TERRAIN_NAMES, TERRAIN_SHAPES, TERRAIN_TABLE,
                            battle_commands, battle_layout, checked_shapes, picture_directory, prepare, screen_facts, terrain_refusal)
 from resource_formats import ResourceError
@@ -116,6 +117,7 @@ class DCEFormatTests(unittest.TestCase):
         layout = battle_layout((176, 112))
         self.assertEqual((layout["viewport"], layout["minimap"]["panel"]), ([16, 32, 416, 352], [448, 272, 176, 112]))
         self.assertEqual((layout["conditions"]["window"], layout["conditions"]["button"]), ([64, 96, 320, 192], [320, 246, 48, 20]))
+        self.assertEqual((layout["terrain"]["size"], layout["terrain"]["tile"]), ([128, 80], [8, 16, 32, 32]))
 
     def test_battle_commands_read_labels_and_refusals_from_checked_sites(self):
         main = bytearray(DATA_SEGMENT + 0x10000)
@@ -169,6 +171,11 @@ class DCEFormatTests(unittest.TestCase):
             main[at:at + 4] = b"\x1e\x68" + struct.pack("<H", pointer)
             main[DATA_SEGMENT + pointer:DATA_SEGMENT + pointer + len(name) + 1] = name.encode("ascii") + b"\0"
         main[DATA_SEGMENT + 0x3C8F:DATA_SEGMENT + 0x3C95] = b"head\0\0"
+        for at, shape in TERRAIN_WINDOW_SHAPES.values():
+            expected = bytes.fromhex(shape.replace(" ", ""))
+            main[at:at + len(expected)] = expected
+        for pointer, text in ((0x3F62, b"def"), (0x3F6B, b"-"), (0x3F6D, b"%"), (0x3F75, b"rec")):
+            main[DATA_SEGMENT + pointer:DATA_SEGMENT + pointer + len(text) + 1] = text + b"\0"
         main[DATA_SEGMENT + TERRAIN_TABLE:DATA_SEGMENT + TERRAIN_TABLE + 12] = bytes([1, 7, 0, 0xFF, 4, 0xFF, 0xFF, 0xFF, 2, 11, 0xFF, 0xFF])
         for pointer, text in ((0x482A, b"at "), (0x4830, b", "), (0x4833, b" only")):
             main[DATA_SEGMENT + pointer:DATA_SEGMENT + pointer + len(text) + 1] = text + b"\0"
@@ -179,6 +186,7 @@ class DCEFormatTests(unittest.TestCase):
         self.assertEqual(facts["itemMessages"]["bombThrow"], "bombThrow")
         self.assertEqual((facts["conditions"]["heading"], facts["conditions"]["playerPhase"]), ("head", "playerPhase"))
         self.assertEqual(facts["conditions"]["chapterLabels"], [f"chapter{index}" for index in range(5)])
+        self.assertEqual((facts["terrain"]["names"][19], facts["terrain"]["defense"], facts["terrain"]["recovery"]), ("land19", "def", "rec"))
         self.assertEqual(facts["labels"], ["B", "C", "D", "E"])
         self.assertEqual(len(facts["strategyNames"]), 36)
         self.assertEqual(facts["messages"]["notOurs"], "notOurs")

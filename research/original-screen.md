@@ -131,6 +131,28 @@ because it changes no game state.
 
 The formatter at `0x172D8` sends `%u` and `%w` to the same branch.
 
+### Terrain window
+
+A left click reaches `0x27C7A`. With a unit under the pointer it starts the
+command routine; otherwise it calls `0x2A5F4` with the pointer's cell. A hidden
+enemy (mask `0x20` clear) does not count as a unit here (`0x27BB2..0x27BC7`).
+
+The routine works in sixteen-pixel units. Column `2x-scrollX+1` and row
+`2(y+1)-scrollY` give the cell's corner. The 128×80 window opens two units right
+of the cell, or eight units left from column 14, and three units higher from row
+12. It copies the 32×32 cell from the screen to its own `(8,16)`, prints the
+terrain name below that, and prints the DS:`3F62` heading to the right.
+
+The value below the heading comes from DS:`405E`, the table the damage producer
+already uses. An entry of 255 prints DS:`3F6B`, and both forms then get DS:`3F6D`,
+so a cell a unit cannot enter reads `-%`. Terrains 8, 13 and 14 add the DS:`3F75`
+text on the bottom row. Those are the same three terrains the turn order treats
+as recovery cells. The window stays until any input.
+
+The routine also watches clicks on a block of cells at the top left and compares
+their bit pattern with DS:`3F56`. A match sets mask 2 of DS:`3A3C`, which enables
+a unit diagnostic text at `0x2D3C7`. This hidden switch is not restored.
+
 ### Message modes
 
 The message routine at `0x175AE` takes a mode. Modes 0 and 3 wait a fixed number of
@@ -211,8 +233,6 @@ do not change replays.
   the unit walk and attack animations are not played.
 - A discarded item leaves the native list at once. The source list is built once
   per entry, so it keeps showing the discarded item until the menu closes.
-- The terrain popup at `0x2A6D2`, which shows a cell's defence and recovery
-  effects, is not restored.
 - The third button beside 아군 and 적군 has no restored handler.
 - The native view opens the friendly list at battle start. The list object
   starts closed at `0x289CD`; when the original first opens it was not traced.

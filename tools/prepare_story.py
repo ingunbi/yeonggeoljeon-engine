@@ -158,6 +158,15 @@ CONDITION_SHAPES = {
 CONDITION_TEXTS = {"titleFormat": (0x278E1, 0x3C82), "currentTurn": (0x279B0, 0x3C98), "turnLimit": (0x279C7, 0x3CB0),
                    "playerPhase": (0x27ADD, 0x3D20)}
 OK_BUTTON = 0x19F0
+# Terrain window (MAIN 0x2A5F4..0x2A8C6), opened by a click on an empty cell.
+TERRAIN_WINDOW_SHAPES = {
+    "column": (0x2A6FA, "83ff0e 7d05 b80200 eb03 b8f8ff"), "row": (0x2A730, "83fe0c 7d04 33c0 eb03 b8fdff"),
+    "size": (0x2A752, "6a50 8bc7 c1e004 8bd6 c1e204 8956ee bb8000"), "tile": (0x2A76E, "050800"),
+    "percentRow": (0x2A84E, "052400"), "nameRow": (0x2A810, "053800"), "names": (0x2A824, "ffb7743e"),
+    "defenseHeading": (0x2A7BA, "68623f"), "none": (0x2A7F0, "1e686b3f"), "percent": (0x2A7FE, "1e686d3f"),
+    "recoveryHeading": (0x2A88C, "68753f"), "recoveryTerrains": (0x2A87A, "807eff08 740c 807eff0d 7406 807eff0e"),
+}
+TERRAIN_COUNT = 20
 DATA_SEGMENT, DATA_PARAGRAPH = 0x37DA0, 0x313A
 FUNCTION_PICTURE, SIDE_PICTURES = 0x800, {(0, 0): 0xA00, (0, 1): 0xC00, (1, 0): 0xE00, (1, 1): 0x1000}
 GAUGE_TILES = {"high": 0x2230, "middle": 0x21E0, "low": 0x2208}
@@ -245,6 +254,17 @@ def battle_conditions(main: bytes) -> dict:
             "source": {"window": "MAIN.EXE:0x27876..0x27A3A", "phaseNotice": "MAIN.EXE:0x27AC6..0x27AE8"}}
 
 
+def battle_terrain(main: bytes) -> dict:
+    """Texts of the terrain window, from checked sites."""
+    for name, (at, shape) in TERRAIN_WINDOW_SHAPES.items():
+        expected = bytes.fromhex(shape.replace(" ", ""))
+        if main[at:at + len(expected)] != expected:
+            raise ResourceError(f"MAIN terrain site {name} at {at:#x} does not match the examined profile")
+    return {"names": [name.strip() for name in near_texts(main, TERRAIN_NAMES, TERRAIN_COUNT)], "defense": data_text(main, 0x3F62),
+            "none": data_text(main, 0x3F6B), "percent": data_text(main, 0x3F6D), "recovery": data_text(main, 0x3F75),
+            "source": {"window": "MAIN.EXE:0x2A5F4..0x2A8C6", "trigger": "MAIN.EXE:0x27C7A..0x27C87"}}
+
+
 def battle_commands(main: bytes) -> dict:
     """Labels and refusals of the unit command routine, from checked sites."""
     for name, (at, shape) in COMMAND_SHAPES.items():
@@ -261,7 +281,7 @@ def battle_commands(main: bytes) -> dict:
     return {"labels": labels, "ambush": far_texts(main, 0x4866, AMBUSH_ACTIONS),
             "itemActions": far_texts(main, 0x4346, ITEM_ACTIONS),
             "strategyNames": far_texts(main, 0x4438, STRATEGY_COUNT), "messages": messages, **item_texts(main),
-            "conditions": battle_conditions(main),
+            "conditions": battle_conditions(main), "terrain": battle_terrain(main),
             "source": {"routine": "MAIN.EXE:0x2D9D4..0x2DE42", "window": "MAIN.EXE:0x2AA26..0x2AAC4",
                        "picker": "MAIN.EXE:0x29ADE..0x29CAF", "moveDenials": "MAIN.EXE:0x30ED2..0x31083"}}
 
@@ -280,6 +300,8 @@ def battle_layout(panel_size: tuple[int, int]) -> dict:
                            "button": [0x28 * 8, 0xF8 - 2, 0x30, 0x14], "titleColumn": 0x0A, "headingColumn": 0x26, "headerY": 0x70,
                            "textColumn": 0x0C, "textY": 0x98, "lineStep": 0x20, "lineWidth": 0x22, "lineEnd": 0xD8,
                            "turnColumn": 0x0B, "turnY": 0xF8},
+            "terrain": {"size": [0x80, 0x50], "tile": [8, 0x10, 0x20, 0x20], "textX": 0x30, "headingY": 0x10, "percentY": 0x24,
+                        "nameY": 0x38, "percentWidth": 0x40},
             "followMargin": 6}
 
 

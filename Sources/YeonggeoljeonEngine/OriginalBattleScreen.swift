@@ -20,7 +20,11 @@ struct OriginalBattleLayout:Codable,Equatable {
     }
     var viewport:[Int]; var cell:Int; var functionButton:[Int]
     var title:TextBox; var force:TextBox; var sideButtons:[[Int]]
-    var list:UnitList; var minimap:Minimap; var conditions:Conditions; var followMargin:Int
+    /// The terrain window, relative to its own corner (MAIN2A5F4..2A8C6).
+    struct Terrain:Codable,Equatable {
+        var size:[Int]; var tile:[Int]; var textX:Int; var headingY:Int; var percentY:Int; var nameY:Int; var percentWidth:Int
+    }
+    var list:UnitList; var minimap:Minimap; var conditions:Conditions; var terrain:Terrain; var followMargin:Int
 
     static let source = Self(viewport:[16,32,416,352],cell:32,functionButton:[16,8,64,16],
         title:TextBox(column:28,width:22,y:8),force:TextBox(column:56,width:10,y:40),
@@ -30,7 +34,8 @@ struct OriginalBattleLayout:Codable,Equatable {
         minimap:Minimap(panel:[448,272,176,112],base:[456,280],span:[40,24],cellPixels:4),
         conditions:Conditions(window:[64,96,320,192],textBox:[72,136,304,96],turnBox:[72,232,240,48],button:[320,246,48,20],
                               titleColumn:10,headingColumn:38,headerY:112,textColumn:12,textY:152,lineStep:32,lineWidth:34,lineEnd:216,
-                              turnColumn:11,turnY:248),followMargin:6)
+                              turnColumn:11,turnY:248),
+        terrain:Terrain(size:[128,80],tile:[8,16,32,32],textX:48,headingY:16,percentY:36,nameY:56,percentWidth:64),followMargin:6)
     static func rect(_ value:[Int]) -> CGRect { CGRect(x:value[0],y:value[1],width:value[2],height:value[3]) }
     var viewportRect:CGRect { Self.rect(viewport) }
     var columns:Int { viewport[2]/cell }
@@ -58,13 +63,17 @@ struct OriginalBattleConditionTexts:Codable,Equatable {
     var playerPhase:String; var heading:String; var chapterLabels:[String]; var source:JSONValue?
 }
 
+struct OriginalBattleTerrainTexts:Codable,Equatable {
+    var names:[String]; var defense:String; var none:String; var percent:String; var recovery:String; var source:JSONValue?
+}
+
 /// Labels and refusals of the unit command routine (MAIN2D9D4..2DE42).
 struct OriginalBattleCommands:Codable,Equatable {
     var labels:[String]; var ambush:[String]; var itemActions:[String]
     var strategyNames:[String]; var messages:[String:String]
     var itemMessages:[String:String]; var kindLabels:[String]; var familyLabels:[String]
     var classNames:[String]; var terrainRefusals:[String]
-    var conditions:OriginalBattleConditionTexts; var source:JSONValue?
+    var conditions:OriginalBattleConditionTexts; var terrain:OriginalBattleTerrainTexts; var source:JSONValue?
     static let messageKeys:Set<String> = ["outOfMoveRange","notOurs","cannotControl","confused","finished","noStrategy",
         "releaseAmbush","noItems","gave","inventoryFull","discarded","noAllyInRange","noEnemyInRange","enemyUnit",
         "cannotAttackAlly","outOfItemRange","outOfAttackRange"]
@@ -78,7 +87,9 @@ struct OriginalBattleCommands:Codable,Equatable {
             messages.values.allSatisfy({ !$0.isEmpty }) && Set(itemMessages.keys) == Self.itemMessageKeys &&
             itemMessages.values.allSatisfy({ !$0.isEmpty }) && kindLabels.count == 4 && familyLabels.count == 3 &&
             classNames.count == 19 && terrainRefusals.count == 3 && conditions.chapterLabels.count == 5 &&
-            ![conditions.titleFormat,conditions.currentTurn,conditions.turnLimit,conditions.playerPhase,conditions.heading].contains("")
+            ![conditions.titleFormat,conditions.currentTurn,conditions.turnLimit,conditions.playerPhase,conditions.heading].contains("") &&
+            terrain.names.count == 20 && terrain.names.allSatisfy({ !$0.isEmpty }) &&
+            ![terrain.defense,terrain.none,terrain.percent,terrain.recovery].contains("")
     }
 }
 
@@ -180,6 +191,24 @@ enum OriginalBattleCommand {
             StrategyRow(ability:ability,cost:costs[ability],enabled:costs[ability] <= Int(mp) && !(ability < 5 && rain))
         }
     }
+}
+
+/// Placement and values of the terrain window (MAIN2A6A0..2A8C3).
+enum OriginalBattleTerrain {
+    /// Sixteen-pixel units: the window opens two units right of the cell, or
+    /// eight left from column 14, and three units higher from row 12.
+    static func windowOrigin(cell:GridPoint,camera:OriginalBattleCamera) -> CGPoint {
+        var column = cell.x*2-camera.x+1
+        var row = (cell.y+1)*2-camera.y
+        column += column < 14 ? 2 : -8
+        row += row < 12 ? 0 : -3
+        return CGPoint(x:column*16,y:row*16)
+    }
+    /// A 255 entry prints the fallback text before the same percent sign.
+    static func defenseText(_ value:Int,none:String,percent:String) -> String {
+        (value == 255 ? none : String(value))+percent
+    }
+    static func recovers(terrain:Int) -> Bool { [8,13,14].contains(terrain) }
 }
 
 /// Text rules of the victory conditions window.

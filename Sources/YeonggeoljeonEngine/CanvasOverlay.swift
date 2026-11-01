@@ -37,6 +37,18 @@ struct CanvasNotice {
     var onDismiss:() -> Void
 }
 
+/// The terrain window of one map cell, placed by source coordinates.
+struct CanvasTerrain {
+    var layout:OriginalBattleLayout.Terrain
+    var origin:CGPoint
+    var tile:CGImage?
+    var name:String
+    var heading:String
+    var percent:String
+    var recovery:String?
+    var onDismiss:() -> Void
+}
+
 /// The victory conditions window, placed by source coordinates.
 struct CanvasBrief {
     var layout:OriginalBattleLayout.Conditions
@@ -52,6 +64,7 @@ final class CanvasOverlayView:NSView {
     private(set) var selector:CanvasMenu?
     private(set) var notice:CanvasNotice?
     private(set) var brief:CanvasBrief?
+    private(set) var terrain:CanvasTerrain?
     private var noticeTimer:Timer?
     /// Parent windows still on screen behind the active selector.
     private var parents:[CanvasMenu] = []
@@ -72,7 +85,7 @@ final class CanvasOverlayView:NSView {
     }
     /// Called after the overlay closes so the owner can restore focus.
     var restoreFocus:(() -> Void)?
-    var active:Bool { selector != nil || notice != nil || brief != nil }
+    var active:Bool { selector != nil || notice != nil || brief != nil || terrain != nil }
     override var isFlipped:Bool { true }
     override var acceptsFirstResponder:Bool { active }
     override func hitTest(_ point:NSPoint) -> NSView? { active ? super.hitTest(point) : nil }
@@ -87,14 +100,15 @@ final class CanvasOverlayView:NSView {
         }
         if !keepScroll { firstVisible = 0 }
         parents = behind
-        selector = value;notice = nil;brief = nil;revealSelection();present()
+        selector = value;notice = nil;brief = nil;terrain = nil;revealSelection();present()
     }
     func show(_ value:CanvasNotice) {
-        notice = value;selector = nil;brief = nil;parents = [];present()
+        notice = value;selector = nil;brief = nil;terrain = nil;parents = [];present()
         guard let timeout = value.timeout else { return }
         noticeTimer = Timer.scheduledTimer(withTimeInterval:timeout,repeats:false) { [weak self] _ in self?.dismissNotice() }
     }
-    func show(_ value:CanvasBrief) { brief = value;notice = nil;selector = nil;parents = [];present() }
+    func show(_ value:CanvasBrief) { brief = value;terrain = nil;notice = nil;selector = nil;parents = [];present() }
+    func show(_ value:CanvasTerrain) { terrain = value;brief = nil;notice = nil;selector = nil;parents = [];present() }
     private func present() {
         noticeTimer?.invalidate();noticeTimer = nil
         isHidden = false;needsDisplay = true
@@ -102,7 +116,7 @@ final class CanvasOverlayView:NSView {
     }
     private func close() {
         noticeTimer?.invalidate();noticeTimer = nil
-        selector = nil;notice = nil;brief = nil;parents = [];needsDisplay = true
+        selector = nil;notice = nil;brief = nil;terrain = nil;parents = [];needsDisplay = true
         restoreFocus?()
     }
     private func choose(_ index:Int?) {
@@ -116,6 +130,10 @@ final class CanvasOverlayView:NSView {
     }
     private func dismissBrief() {
         guard let value = brief else { return }
+        close();value.onDismiss()
+    }
+    private func dismissTerrain() {
+        guard let value = terrain else { return }
         close();value.onDismiss()
     }
 
@@ -228,6 +246,20 @@ final class CanvasOverlayView:NSView {
             context.addLine(to:CGPoint(x:x,y:base+dy));context.closePath();context.fillPath()
         }
     }
+    private func drawTerrain(_ value:CanvasTerrain,in context:CGContext) {
+        let facts = value.layout,x = Int(value.origin.x),y = Int(value.origin.y)
+        panel(CGRect(x:x,y:y,width:facts.size[0],height:facts.size[1]),in:context,opaque:true)
+        if let tile = value.tile {
+            Renderer.image(tile,in:CGRect(x:x+facts.tile[0],y:y+facts.tile[1],width:facts.tile[2],height:facts.tile[3]),context:context)
+        }
+        func line(_ text:String,_ px:Int,_ py:Int) { (text as NSString).draw(at:CGPoint(x:px,y:py-1),withAttributes:attributes()) }
+        line(value.heading,x+facts.textX,y+facts.headingY)
+        let paragraph = NSMutableParagraphStyle();paragraph.alignment = .center
+        var centered = attributes();centered[.paragraphStyle] = paragraph
+        (value.percent as NSString).draw(in:CGRect(x:x+facts.textX,y:y+facts.percentY-1,width:facts.percentWidth,height:18),withAttributes:centered)
+        line(value.name,x+facts.tile[0],y+facts.nameY)
+        if let recovery = value.recovery { line(recovery,x+facts.textX,y+facts.nameY) }
+    }
     private func drawBrief(_ value:CanvasBrief,in context:CGContext) {
         let facts = value.layout
         panel(OriginalBattleLayout.rect(facts.window),in:context,opaque:true)
@@ -254,6 +286,8 @@ final class CanvasOverlayView:NSView {
             drawMenu(value,in:context)
         } else if let value = brief {
             drawBrief(value,in:context)
+        } else if let value = terrain {
+            drawTerrain(value,in:context)
         } else if let value = notice {
             let rect = noticeRect(value)
             panel(rect,in:context)
@@ -280,6 +314,10 @@ final class CanvasOverlayView:NSView {
             if [36,49,76,53].contains(event.keyCode),!event.isARepeat { dismissBrief() }
             return
         }
+        if terrain != nil {
+            if !event.isARepeat { dismissTerrain() }
+            return
+        }
         guard var value = selector else { super.keyDown(with:event);return }
         func step(_ delta:Int) {
             guard !value.options.isEmpty else { return }
@@ -301,6 +339,7 @@ final class CanvasOverlayView:NSView {
     override func mouseDown(with event:NSEvent) {
         if notice != nil { dismissNotice();return }
         if brief != nil { dismissBrief();return }
+        if terrain != nil { dismissTerrain();return }
         guard let value = selector else { return }
         let point = canvasPoint(event),shape = layout(value)
         if let hit = shape.options.first(where:{ $0.rect.insetBy(dx:-3,dy:-2).contains(point) }) { choose(hit.index) }
@@ -317,6 +356,6 @@ final class CanvasOverlayView:NSView {
         needsDisplay = true
     }
     override func rightMouseDown(with event:NSEvent) {
-        if let value = selector,value.cancellable { choose(nil) } else if notice != nil { dismissNotice() } else if brief != nil { dismissBrief() }
+        if let value = selector,value.cancellable { choose(nil) } else if notice != nil { dismissNotice() } else if brief != nil { dismissBrief() } else if terrain != nil { dismissTerrain() }
     }
 }
