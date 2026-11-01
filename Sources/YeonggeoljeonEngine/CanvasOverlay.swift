@@ -111,7 +111,8 @@ final class CanvasOverlayView:NSView {
     var viewport = fieldViewport
     private func noticeRect(_ value:CanvasNotice) -> CGRect {
         guard value.portrait == nil,value.speaker.isEmpty else {
-            return CGRect(x:viewport.minX+8,y:viewport.maxY-112,width:viewport.width-16,height:104)
+            let width = min(viewport.width-16,540)
+            return CGRect(x:viewport.midX-width/2,y:viewport.maxY-112,width:width,height:104)
         }
         // A plain refusal is a small card in the middle of the map window.
         let style = CanvasTheme.attributes(font,CanvasTheme.text)
@@ -303,7 +304,9 @@ final class CanvasOverlayView:NSView {
     }
     private static let sheetRows = 8,sheetRow:CGFloat = 24
     private func sheetLayout(_ value:CanvasSheet) -> SheetLayout {
-        let panel = viewport.insetBy(dx:8,dy:8),header = panel.minY+78,footer = panel.maxY-40
+        let size = CGSize(width:min(viewport.width-16,520),height:min(viewport.height-16,304))
+        let panel = CGRect(x:viewport.midX-size.width/2,y:viewport.midY-size.height/2,width:size.width,height:size.height)
+        let header = panel.minY+78,footer = panel.maxY-40
         let list = CGRect(x:panel.minX+8,y:header+6,width:210,height:Self.sheetRow*CGFloat(Self.sheetRows))
         let detail = CGRect(x:list.maxX+14,y:header+10,width:panel.maxX-list.maxX-30,height:footer-header-18)
         let shown = min(value.rows.count,Self.sheetRows),first = min(firstVisible,max(0,value.rows.count-shown))

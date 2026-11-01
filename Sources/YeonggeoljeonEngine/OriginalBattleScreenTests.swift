@@ -14,6 +14,25 @@ func originalBattleScreenSelfTests() throws {
     let endBands = CanvasGeometry(bounds:CGRect(x:0,y:0,width:640,height:600))
     try check(endBands.scale == 1 && endBands.origin == CGPoint(x:0,y:100),"a tall window bands the top and bottom")
     try check(sideBands.canvas(CGPoint(x:270,y:150)) == CGPoint(x:100,y:100),"a view point maps to its canvas point")
+    // The modern arrangement keeps every part on the canvas and off the map.
+    let modern = OriginalBattleLayout.source.modern()
+    let canvas = CGRect(x:0,y:0,width:640,height:400),modernMap = modern.viewportRect
+    try check(modern.columns == 15 && modern.rows == 12,"the modern map shows fifteen by twelve cells")
+    try check(modernMap.width == CGFloat(modern.columns*modern.cell) && modernMap.height == CGFloat(modern.rows*modern.cell),"the modern map holds whole cells")
+    let parts = [OriginalBattleLayout.rect(modern.list.rect),OriginalBattleLayout.rect(modern.minimap.panel)]+modern.sideButtons.map(OriginalBattleLayout.rect)
+    try check(parts.allSatisfy{canvas.contains($0) && !$0.intersects(modernMap)},"sidebar parts stay on the canvas and beside the map")
+    try check(OriginalBattleLayout.rect(modern.list.rect).maxY <= OriginalBattleLayout.rect(modern.minimap.panel).minY,"the unit list ends above the small map")
+    let largest = modern.minimapOrigin(width:40,height:24),smallest = modern.minimapOrigin(width:20,height:12)
+    try check(OriginalBattleLayout.rect(modern.minimap.panel).contains(CGRect(x:largest.x,y:largest.y,width:120,height:72)),"the largest small map fits its panel")
+    try check(OriginalBattleLayout.rect(modern.minimap.panel).contains(CGRect(x:smallest.x,y:smallest.y,width:60,height:36)),"a smaller one is centred inside it")
+    var modernCamera = OriginalBattleCamera(width:40,height:24,layout:modern)
+    modernCamera.center(on:GridPoint(x:39,y:23))
+    try check(modernCamera.rect(of:GridPoint(x:39,y:23),in:modernMap,size:32) == CGRect(x:448,y:368,width:32,height:32),"the last cell ends in the map corner")
+    try check(modernCamera.cell(at:CGPoint(x:479,y:399),in:modernMap,size:32) == GridPoint(x:39,y:23),"a corner click reaches the last cell")
+    // The modern field stretches the map window over the canvas.
+    let center = CGPoint(x:320,y:200)
+    try check(CanvasFieldMap.mapPoint(canvas:center) == CGPoint(x:272,y:176),"the canvas centre is the map window's centre")
+    try check(CanvasFieldMap.canvasPoint(map:CanvasFieldMap.mapPoint(canvas:CGPoint(x:64,y:40))) == CGPoint(x:64,y:40),"the two field mappings invert")
     let layout = OriginalBattleLayout.source
     try check(layout.columns == 13 && layout.rows == 11,"the map window shows thirteen by eleven cells")
     // MAIN2898C..289C5 centres in eight-pixel steps.

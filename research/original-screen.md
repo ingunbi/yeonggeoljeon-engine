@@ -232,6 +232,32 @@ Cancelling the window clears mask `0x40` and returns the unit to its origin
 The list and scroll positions are view state. They are not part of a save and
 do not change replays.
 
+## Modern layout
+
+The app starts on an engine layout, and 보기 → 원작 화면 틀 (⌘⇧F) switches to the
+original frames at any time, including during a battle. The choice is kept
+between runs. Replays and `--battle` always use the original frames. This layout
+is engine presentation and has no original basis. Game rules, routes, text and art
+are unchanged.
+
+- The window opens at 1024×640 and keeps the 8:5 shape.
+- In the field the 512×320 map window fills the canvas, at exactly twice its
+  pixels at that size. Clicks map back through `CanvasFieldMap`. A card shows the
+  leader's portrait, the current territory, money and level; a chip shows the
+  source caption; a button opens the field menu, which a secondary click also
+  opens. The card hides while a shop window is open, because that window shows
+  the money. Pictures such as illustrations and the title keep the 640×400 canvas.
+- A battle uses `OriginalBattleLayout.modern()`: a slim bar with the function
+  button, title and turn over a map of fifteen by twelve cells instead of the
+  source's thirteen by eleven, and a sidebar with the force, list tabs, unit list
+  and small map. Command and terrain windows open right next to their cell. The
+  same scroll and follow rules run on the larger window, so what is on screen at a
+  given moment differs from the source, and the source's window placement rules
+  apply only to the original frames.
+
+The four field icon buttons of the original frame have no modern counterpart yet,
+because their handlers are not restored.
+
 ## Limits
 
 - The original font, text colours and the window frames drawn by the

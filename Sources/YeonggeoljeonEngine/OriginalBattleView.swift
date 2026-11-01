@@ -43,7 +43,17 @@ final class OriginalBattleView:NSView {
     private var phase = Phase.idle
     /// A unit whose move range stays shown behind its refusal (MAIN30F5A).
     private var previewSlot:Int?
-    private var layoutFacts:OriginalBattleLayout { style.layout }
+    private(set) var layoutFacts:OriginalBattleLayout
+    var presentation = CanvasPresentation.original {
+        didSet {
+            guard presentation != oldValue else { return }
+            layoutFacts = presentation == .modern ? style.layout.modern() : style.layout
+            let focus = (selected ?? inspected).flatMap { session.units[$0]?.position }
+            camera = OriginalBattleCamera(width:session.width,height:session.height,layout:layoutFacts)
+            if let focus = focus { camera.center(on:focus) }
+            overlay.viewport = layoutFacts.viewportRect;listTop = 0;needsDisplay = true
+        }
+    }
     private var camera:OriginalBattleCamera
     private var listSide = 0
     private var listTop = 0
@@ -60,6 +70,7 @@ final class OriginalBattleView:NSView {
     init(session:OriginalBattleSession,background:CGImage?,sprites:OriginalBattleSpriteRenderer? = nil,style:OriginalBattleStyle = .plain) throws {
         self.session = session;self.background = background;self.sprites = sprites;self.style = style
         flow = OriginalBattleFlow(session:session)
+        layoutFacts = style.layout
         camera = OriginalBattleCamera(width:session.width,height:session.height,layout:style.layout)
         super.init(frame:CGRect(x:0,y:0,width:960,height:600))
         autoresizingMask = [.width,.height]
@@ -174,8 +185,17 @@ final class OriginalBattleView:NSView {
     /// A nested window sits one step on from its parent (MAIN2AACA..2AB3C).
     private func windowOrigin(_ slot:Int,depth:Int) -> CGPoint? {
         guard let unit = session.units[slot] else { return nil }
+        if presentation == .modern {
+            let origin = besideCell(unit.position,width:112)
+            return CGPoint(x:origin.x+CGFloat(depth)*12,y:origin.y+CGFloat(depth)*12)
+        }
         let window = OriginalBattleCommand.window(cell:unit.position,camera:camera,layout:layoutFacts)
         return CGPoint(x:window.origin.x+window.step.x*CGFloat(depth),y:window.origin.y+window.step.y*CGFloat(depth))
+    }
+    /// The modern layout opens a window right next to its cell, on the side with room.
+    private func besideCell(_ cell:GridPoint,width:CGFloat) -> CGPoint {
+        let box = camera.rect(of:cell,in:layoutFacts.viewportRect,size:layoutFacts.cell)
+        return CGPoint(x:box.maxX+6+width <= layoutFacts.viewportRect.maxX ? box.maxX+6 : box.minX-6-width,y:box.minY)
     }
     /// MAIN2DAE0: a hidden unit (mask20 clear) gets the two ambush entries.
     private func commandMenu(_ slot:Int,_ choose:@escaping (Int?) -> Void) -> CanvasMenu? {
@@ -520,7 +540,60 @@ final class OriginalBattleView:NSView {
         seenStage = stage
         if let cell = moved { camera.follow(cell,margin:layoutFacts.followMargin) }
     }
+    private func label(_ value:String,in rect:CGRect,font:NSFont,color:NSColor = CanvasTheme.text,alignment:NSTextAlignment = .left) {
+        (value as NSString).draw(in:rect,withAttributes:CanvasTheme.attributes(font,color,alignment:alignment))
+    }
+    /// The modern screen: a slim bar above the map and a plain sidebar.
+    private func drawModernFrame(_ context:CGContext) {
+        let facts = layoutFacts,map = facts.viewportRect,button = OriginalBattleLayout.rect(facts.functionButton)
+        context.setFillColor(CanvasTheme.background);context.fill(CGRect(x:0,y:0,width:640,height:400))
+        context.setFillColor(CGColor(gray:0,alpha:1));context.fill(map)
+        if functionOpen { context.setFillColor(CanvasTheme.selection);context.fill(button) }
+        label("기능",in:CGRect(x:button.minX,y:button.minY+1.5,width:button.width,height:14),font:CanvasTheme.font(10,.semibold),color:CanvasTheme.accent,alignment:.center)
+        label(session.definition.name ?? session.definition.id,in:CGRect(x:button.maxX,y:1.5,width:map.width-button.width*2,height:14),font:CanvasTheme.font(10,.medium),alignment:.center)
+        label("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(session.turns.weatherIndex)",
+              in:CGRect(x:map.maxX-120,y:1.5,width:114,height:14),font:CanvasTheme.font(10),color:CanvasTheme.muted,alignment:.right)
+        CanvasTheme.divider(from:CGPoint(x:map.maxX+0.5,y:0),to:CGPoint(x:map.maxX+0.5,y:400),in:context)
+    }
+    /// The force, the two list tabs, the units and the small map, top to bottom.
+    private func drawSidebar(_ context:CGContext) {
+        let facts = layoutFacts.list,rows = listRows,map = layoutFacts.viewportRect
+        listTop = min(listTop,listTopLimit)
+        let column = CGRect(x:map.maxX+8,y:0,width:640-map.maxX-16,height:400)
+        if let unit = session.units[listSide == 0 ? 0 : 15],let texts = style.texts,texts.forces.indices.contains(force(of:unit)) {
+            label(texts.forces[force(of:unit)]+texts.forceSuffix,in:CGRect(x:column.minX,y:9,width:column.width,height:18),font:CanvasTheme.font(13,.semibold),color:CanvasTheme.accent,alignment:.center)
+        }
+        for (side,value) in layoutFacts.sideButtons.enumerated() {
+            let rect = OriginalBattleLayout.rect(value).insetBy(dx:1,dy:0)
+            CanvasTheme.fill(rect,side == listSide ? CanvasTheme.selection : CanvasTheme.inset,in:context)
+            label(side == 0 ? "아군" : "적군",in:CGRect(x:rect.minX,y:rect.minY+3,width:rect.width,height:15),font:CanvasTheme.font(11,.medium),
+                  color:side == listSide ? CanvasTheme.text : CanvasTheme.muted,alignment:.center)
+        }
+        for row in 0..<facts.rows where listTop+row < rows.count {
+            guard let unit = session.units[rows[listTop+row]],let person = try? session.people.person(unit.person) else { continue }
+            let box = CGRect(x:facts.rect[0],y:facts.rect[1]+row*facts.rowHeight,width:facts.hover[1],height:facts.rowHeight-1)
+            if unit.slot == (inspected ?? selected) { CanvasTheme.fill(box,CanvasTheme.selection,in:context) }
+            let name = color(OriginalBattleRoster.nameColor(unit))
+            label(person.name,in:CGRect(x:box.minX+6,y:box.minY+0.5,width:78,height:15),font:CanvasTheme.font(11,.medium),color:unit.status == 2 ? name : CanvasTheme.disabled)
+            if unit.status != 2 {
+                label(style.texts?.retired ?? "",in:CGRect(x:box.minX+60,y:box.minY+1,width:box.width-66,height:14),font:CanvasTheme.font(9.5),color:CanvasTheme.disabled,alignment:.right)
+                continue
+            }
+            let maximum = (try? OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:session.combat)) ?? 0
+            label("\(person.rawTroops)/\(maximum)",in:CGRect(x:box.minX+60,y:box.minY+1.5,width:box.width-66,height:13),font:CanvasTheme.number(9.5),color:CanvasTheme.muted,alignment:.right)
+            let bar = CGRect(x:box.minX+6,y:box.minY+15,width:box.width-12,height:2.5)
+            CanvasTheme.fill(bar,CanvasTheme.hairline,radius:1.25,in:context)
+            let gauge = OriginalBattleGauge(current:person.rawTroops,maximum:maximum,width:Int(bar.width))
+            let tint = gauge.tile == "high" ? CGColor(red:0.40,green:0.80,blue:0.55,alpha:1) : gauge.tile == "middle" ? CanvasTheme.accentFill : CanvasTheme.danger.cgColor
+            CanvasTheme.fill(CGRect(x:bar.minX,y:bar.minY,width:CGFloat(gauge.fill),height:bar.height),tint,radius:1.25,in:context)
+        }
+        if listTopLimit > 0 {
+            let track = OriginalBattleLayout.rect(facts.track),height = track.height*CGFloat(facts.rows)/CGFloat(rows.count)
+            CanvasTheme.fill(CGRect(x:track.minX,y:track.minY+(track.height-height)*CGFloat(listTop)/CGFloat(listTopLimit),width:track.width,height:height),CanvasTheme.hairline,radius:1.5,in:context)
+        }
+    }
     private func drawFrame(_ context:CGContext) {
+        if presentation == .modern { drawModernFrame(context);return }
         let facts = layoutFacts
         if let frame = style.frame { Renderer.image(frame,in:CGRect(x:0,y:0,width:640,height:400),context:context) }
         else {
@@ -592,6 +665,7 @@ final class OriginalBattleView:NSView {
         context.restoreGState()
     }
     private func drawList(_ context:CGContext) {
+        if presentation == .modern { drawSidebar(context);return }
         let facts = layoutFacts.list,rows = listRows
         listTop = min(listTop,listTopLimit)
         let force = rows.first.flatMap { _ in session.units[listSide == 0 ? 0 : 15] }.map { self.force(of:$0) }
@@ -645,7 +719,7 @@ final class OriginalBattleView:NSView {
         }
         // MAIN291CC..29278: a two-pixel colour6 box around the visible cells.
         let box = CGRect(x:map.minX+CGFloat(camera.x*scale/2),y:map.minY+CGFloat(camera.y*scale/2),width:CGFloat(facts.columns*scale),height:CGFloat(facts.rows*scale))
-        context.setStrokeColor(color(6).cgColor);context.setLineWidth(2);context.stroke(box.insetBy(dx:1,dy:1))
+        context.setStrokeColor(presentation == .modern ? CanvasTheme.accentFill : color(6).cgColor);context.setLineWidth(2);context.stroke(box.insetBy(dx:1,dy:1))
     }
     private func unitDetails(_ slot:Int) -> String? {
         guard let unit = session.units[slot],let person = try? session.people.person(unit.person) else { return nil }
@@ -655,8 +729,10 @@ final class OriginalBattleView:NSView {
     /// Turn, the selected unit and any hint float over the map window.
     private func drawStatus(_ context:CGContext) {
         let map = layoutFacts.viewportRect,width = map.width-32
-        CanvasTheme.chip("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(session.turns.weatherIndex)",
-                         at:CGPoint(x:map.minX+8,y:map.minY+18),centered:false,maximumWidth:width,in:context)
+        if presentation == .original {
+            CanvasTheme.chip("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(session.turns.weatherIndex)",
+                             at:CGPoint(x:map.minX+8,y:map.minY+18),centered:false,maximumWidth:width,in:context)
+        }
         var detail = (inspected ?? selected).flatMap(unitDetails) ?? ""
         if let choice = strategySelection {
             if choice.abilityID >= 30 {detail = "범위 대상 · Enter: 확인 · Esc: 취소"}
@@ -725,7 +801,13 @@ final class OriginalBattleView:NSView {
         guard let texts = style.commands?.terrain else { return }
         let id = Int(session.terrain[point.y*session.width+point.x]),facts = layoutFacts.terrain,cell = layoutFacts.cell
         let tile = background?.cropping(to:CGRect(x:point.x*cell,y:point.y*cell,width:cell,height:cell))
-        overlay.show(CanvasTerrain(layout:facts,origin:OriginalBattleTerrain.windowOrigin(cell:point,camera:camera),tile:tile,
+        let map = layoutFacts.viewportRect
+        var origin = OriginalBattleTerrain.windowOrigin(cell:point,camera:camera)
+        if presentation == .modern {
+            origin = besideCell(point,width:CGFloat(facts.size[0]))
+            origin.y = min(origin.y,map.maxY-CGFloat(facts.size[1])-6)
+        }
+        overlay.show(CanvasTerrain(layout:facts,origin:origin,tile:tile,
             name:texts.names.indices.contains(id) ? texts.names[id] : String(id),heading:texts.defense,
             percent:OriginalBattleTerrain.defenseText(session.combat.terrainDefensePercent[id],none:texts.none,percent:texts.percent),
             recovery:OriginalBattleTerrain.recovers(terrain:id) ? texts.recovery : nil) { })

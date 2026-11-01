@@ -143,7 +143,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let restored = NSMenuItem(title:"원작 전투 복원 검증…",action:#selector(browseRestoredBattles),keyEquivalent:"b"); restored.target = self; submenu.addItem(restored)
         let battle = NSMenuItem(title:"이전 실험 규칙 연구…",action:#selector(browseBattles),keyEquivalent:""); battle.target = self; submenu.addItem(battle)
         let campaign = NSMenuItem(title:"캠페인 분석…",action:#selector(browseCampaign),keyEquivalent:"g"); campaign.target = self; submenu.addItem(campaign)
+        let viewing = NSMenuItem(title:"보기",action:nil,keyEquivalent:"")
+        let viewMenu = NSMenu(title:"보기"); viewing.submenu = viewMenu; menu.addItem(viewing)
+        let frames = NSMenuItem(title:"원작 화면 틀",action:#selector(toggleOriginalFrames(_:)),keyEquivalent:"f")
+        frames.keyEquivalentModifierMask = [.command,.shift];frames.target = self
+        frames.state = CanvasPresentation.current == .original ? .on : .off;viewMenu.addItem(frames)
         NSApplication.shared.mainMenu = menu
+    }
+    @objc private func toggleOriginalFrames(_ sender:NSMenuItem) {
+        CanvasPresentation.current = CanvasPresentation.current == .original ? .modern : .original
+        sender.state = CanvasPresentation.current == .original ? .on : .off
     }
     private func error(_ error:Error) {
         let alert = NSAlert(); alert.messageText = "요청한 연구 항목을 실행할 수 없습니다."; alert.informativeText = "\(error)"; alert.runModal()
@@ -152,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let window = NSWindow(contentRect:CGRect(origin:.zero,size:size),styleMask:[.titled,.closable,.miniaturizable,.resizable],backing:.buffered,defer:false)
         window.isReleasedWhenClosed = false; window.delegate = self
         window.title = title; window.contentView = view; window.center(); researchWindows.append(window)
+        if view is OriginalCampaignView { window.contentAspectRatio = NSSize(width:8,height:5) }
         window.makeKeyAndOrderFront(nil); window.makeFirstResponder(view)
     }
     private func showBrowser(_ controller:RecordBrowser,title:String) {
@@ -188,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     @objc func playOriginalCampaign() {
         guard let data = data else { return }
-        do { show(try OriginalCampaignView(data:data),title:"원작 캠페인 복원",size:NSSize(width:960,height:600)) }
+        do { show(try OriginalCampaignView(data:data),title:"원작 캠페인 복원",size:NSSize(width:1024,height:640)) }
         catch { self.error(error) }
     }
     /// Native engine saves only; original MSAVE slots are not read.
@@ -196,7 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let data = data else { return }
         do {
             guard let host = try OriginalCampaignView.chooseResume(data:data) else { return }
-            show(try OriginalCampaignView(host:host),title:"원작 캠페인 복원 · 이어하기",size:NSSize(width:960,height:600))
+            show(try OriginalCampaignView(host:host),title:"원작 캠페인 복원 · 이어하기",size:NSSize(width:1024,height:640))
         } catch { self.error(error) }
     }
     func showOriginalBattle(_ id:String) throws {

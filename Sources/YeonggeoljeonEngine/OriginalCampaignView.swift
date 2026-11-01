@@ -11,6 +11,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     /// In-game selectors and waiting lines drawn above the stage and battle.
     private let overlay = CanvasOverlayView()
     private var imageCache:[String:CGImage] = [:]
+    private var presentationObserver:NSObjectProtocol?
     /// Each shop list remembers its row while the visit moves between them.
     private var shopCursor:[OriginalShopList:Int] = [:]
     override var isFlipped:Bool { true }
@@ -23,7 +24,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     init(host:OriginalCampaignHost) throws {
         self.host = host
         renderer = try Renderer(host.data)
-        super.init(frame:CGRect(x:0,y:0,width:960,height:600))
+        super.init(frame:CGRect(x:0,y:0,width:1024,height:640))
         overlay.frame = bounds;overlay.autoresizingMask = [.width,.height];addSubview(overlay)
         overlay.restoreFocus = { [weak self] in
             guard let self = self else { return }
@@ -32,7 +33,15 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             self.needsDisplay = true
         }
         timer = Timer.scheduledTimer(withTimeInterval:1.0/60,repeats:true) { [weak self] _ in self?.tick() }
+        presentationObserver = NotificationCenter.default.addObserver(forName:CanvasPresentation.changed,object:nil,queue:.main) { [weak self] _ in
+            guard let self = self else { return }
+            self.battleView?.presentation = CanvasPresentation.current
+            if self.battleView?.isHidden != false { self.overlay.viewport = self.fieldOverlay }
+            else { self.overlay.viewport = self.battleView?.layoutFacts.viewportRect ?? self.overlay.viewport }
+            self.needsDisplay = true
+        }
     }
+    deinit { presentationObserver.map(NotificationCenter.default.removeObserver) }
     private func image(_ path:String?) -> CGImage? {
         guard let path = path else { return nil }
         if let cached = imageCache[path] { return cached }
@@ -121,11 +130,12 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             board.menuTexts = host.framework?.battleMenu
             board.objective = { [weak self] in (self?.host.vm.state.chapter ?? 0,self?.host.vm.state.objectiveText) }
             board.announcesPhases = true
+            board.presentation = CanvasPresentation.current
             board.frame = bounds
             addSubview(board,positioned:.below,relativeTo:overlay);battleView = board
             window?.makeFirstResponder(board)
         }
-        battleView?.isHidden = false;overlay.viewport = battleView?.style.layout.viewportRect ?? overlay.viewport
+        battleView?.isHidden = false;overlay.viewport = battleView?.layoutFacts.viewportRect ?? overlay.viewport
         battleView?.announcePhase()
         if host.battleInputReady,let board = battleView {
             if session.turns.stage == .unstarted { try board.start() }
@@ -135,11 +145,16 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         battleView?.needsDisplay = true
     }
     private static let pictureViewport = CGRect(x:16,y:16,width:608,height:368)
-    private func hideBattle() { battleView?.isHidden = true;overlay.viewport = CanvasOverlayView.fieldViewport }
+    private func hideBattle() { battleView?.isHidden = true;overlay.viewport = fieldOverlay }
+    /// Modern windows have the whole canvas; original frames keep the map window.
+    private var fieldOverlay:CGRect {
+        CanvasPresentation.current == .modern ? CGRect(x:8,y:8,width:624,height:384) : CanvasOverlayView.fieldViewport
+    }
+    private var modernField:Bool { CanvasPresentation.current == .modern && host.fieldScreenState() != nil }
     /// A framed map keeps its window; a full picture gives the line the whole canvas.
     private func presentDialogue() {
         guard let dialogue = host.stage.dialogue else { return }
-        if host.stage.palette != 3 { overlay.viewport = host.fieldScreenState() != nil ? CanvasOverlayView.fieldViewport : Self.pictureViewport }
+        if host.stage.palette != 3 { overlay.viewport = host.fieldScreenState() != nil ? fieldOverlay : Self.pictureViewport }
         overlay.show(CanvasNotice(speaker:dialogue.speaker,text:dialogue.text,portrait:portrait(dialogue.person,palette:host.stage.palette)) { [weak self] in
             guard let self = self else { return }
             self.act { try self.host.acknowledge() }
@@ -303,15 +318,18 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         })
     }
     /// MAIN's field menu (input code23, DS:3636/36E2 -> CF5:F382). The
-    /// engine opens it with a secondary click; the original key binding is
-    /// not established. Quit, load and save have native counterparts.
+    /// engine opens it with a secondary click or the modern menu button; the
+    /// original key binding is not established. Quit, load and save have
+    /// native counterparts.
     override func rightMouseDown(with event:NSEvent) {
         guard host.fieldMenuReady,!overlay.active else { super.rightMouseDown(with:event);return }
+        openFieldMenu(at:CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil)))
+    }
+    private func openFieldMenu(at point:CGPoint) {
         let labels = host.framework?.fieldMenu?.items.map(\.text) ?? OriginalFieldMenuTexts.actions
         let options = labels.enumerated().map { CanvasMenu.Option(label:$0.element,
             enabled:["quit","load","save"].contains(OriginalFieldMenuTexts.actions[$0.offset])) }
-        let pointer = CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil))
-        overlay.show(CanvasMenu(title:"",options:options,cancellable:true,anchor:pointer) { [weak self] index in
+        overlay.show(CanvasMenu(title:"",options:options,cancellable:true,anchor:point) { [weak self] index in
             guard let self = self,let index = index else { return }
             self.fieldMenuChosen(OriginalFieldMenuTexts.actions[index])
         })
@@ -338,17 +356,48 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         guard let window = window else { return }
         stop();window.contentView = next;window.makeFirstResponder(next)
     }
+    static let menuButton = CGRect(x:574,y:12,width:54,height:28)
+    /// Modern field: who leads, where they are, and what they carry, over the map.
+    private func drawFieldHUD(_ screen:OriginalFieldScreenState,in context:CGContext) {
+        let card = CGRect(x:12,y:12,width:178,height:58)
+        CanvasTheme.panel(card,in:context)
+        if let picture = image(screen.portraitImage) {
+            let box = CGRect(x:card.minX+7,y:card.minY+6,width:37,height:46)
+            context.saveGState();CanvasTheme.rounded(box,4,in:context);context.clip()
+            Renderer.image(picture,in:box,context:context);context.restoreGState()
+        }
+        let textX = card.minX+52
+        ((screen.territory ?? "") as NSString).draw(in:CGRect(x:textX,y:card.minY+8,width:card.width-58,height:20),
+            withAttributes:CanvasTheme.attributes(CanvasTheme.font(14,.semibold),CanvasTheme.text))
+        ("돈 \(screen.money ?? 0) · 레벨 \(screen.level ?? 0)" as NSString).draw(in:CGRect(x:textX,y:card.minY+31,width:card.width-58,height:18),
+            withAttributes:CanvasTheme.attributes(CanvasTheme.number(11.5),CanvasTheme.muted))
+        if let caption = host.stage.caption,!caption.isEmpty {
+            CanvasTheme.chip(caption,at:CGPoint(x:320,y:26),maximumWidth:300,in:context)
+        }
+        if host.fieldMenuReady {
+            CanvasTheme.panel(Self.menuButton,in:context)
+            ("메뉴" as NSString).draw(in:CGRect(x:Self.menuButton.minX,y:Self.menuButton.minY+6,width:Self.menuButton.width,height:18),
+                withAttributes:CanvasTheme.attributes(CanvasTheme.font(12,.medium),CanvasTheme.text,alignment:.center))
+        }
+    }
     override func draw(_ dirtyRect:NSRect) {
         NSColor.black.setFill();bounds.fill()
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let shape = CanvasGeometry(bounds:bounds)
+        let screen = host.fieldScreenState(),modern = CanvasPresentation.current == .modern && screen != nil
         do {
-            let frame = try host.ending.map { try renderer.renderEnding($0) } ?? renderer.render(host.stage,screen:host.fieldScreenState(),dialogue:false)
-            Renderer.image(frame.image,in:shape.rect,context:context)
+            let frame = try host.ending.map { try renderer.renderEnding($0) } ?? renderer.render(host.stage,screen:screen,dialogue:false)
+            Renderer.image(modern ? frame.image.cropping(to:CanvasFieldMap.viewport) ?? frame.image : frame.image,in:shape.rect,context:context)
         } catch { errorText = "\(error)" }
+        context.saveGState()
+        context.translateBy(x:shape.origin.x,y:shape.origin.y);context.scaleBy(x:shape.scale,y:shape.scale)
+        // A sheet carries its own money and covers this corner.
+        if modern,overlay.sheet == nil,let screen = screen { drawFieldHUD(screen,in:context) }
         // Only a state the player can act on or must know reaches the window.
-        guard let text = errorText ?? inputNotice ?? host.notice ?? host.playerStatus else { return }
-        CanvasTheme.chip(text,at:CGPoint(x:shape.rect.midX,y:shape.rect.maxY-30),maximumWidth:shape.rect.width-40,color:errorText == nil ? CanvasTheme.text : CanvasTheme.danger,in:context)
+        if let text = errorText ?? inputNotice ?? host.notice ?? host.playerStatus {
+            CanvasTheme.chip(text,at:CGPoint(x:320,y:376),maximumWidth:600,color:errorText == nil ? CanvasTheme.text : CanvasTheme.danger,in:context)
+        }
+        context.restoreGState()
     }
     override func keyDown(with event:NSEvent) {
         if event.keyCode == 53 || host.frameworkReturn?.outcome == .quit { window?.performClose(nil);return }
@@ -369,7 +418,11 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         if !host.hasStarted { presentTitleMenu();needsDisplay = true;return }
         do {
             if host.explorationInputReady,[0,1,2].contains(host.vm.state.packedMap>>12) {
-                let p = CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil))
+                var p = CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil))
+                if modernField {
+                    if Self.menuButton.contains(p),host.fieldMenuReady { openFieldMenu(at:CGPoint(x:Self.menuButton.maxX-130,y:Self.menuButton.maxY+6));return }
+                    p = CanvasFieldMap.mapPoint(canvas:p)
+                }
                 let x = p.x,y = p.y,v = host.stage.viewport
                 if host.vm.state.packedMap>>12 == 1 {
                     let cities = host.exploration.cities.filter{$0.chapter == host.vm.state.chapter && $0.worldPositionKnown}

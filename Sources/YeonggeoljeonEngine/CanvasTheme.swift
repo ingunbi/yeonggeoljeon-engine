@@ -13,10 +13,37 @@ struct CanvasGeometry {
     func canvas(_ point:CGPoint) -> CGPoint { CGPoint(x:(point.x-origin.x)/scale,y:(point.y-origin.y)/scale) }
 }
 
+/// Which screen surrounds the map. Replays and research views stay on the
+/// original frames; the app starts on the modern layout.
+enum CanvasPresentation {
+    case modern,original
+    static let changed = Notification.Name("CanvasPresentationChanged")
+    private static let key = "showsOriginalFrames"
+    static var current:CanvasPresentation {
+        get { UserDefaults.standard.bool(forKey:key) ? .original : .modern }
+        set {
+            UserDefaults.standard.set(newValue == .original,forKey:key)
+            NotificationCenter.default.post(name:changed,object:nil)
+        }
+    }
+}
+
+/// In the modern layout the 512×320 map window fills the 640×400 canvas.
+enum CanvasFieldMap {
+    static let viewport = CGRect(x:16,y:16,width:512,height:320)
+    static func mapPoint(canvas point:CGPoint) -> CGPoint {
+        CGPoint(x:viewport.minX+point.x*viewport.width/640,y:viewport.minY+point.y*viewport.height/400)
+    }
+    static func canvasPoint(map point:CGPoint) -> CGPoint {
+        CGPoint(x:(point.x-viewport.minX)*640/viewport.width,y:(point.y-viewport.minY)*400/viewport.height)
+    }
+}
+
 /// The look of every window the engine draws itself. Original art is drawn
 /// unchanged; these colors and shapes are engine presentation, not source facts.
 enum CanvasTheme {
     static let surface = CGColor(red:0.070,green:0.078,blue:0.106,alpha:0.97)
+    static let background = CGColor(red:0.070,green:0.078,blue:0.106,alpha:1)
     static let inset = CGColor(gray:1,alpha:0.05)
     static let hairline = CGColor(gray:1,alpha:0.16)
     static let selection = CGColor(red:0.91,green:0.75,blue:0.40,alpha:0.22)

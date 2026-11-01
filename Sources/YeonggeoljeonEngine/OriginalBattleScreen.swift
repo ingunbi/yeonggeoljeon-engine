@@ -36,13 +36,25 @@ struct OriginalBattleLayout:Codable,Equatable {
                               titleColumn:10,headingColumn:38,headerY:112,textColumn:12,textY:152,lineStep:32,lineWidth:34,lineEnd:216,
                               turnColumn:11,turnY:248),
         terrain:Terrain(size:[128,80],tile:[8,16,32,32],textX:48,headingY:16,percentY:36,nameY:56,percentWidth:64),followMargin:6)
+    /// The engine's own arrangement of the same parts: a slim top bar, fifteen
+    /// by twelve cells, and a sidebar. Only the map window's size differs in play.
+    func modern() -> Self {
+        var value = self
+        value.viewport = [0,16,480,384];value.functionButton = [0,0,56,16]
+        value.sideButtons = [[488,32,72,20],[560,32,72,20]]
+        value.list = UnitList(rect:[484,58,152,200],rowHeight:20,rows:10,nameColumn:61,statusColumn:69,textY:60,
+                              gauge:[490,74,140,3],track:[633,58,3,200],hover:[484,152])
+        value.minimap = Minimap(panel:[484,264,152,128],base:[500,292],span:[40,24],cellPixels:3)
+        return value
+    }
     static func rect(_ value:[Int]) -> CGRect { CGRect(x:value[0],y:value[1],width:value[2],height:value[3]) }
     var viewportRect:CGRect { Self.rect(viewport) }
     var columns:Int { viewport[2]/cell }
     var rows:Int { viewport[3]/cell }
     /// MAIN2898C..289C5 centres the map in eight-pixel steps inside the panel.
     func minimapOrigin(width:Int,height:Int) -> CGPoint {
-        CGPoint(x:minimap.base[0]+(minimap.span[0]-width)*2/8*8,y:minimap.base[1]+(minimap.span[1]-height)*2/8*8)
+        CGPoint(x:minimap.base[0]+(minimap.span[0]-width)*minimap.cellPixels/2/8*8,
+                y:minimap.base[1]+(minimap.span[1]-height)*minimap.cellPixels/2/8*8)
     }
 }
 
