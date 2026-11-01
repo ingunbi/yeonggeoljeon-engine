@@ -8,8 +8,9 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from prepare_story import (BATTLE_FRAME_CALL, BATTLE_SHAPES, COMMAND_MESSAGES, COMMAND_SHAPES, DATA_PARAGRAPH, DATA_SEGMENT, FIELD_FRAME_CALL,
-                           HUD_FIELDS, PORTRAIT_CALL, battle_commands, battle_layout, checked_shapes, picture_directory, prepare, screen_facts)
+from prepare_story import (BATTLE_FRAME_CALL, BATTLE_SHAPES, CLASS_NAMES, COMMAND_MESSAGES, COMMAND_SHAPES, DATA_PARAGRAPH, DATA_SEGMENT, FAMILY_LABELS,
+                           FIELD_FRAME_CALL, HUD_FIELDS, ITEM_MESSAGES, ITEM_WORDS, KIND_LABELS, PORTRAIT_CALL, TERRAIN_NAMES, TERRAIN_SHAPES, TERRAIN_TABLE,
+                           battle_commands, battle_layout, checked_shapes, picture_directory, prepare, screen_facts, terrain_refusal)
 from resource_formats import ResourceError
 from tf_dce import dce_picture
 
@@ -137,7 +138,36 @@ class DCEFormatTests(unittest.TestCase):
         table(0x4866, 2)
         table(0x4346, 4)
         table(0x4438, 36)
+        for at, shape in TERRAIN_SHAPES.values():
+            expected = bytes.fromhex(shape)
+            main[at:at + len(expected)] = expected
+        for name, (at, pointer) in ITEM_MESSAGES.items():
+            main[at:at + 4] = b"\x1e\x68" + struct.pack("<H", pointer)
+            text = name.encode("ascii") + b"\0"
+            main[DATA_SEGMENT + pointer:DATA_SEGMENT + pointer + len(text)] = text
+        for name, (at, pointer) in ITEM_WORDS.items():
+            main[at:at + 3] = b"\xb8" + struct.pack("<H", pointer)
+            main[DATA_SEGMENT + pointer:DATA_SEGMENT + pointer + len(name) + 1] = name.encode("ascii") + b"\0"
+
+        def near(base, count, prefix):
+            nonlocal place
+            for index in range(count):
+                struct.pack_into("<H", main, DATA_SEGMENT + base + index * 2, place)
+                text = f"{prefix}{index}\0".encode("ascii")
+                main[DATA_SEGMENT + place:DATA_SEGMENT + place + len(text)] = text
+                place += 8
+        near(KIND_LABELS, 4, "kind")
+        near(FAMILY_LABELS, 3, "family")
+        near(CLASS_NAMES, 19, "class")
+        near(TERRAIN_NAMES, 20, "land")
+        main[DATA_SEGMENT + TERRAIN_TABLE:DATA_SEGMENT + TERRAIN_TABLE + 12] = bytes([1, 7, 0, 0xFF, 4, 0xFF, 0xFF, 0xFF, 2, 11, 0xFF, 0xFF])
+        for pointer, text in ((0x482A, b"at "), (0x4830, b", "), (0x4833, b" only")):
+            main[DATA_SEGMENT + pointer:DATA_SEGMENT + pointer + len(text) + 1] = text + b"\0"
         facts = battle_commands(bytes(main))
+        self.assertEqual(facts["terrainRefusals"], ["at land1, land7, land0 only", "at land4 only", "at land2, land11 only"])
+        self.assertEqual(terrain_refusal(bytes(main), 1), "at land4 only")
+        self.assertEqual((facts["kindLabels"][1], facts["familyLabels"][2], facts["classNames"][18]), ("kind1", "family2", "class18"))
+        self.assertEqual(facts["itemMessages"]["bombThrow"], "bombThrow")
         self.assertEqual(facts["labels"], ["B", "C", "D", "E"])
         self.assertEqual(len(facts["strategyNames"]), 36)
         self.assertEqual(facts["messages"]["notOurs"], "notOurs")
@@ -147,6 +177,10 @@ class DCEFormatTests(unittest.TestCase):
         struct.pack_into("<H", main, DATA_SEGMENT + 0x430C + 2, DATA_PARAGRAPH)
         main[COMMAND_MESSAGES["gave"][0] + 1] = 0x90
         with self.assertRaisesRegex(ResourceError, "gave"):
+            battle_commands(bytes(main))
+        main[COMMAND_MESSAGES["gave"][0] + 1] = 0x68
+        main[ITEM_MESSAGES["bombThrow"][0] + 1] = 0x90
+        with self.assertRaisesRegex(ResourceError, "bombThrow"):
             battle_commands(bytes(main))
 
     def test_field_screen_facts_read_hud_writers_and_frame_selectors(self):

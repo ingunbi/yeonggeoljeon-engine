@@ -45,14 +45,22 @@ struct OriginalBattleParts:Codable,Equatable {
 /// Labels and refusals of the unit command routine (MAIN2D9D4..2DE42).
 struct OriginalBattleCommands:Codable,Equatable {
     var labels:[String]; var ambush:[String]; var itemActions:[String]
-    var strategyNames:[String]; var messages:[String:String]; var source:JSONValue?
+    var strategyNames:[String]; var messages:[String:String]
+    var itemMessages:[String:String]; var kindLabels:[String]; var familyLabels:[String]
+    var classNames:[String]; var terrainRefusals:[String]; var source:JSONValue?
     static let messageKeys:Set<String> = ["outOfMoveRange","notOurs","cannotControl","confused","finished","noStrategy",
         "releaseAmbush","noItems","gave","inventoryFull","discarded","noAllyInRange","noEnemyInRange","enemyUnit",
         "cannotAttackAlly","outOfItemRange","outOfAttackRange"]
+    static let itemMessageKeys:Set<String> = ["rainFire","attackWith","usedItem","confuseEnemy","alreadyConfused","recoverKind",
+        "recoveryLine","bombAttack","bombThrow","unusable","noRecovery","classPrompt","classDone","classTerrain","sameFamily",
+        "sameClass","playerClass","promotePrompt","promoteDone","lowLevel","wrongClass","areaPrompt","areaDone","noAllyNearby",
+        "becameConfused","lostWill","raised","friendlySide","enemySide"]
     var isValid:Bool {
         labels.count == 4 && ambush.count == 2 && itemActions.count == 4 && strategyNames.count == 36 &&
             Set(messages.keys) == Self.messageKeys && (labels+ambush+itemActions+strategyNames).allSatisfy({ !$0.isEmpty }) &&
-            messages.values.allSatisfy({ !$0.isEmpty })
+            messages.values.allSatisfy({ !$0.isEmpty }) && Set(itemMessages.keys) == Self.itemMessageKeys &&
+            itemMessages.values.allSatisfy({ !$0.isEmpty }) && kindLabels.count == 4 && familyLabels.count == 3 &&
+            classNames.count == 19 && terrainRefusals.count == 3
     }
 }
 

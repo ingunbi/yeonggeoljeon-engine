@@ -10,6 +10,8 @@ struct OriginalStrategyTargetEffect: Codable {
     var success: OriginalStrategySuccess?
     var morale: OriginalMoraleMutation?
     var experience: OriginalExperienceMutation?
+    /// Troops removed by an effect without a damage context (the bomb item).
+    var quantity: Int?
     var retiredPerson: Int?
     var retirement:OriginalRetirementNotice?
 }

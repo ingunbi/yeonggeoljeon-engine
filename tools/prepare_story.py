@@ -128,6 +128,25 @@ COMMAND_MESSAGES = {
     "outOfItemRange": (0x29C67, 0x3F21), "outOfAttackRange": (0x29C6D, 0x3F33),
 }
 COMMAND_LABELS, AMBUSH_ACTIONS, ITEM_ACTIONS, STRATEGY_COUNT = 4, 2, 4, 36
+# Texts of the item use routine (MAIN 0x2E0E6..0x2E833) and its helpers.
+ITEM_MESSAGES = {
+    "rainFire": (0x2E260, 0x4A80), "attackWith": (0x2E272, 0x4AA2), "usedItem": (0x2E2F8, 0x4ABF),
+    "confuseEnemy": (0x2E33D, 0x4AD2), "alreadyConfused": (0x2E468, 0x4AE5), "recoverKind": (0x2E4C9, 0x4B01),
+    "recoveryLine": (0x2E52B, 0x4B2B), "bombAttack": (0x2E592, 0x4B3C), "bombThrow": (0x2E5BE, 0x4B55),
+    "unusable": (0x2E6D6, 0x4B64), "noRecovery": (0x2D7EF, 0x4800), "classPrompt": (0x2E781, 0x492A),
+    "classDone": (0x2E7E0, 0x4947), "classTerrain": (0x2E7E7, 0x4961), "sameFamily": (0x2E7ED, 0x49A7),
+    "sameClass": (0x2E7F3, 0x49C9), "playerClass": (0x2E7F9, 0x49ED), "promotePrompt": (0x2E1A7, 0x4A11),
+    "promoteDone": (0x2E1FB, 0x4A31), "lowLevel": (0x2E211, 0x4A4B), "wrongClass": (0x2E218, 0x4A5E),
+    "areaPrompt": (0x2F0E3, 0x4C93), "areaDone": (0x2F1B7, 0x4CC2), "noAllyNearby": (0x2F1D7, 0x4CDE),
+    "becameConfused": (0x2D590, 0x4287), "lostWill": (0x2D66A, 0x42BB),
+}
+ITEM_WORDS = {"raised": (0x2E51B, 0x4B21), "friendlySide": (0x2F1AE, 0x4CBC), "enemySide": (0x2F1B3, 0x4CBF)}
+TERRAIN_SHAPES = {
+    "prefix": (0x2D91F, "1e682a48"), "separator": (0x2D95E, "1e683048"), "suffix": (0x2D9AF, "1e683348"),
+    "names": (0x2D97A, "ffb7743e"), "table": (0x2D93F, "8a81bc47"),
+    "kindLabels": (0x2E4C0, "81c3e247"), "familyLabels": (0x2E26E, "ffb7fa47"), "classNames": (0x2E778, "81c3d80f"),
+}
+TERRAIN_TABLE, TERRAIN_NAMES, KIND_LABELS, FAMILY_LABELS, CLASS_NAMES = 0x47BC, 0x3E74, 0x47E2, 0x47FA, 0xFD8
 DATA_SEGMENT, DATA_PARAGRAPH = 0x37DA0, 0x313A
 FUNCTION_PICTURE, SIDE_PICTURES = 0x800, {(0, 0): 0xA00, (0, 1): 0xC00, (1, 0): 0xE00, (1, 1): 0x1000}
 GAUGE_TILES = {"high": 0x2230, "middle": 0x21E0, "low": 0x2208}
@@ -168,6 +187,38 @@ def far_texts(main: bytes, table: int, count: int) -> list[str]:
     return result
 
 
+def near_texts(main: bytes, table: int, count: int) -> list[str]:
+    return [data_text(main, struct.unpack_from("<H", main, DATA_SEGMENT + table + index * 2)[0]) for index in range(count)]
+
+
+def terrain_refusal(main: bytes, family: int) -> str:
+    """MAIN 0x2D90E..0x2D9CA joins the family's terrain names between its two texts."""
+    names = [main[DATA_SEGMENT + TERRAIN_TABLE + family * 4 + index] for index in range(4)]
+    listed = [data_text(main, struct.unpack_from("<H", main, DATA_SEGMENT + TERRAIN_NAMES + value * 2)[0])
+              for value in names if value != 0xFF]
+    return data_text(main, 0x482A) + data_text(main, 0x4830).join(listed) + data_text(main, 0x4833)
+
+
+def item_texts(main: bytes) -> dict:
+    """Refusals, prompts and labels of the item use routine, from checked sites."""
+    for name, (at, shape) in TERRAIN_SHAPES.items():
+        expected = bytes.fromhex(shape)
+        if main[at:at + len(expected)] != expected:
+            raise ResourceError(f"MAIN item site {name} at {at:#x} does not match the examined profile")
+    messages = {}
+    for name, (at, pointer) in ITEM_MESSAGES.items():
+        if main[at:at + 4] != b"\x1e\x68" + struct.pack("<H", pointer):
+            raise ResourceError(f"MAIN item message {name} at {at:#x} does not match the examined profile")
+        messages[name] = data_text(main, pointer)
+    for name, (at, pointer) in ITEM_WORDS.items():
+        if main[at:at + 3] != b"\xb8" + struct.pack("<H", pointer):
+            raise ResourceError(f"MAIN item word {name} at {at:#x} does not match the examined profile")
+        messages[name] = data_text(main, pointer)
+    return {"itemMessages": messages, "kindLabels": near_texts(main, KIND_LABELS, 4),
+            "familyLabels": near_texts(main, FAMILY_LABELS, 3), "classNames": near_texts(main, CLASS_NAMES, 19),
+            "terrainRefusals": [terrain_refusal(main, family) for family in range(3)]}
+
+
 def battle_commands(main: bytes) -> dict:
     """Labels and refusals of the unit command routine, from checked sites."""
     for name, (at, shape) in COMMAND_SHAPES.items():
@@ -183,7 +234,7 @@ def battle_commands(main: bytes) -> dict:
     labels = far_texts(main, 0x430C, COMMAND_LABELS + 1)[1:]
     return {"labels": labels, "ambush": far_texts(main, 0x4866, AMBUSH_ACTIONS),
             "itemActions": far_texts(main, 0x4346, ITEM_ACTIONS),
-            "strategyNames": far_texts(main, 0x4438, STRATEGY_COUNT), "messages": messages,
+            "strategyNames": far_texts(main, 0x4438, STRATEGY_COUNT), "messages": messages, **item_texts(main),
             "source": {"routine": "MAIN.EXE:0x2D9D4..0x2DE42", "window": "MAIN.EXE:0x2AA26..0x2AAC4",
                        "picker": "MAIN.EXE:0x29ADE..0x29CAF", "moveDenials": "MAIN.EXE:0x30ED2..0x31083"}}
 

@@ -184,13 +184,14 @@ struct OriginalStrategyOperation:Codable {
     }
 }
 
-private extension OriginalBattleSession {
-    func strategyDamageEffect(casterSlot:Int,targetSlot:Int,subtype:Int) throws -> OriginalStrategyTargetEffect {
+extension OriginalBattleSession {
+    /// Context kind2 is a strategy; items enter the same producer as kind3.
+    func strategyDamageEffect(casterSlot:Int,targetSlot:Int,subtype:Int,kind:Int = 2) throws -> OriginalStrategyTargetEffect {
         guard let source = units[casterSlot],let target = units[targetSlot],target.status == 2 else {throw BattleError.unsupported("Original strategy context slot changed before its producer")}
         let a = try people.stats(source.person,morale:source.morale),d = try people.stats(target.person,morale:target.morale)
         guard (0..<width).contains(target.position.x),(0..<height).contains(target.position.y) else {throw BattleError.unsupported("Original strategy context coordinate leaves its source map")}
         let value = try OriginalCombat.strategyStrike(OriginalStrategyInput(attacker:a,defender:d,
-            terrainID:Int(terrain[target.position.y*width+target.position.x]),subtype:subtype,kind:2,weatherCode:Int(turns.weatherIndex)),tables:combat,rng:&rng)
+            terrainID:Int(terrain[target.position.y*width+target.position.x]),subtype:subtype,kind:kind,weatherCode:Int(turns.weatherIndex)),tables:combat,rng:&rng)
         let gain = try OriginalCombat.experienceGain(attackerLevel:a.level,defenderLevel:d.level,
             attackerRuntimeSlot:casterSlot,defenderRuntimeSlot:targetSlot,damage:value.damage,defenderTroops:d.troops)
         try people.update(target.person) {$0.rawTroops = value.remainingTroops}
@@ -227,9 +228,10 @@ private extension OriginalBattleSession {
         return OriginalStrategyTargetEffect(runtimeSlot:targetSlot,person:target.person,kind:"morale",success:success,morale:morale,
             retiredPerson:retirement.person,retirement:retirement.notice)
     }
-    func strategyHealingEffect(casterSlot:Int,targetSlot:Int,subtype:Int) throws -> OriginalStrategyTargetEffect {
-        guard let source = units[casterSlot],let target = units[targetSlot] else {throw BattleError.unsupported("Original healing strategy slot changed before its producer")}
-        let a = try people.stats(source.person,morale:source.morale),d = try people.stats(target.person,morale:target.morale)
+    /// A nil caster is the source slot255 path used by items.
+    func strategyHealingEffect(casterSlot:Int?,targetSlot:Int,subtype:Int) throws -> OriginalStrategyTargetEffect {
+        guard let target = units[targetSlot],casterSlot.map({ units[$0] != nil }) ?? true else {throw BattleError.unsupported("Original healing strategy slot changed before its producer")}
+        let a = try casterSlot.flatMap { units[$0] }.map { try people.stats($0.person,morale:$0.morale) },d = try people.stats(target.person,morale:target.morale)
         let value = try OriginalCombat.heal(OriginalHealingInput(caster:a,target:d,targetStatus:target.status,
             targetConditionFlags:Int(target.scriptFlags),encodedSubtype:subtype),tables:combat,rng:&rng)
         try people.update(target.person) {$0.rawTroops = value.remainingTroops}

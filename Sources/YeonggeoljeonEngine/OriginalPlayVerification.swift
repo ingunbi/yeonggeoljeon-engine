@@ -9,7 +9,7 @@ struct OriginalPlayInput: Codable, Equatable {
         case talk, choice
         case saveSkip = "save-skip", saveNative = "save-native", worldCity = "world-city", townMarker = "town-marker", townCell = "town-cell"
         case partyToggle = "party-toggle", partyConfirm = "party-confirm", expectBattle = "expect-battle"
-        case battleMove = "battle-move", battleAttack = "battle-attack", battleStrategy = "battle-strategy"
+        case battleMove = "battle-move", battleAttack = "battle-attack", battleStrategy = "battle-strategy", battleItem = "battle-item"
         case battleWait = "battle-wait", battleEndTurn = "battle-end-turn"
         case battleRetreat = "battle-retreat", battleQuit = "battle-quit", fieldQuit = "field-quit"
         case retryChoice = "retry-choice"
@@ -25,12 +25,13 @@ struct OriginalPlayInput: Codable, Equatable {
     var y: Int?
     var target: Int?
     var ability: Int?
+    var item: Int?
 
     var operandKeys:Set<String> {
         Set([person == nil ? nil : "person", index == nil ? nil : "index",
              city == nil ? nil : "city", marker == nil ? nil : "marker",battleID == nil ? nil : "battleID",
              slot == nil ? nil : "slot",x == nil ? nil : "x",y == nil ? nil : "y",
-             target == nil ? nil : "target",ability == nil ? nil : "ability"].compactMap{$0})
+             target == nil ? nil : "target",ability == nil ? nil : "ability",item == nil ? nil : "item"].compactMap{$0})
     }
 
     func validate() throws {
@@ -46,6 +47,7 @@ struct OriginalPlayInput: Codable, Equatable {
         case .townCell: allowed = ["x","y"]
         case .battleAttack: allowed = ["slot","target"]
         case .battleStrategy: allowed = target == nil ? ["slot","ability"] : ["slot","ability","target"]
+        case .battleItem: allowed = target == nil ? ["slot","item"] : ["slot","item","target"]
         case .battleWait: allowed = ["slot"]
         case .battleEndTurn,.battleRetreat,.battleQuit: allowed = []
         }
@@ -57,7 +59,7 @@ struct OriginalPlayInput: Codable, Equatable {
               battleID.map({ !$0.isEmpty }) ?? true,
               slot.map({(0..<45).contains($0)}) ?? true,target.map({(0..<45).contains($0)}) ?? true,
               x.map({(0...255).contains($0)}) ?? true,y.map({(0...255).contains($0)}) ?? true,
-              ability.map({(0..<36).contains($0)}) ?? true else {
+              ability.map({(0..<36).contains($0)}) ?? true,item.map({(0..<64).contains($0)}) ?? true else {
             throw EngineError.invalid("Original play input has missing, extraneous or out-of-domain operands")
         }
     }
@@ -75,6 +77,7 @@ struct OriginalPlayInput: Codable, Equatable {
             _ = try flow.session.move(slot!,to:GridPoint(x:x!,y:y!))
         case .battleAttack:_ = try flow.manualAttack(slot!,target:target!)
         case .battleStrategy:_ = try flow.manualStrategy(slot!,abilityID:ability!,target:target)
+        case .battleItem:_ = try flow.manualItem(slot!,item:item!,target:target)
         case .battleWait:try flow.manualWait(slot!)
         case .battleEndTurn:try flow.finishManual()
         case .battleRetreat:try flow.requestRetreat()
@@ -283,7 +286,7 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
                       input.battleID.map({ $0 == battle.definition.id }) ?? true else {
                     throw EngineError.invalid("Play expectation did not reach its selected source battle")
                 }
-            case .battleMove,.battleAttack,.battleStrategy,.battleWait,.battleEndTurn,.battleRetreat,.battleQuit:
+            case .battleMove,.battleAttack,.battleStrategy,.battleItem,.battleWait,.battleEndTurn,.battleRetreat,.battleQuit:
                 guard host.stage.palette == 3,let view = battleView,let session = host.battle,view.session === session else {
                     throw EngineError.invalid("Original play battle primitive has no current native battle")
                 }

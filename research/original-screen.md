@@ -143,7 +143,8 @@ The strategy list shows every ability the level allows, in id order, with its
 cost. An ability the unit cannot pay for stays listed but disabled, and so do the
 five fire abilities in rain. Class 17 has no list.
 
-The item menu needs at least one held item. 본다 shows the name and the DS:`21C8`
+The item menu needs at least one held item. 사용한다 runs the
+[item use routine](original-items.md). 본다 shows the name and the DS:`21C8`
 description. 버린다 clears the first matching slot and does not end the turn.
 준다 picks a friendly unit in range code 1. It fills the receiver's first empty
 slot, clears the giver's first match and ends the unit's action, and it refuses
@@ -178,10 +179,6 @@ do not change replays.
   engine presentation, not original pixels.
 - Panel positions are engine choices that keep the frame visible; they are
   not source coordinates.
-- 사용한다 stops with an explicit notice. The effects at `0x2E0E6..0x2E833` are
-  not restored: class changes and promotions, attack and confusion items,
-  recovery, morale and the 0x21 item. The item stays held and the unit keeps its
-  action.
 - The command windows use the native panel, not the `0x3310` window pixels, and
   the unit walk and attack animations are not played.
 - A discarded item leaves the native list at once. The source list is built once

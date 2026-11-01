@@ -44,7 +44,8 @@ slots, because input files address units by slot.
 
 Battle input shapes are `{kind:"battle-move",slot,x,y}`,
 `{kind:"battle-attack",slot,target}`, `{kind:"battle-strategy",slot,ability}`
-with optional `target`, `{kind:"battle-wait",slot}` and
+with optional `target`, `{kind:"battle-item",slot,item}` with optional `target`,
+`{kind:"battle-wait",slot}` and
 `{kind:"battle-end-turn"}`. Slot identities and coordinates remain caller
 inputs. Runtime geometry, range, available abilities, costs and original
 phase state decide whether each operation is legal.

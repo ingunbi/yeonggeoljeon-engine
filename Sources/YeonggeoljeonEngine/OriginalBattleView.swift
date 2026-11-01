@@ -20,6 +20,7 @@ final class OriginalBattleView:NSView {
     private var strategySelection:StrategySelection?
     private var waitingForStrategy = false
     private var waitingForAttack = false
+    private var waitingForItem = false
     /// Battle system menu texts exported from the caller's MAIN. Without a
     /// campaign host the retreat/quit results have no outer dispatcher.
     var menuTexts:OriginalBattleMenuTexts? { didSet { needsDisplay = true } }
@@ -31,7 +32,7 @@ final class OriginalBattleView:NSView {
     var showsSlotNumbers = false
     private var message = "클릭: 부대 선택·이동 / 오른쪽 클릭·Esc: 취소, 기능 메뉴 / Return: 턴 종료 / 방향키·휠: 지도 이동"
     /// Steps of MAIN's unit command routine (2D9D4), one at a time.
-    private enum Phase:Equatable { case idle,moving(Int),command(Int),attackTarget(Int),giveTarget(Int,item:Int) }
+    private enum Phase:Equatable { case idle,moving(Int),command(Int),attackTarget(Int),giveTarget(Int,item:Int),itemTarget(Int,item:Int) }
     private var phase = Phase.idle
     /// A unit whose move range stays shown behind its refusal (MAIN30F5A).
     private var previewSlot:Int?
@@ -68,6 +69,7 @@ final class OriginalBattleView:NSView {
         try flow.resumeSourceFlow()
         if waitingForStrategy,let result = flow.lastStrategy {showStrategyResult(result);waitingForStrategy = false}
         if waitingForAttack,let result = flow.lastAttack {showAttackResult(result);waitingForAttack = false}
+        if waitingForItem,let result = flow.lastItem {waitingForItem = false;finishItem(result)}
         needsDisplay = true
     }
     private var canInput:Bool {flow.acceptsManualInput && (inputReady?() ?? true)}
@@ -261,13 +263,128 @@ final class OriginalBattleView:NSView {
             self.needsDisplay = true
         },behind:[commandMenu(slot) { _ in },itemActionMenu(slot) { _ in }].compactMap { $0 })
     }
+    private func itemText(_ key:String) -> String { style.commands?.itemMessages[key] ?? key }
+    /// The source format strings take their %s arguments in order.
+    private func filled(item key:String,_ values:String...) -> String {
+        values.reduce(itemText(key)) { text,value in
+            guard let range = text.range(of:"%s") else { return text }
+            return text.replacingCharacters(in:range,with:value)
+        }
+    }
+    private func say(_ text:String,then done:@escaping () -> Void = { }) {
+        overlay.show(CanvasNotice(speaker:"",text:text,portrait:nil,onDismiss:done))
+    }
+    private func kindLabel(_ kind:Int) -> String { style.commands?.kindLabels[kind] ?? String(kind) }
+    private func className(_ id:Int) -> String { style.commands?.classNames[id] ?? String(id) }
+    /// MAIN2E0E6: each group asks or announces before its picker or effect.
+    private func beginItemUse(_ slot:Int,item:Int) throws {
+        let again:() -> Void = { [weak self] in self?.openItemList(slot,action:0) }
+        let pick:() -> Void = { [weak self] in self?.beginItemTarget(slot,item:item) }
+        let use = OriginalItemUse.of(item)
+        switch use {
+        case .unusable: say(itemText("unusable"),then:again)
+        case .classChange(let target):
+            try confirmClassChange(slot,item:item,use:use,prompt:"classPrompt",target:target)
+        case .promotion(let required,_):
+            try confirmClassChange(slot,item:item,use:use,prompt:"promotePrompt",target:required+1)
+        case .attack(let family,_):
+            if family == 0 && session.combat.strategyEnvironmentLookup[Int(session.turns.weatherIndex)] == 2 { say(itemText("rainFire"),then:again);return }
+            say(filled(item:"attackWith",style.commands?.familyLabels[family] ?? String(family)),then:pick)
+        case .confuse: say(itemText("confuseEnemy"),then:pick)
+        case .recovery(let kind,_): say(filled(item:"recoverKind",kindLabel(kind)),then:pick)
+        case .areaRecovery(let kind,_):
+            yesNo(filled(item:"areaPrompt",kindLabel(kind))) { [weak self] yes in
+                guard let self = self else { return }
+                if yes { self.performItem(slot,item:item,target:nil) } else { again() }
+            }
+        case .bomb: say(itemText("bombAttack"),then:pick)
+        }
+    }
+    private func confirmClassChange(_ slot:Int,item:Int,use:OriginalItemUse,prompt:String,target:Int) throws {
+        if let refusal = try OriginalItemOperation.classRefusal(in:session,userSlot:slot,use:use) {
+            say(itemText(refusal)) { [weak self] in self?.openItemList(slot,action:0) };return
+        }
+        yesNo(filled(item:prompt,className(target))) { [weak self] yes in
+            guard let self = self else { return }
+            if yes { self.performItem(slot,item:item,target:nil) } else { self.openItemList(slot,action:0) }
+        }
+    }
+    private func itemCells(_ slot:Int,_ use:OriginalItemUse) throws -> Set<GridPoint> {
+        guard let raw = use.rangeCode else { return [] }
+        let value = try actor(slot)
+        var cells = Set(try OriginalAI.rangeCells(profile:session.movement,board:value.board,point:value.actor.position,raw:raw))
+        if use.targetsFriends { cells.insert(value.actor.position) }
+        return cells
+    }
+    /// MAIN29B68: with no enemy in range the picker refuses and returns.
+    private func beginItemTarget(_ slot:Int,item:Int) {
+        do {
+            let use = OriginalItemUse.of(item)
+            guard try !OriginalItemOperation.targetSlots(in:session,userSlot:slot,use:use).isEmpty else {
+                say(refusal(use.targetsFriends ? "noAllyInRange" : "noEnemyInRange")) { [weak self] in self?.openItemList(slot,action:0) }
+                return
+            }
+            phase = .itemTarget(slot,item:item)
+            message = "\(itemName(item))의 대상을 클릭하세요. 오른쪽 클릭·Esc: 취소";needsDisplay = true
+        } catch { message = "\(error)";openItemList(slot,action:0) }
+    }
+    private func pickItemTarget(_ slot:Int,item:Int,point:GridPoint,target:OriginalLiveUnit?) throws {
+        let use = OriginalItemUse.of(item)
+        guard try itemCells(slot,use).contains(point) else { say(refusal(use.targetsFriends ? "outOfItemRange" : "outOfAttackRange"));return }
+        guard let target = target else { return }
+        if use.targetsFriends,target.enemy { say(refusal("enemyUnit"));return }
+        if !use.targetsFriends,!target.enemy { say(refusal("cannotAttackAlly"));return }
+        // The source refuses after the pick and before any consumption.
+        if let rejection = try OriginalItemOperation.begin(in:session,userSlot:slot,item:item,target:target.slot).execution?.rejection {
+            say(rejectionText(rejection,use)) { [weak self] in self?.openItemList(slot,action:0) };return
+        }
+        let name = try session.people.person(target.person).name
+        let proceed:() -> Void = { [weak self] in self?.performItem(slot,item:item,target:target.slot) }
+        switch use {
+        case .attack: say(filled(item:"usedItem",itemName(item)),then:proceed)
+        case .recovery(let kind,_): say(filled(item:"recoveryLine",name,kindLabel(kind),itemText("raised")),then:proceed)
+        case .bomb: say(itemText("bombThrow"),then:proceed)
+        default: proceed()
+        }
+    }
+    private func rejectionText(_ key:String,_ use:OriginalItemUse) -> String {
+        if key == "terrain",case .attack(let family,_) = use { return style.commands?.terrainRefusals[family] ?? key }
+        return itemText(key)
+    }
+    private func performItem(_ slot:Int,item:Int,target:Int?) {
+        do {
+            if let result = try flow.manualItem(slot,item:item,target:target) { finishItem(result) }
+            else { waitingForItem = true;resetCommand();message = "도구의 퇴장 대사·이벤트가 끝나기를 기다립니다." }
+        } catch { message = "\(error)";openItemList(slot,action:0) }
+        needsDisplay = true
+    }
+    /// MAIN2E807: a completed use ends the action; a refusal returns to the list.
+    private func finishItem(_ result:OriginalItemExecution) {
+        guard result.completed else {
+            let use = OriginalItemUse.of(result.item)
+            say(rejectionText(result.rejection ?? "unusable",use)) { [weak self] in self?.openItemList(result.userSlot,action:0) }
+            return
+        }
+        resetCommand()
+        let user = session.units[result.userSlot].flatMap { try? session.people.person($0.person).name } ?? ""
+        let name:(OriginalStrategyTargetEffect) -> String = { [session] in (try? session.people.person($0.person).name) ?? "" }
+        var lines:[String] = []
+        let use = OriginalItemUse.of(result.item)
+        switch use {
+        case .classChange(let target): lines.append(filled(item:"classDone",user,className(target)))
+        case .promotion(let required,_): lines.append(filled(item:"promoteDone",user,className(required+1)))
+        case .confuse: lines = result.targets.map { filled(item:"becameConfused",name($0)) }
+        case .areaRecovery(let kind,_): lines.append(filled(item:"areaDone",itemText("friendlySide"),kindLabel(kind)))
+        default: break
+        }
+        let troops = result.targets.compactMap { $0.damage?.damage ?? $0.quantity }.reduce(0,+)
+        message = troops > 0 ? "\(itemName(result.item)): 피해 \(troops)" : "\(itemName(result.item))을(를) 사용했습니다."
+        if !lines.isEmpty { say(lines.joined(separator:"\n")) }
+    }
     private func runItemAction(_ action:Int,item:Int,_ slot:Int) throws {
         let again:() -> Void = { [weak self] in self?.openItemList(slot,action:action) }
         switch action {
-        case 0:
-            // MAIN2E0E6..2E833 owns the item effects, which are not restored.
-            // The item stays held and the unit keeps its action.
-            overlay.show(CanvasNotice(speaker:"",text:"\(itemName(item))의 사용 효과는 아직 복원하지 않았습니다.",portrait:nil,onDismiss:again))
+        case 0: try beginItemUse(slot,item:item)
         case 1:
             phase = .giveTarget(slot,item:item);message = "\(itemName(item))을(를) 건넬 아군을 클릭하세요. 오른쪽 클릭·Esc: 취소"
         case 2:
@@ -401,6 +518,15 @@ final class OriginalBattleView:NSView {
         }
         if case .giveTarget(let slot,_) = phase,let cells = try? giveCells(slot) {
             for point in cells { NSColor(calibratedRed:0.1,green:1,blue:0.7,alpha:0.3).setFill();rect(point).fill() }
+        }
+        if case .itemTarget(let slot,let item) = phase {
+            let use = OriginalItemUse.of(item)
+            if let cells = try? itemCells(slot,use) {
+                for point in cells {
+                    (use.targetsFriends ? NSColor(calibratedRed:0.1,green:1,blue:0.7,alpha:0.3) : NSColor(calibratedRed:1,green:0.25,blue:0.2,alpha:0.3)).setFill()
+                    rect(point).fill()
+                }
+            }
         }
         let strategyTargets = strategySelection.flatMap { choice in selected.flatMap {try? legalStrategyTargets(choice.abilityID,casterSlot:$0)} } ?? []
         for slot in strategyTargets {
@@ -604,6 +730,7 @@ final class OriginalBattleView:NSView {
             } else {
                 overlay.show(CanvasNotice(speaker:"",text:refusal("inventoryFull"),portrait:nil) { [weak self] in self?.openItemList(slot,action:1) })
             }
+        case .itemTarget(let slot,let item): try pickItemTarget(slot,item:item,point:point,target:target)
         case .command: break
         }
     }
@@ -614,6 +741,7 @@ final class OriginalBattleView:NSView {
         case .moving: resetCommand()
         case .attackTarget(let slot): openCommand(slot)
         case .giveTarget(let slot,_): openItemList(slot,action:1)
+        case .itemTarget(let slot,_): openItemList(slot,action:0)
         case .idle: openFunctionMenu()
         case .command: break
         }

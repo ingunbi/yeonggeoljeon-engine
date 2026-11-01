@@ -20,9 +20,12 @@ final class OriginalBattleFlow {
     private var attackIsNative = false
     private var attackRetirementAcknowledgement:OriginalRetirementNotice?
     private(set) var lastAttack:OriginalStrikeExchange?
-    var canLeaveBattle:Bool { session.turns.result != 0 && !suspended && attackOperation == nil && strategyOperation == nil }
+    private var itemOperation:OriginalItemOperation?
+    private var itemRetirementAcknowledgement:OriginalRetirementNotice?
+    private(set) var lastItem:OriginalItemExecution?
+    var canLeaveBattle:Bool { session.turns.result != 0 && !suspended && attackOperation == nil && strategyOperation == nil && itemOperation == nil }
     init(session:OriginalBattleSession) { self.session = session }
-    var acceptsManualInput:Bool { !suspended && attackOperation == nil && strategyOperation == nil && session.turns.stage == .manualFriendly && session.turns.result == 0 }
+    var acceptsManualInput:Bool { !suspended && attackOperation == nil && strategyOperation == nil && itemOperation == nil && session.turns.stage == .manualFriendly && session.turns.result == 0 }
     @discardableResult
     func manualAttack(_ slot:Int,target:Int) throws -> OriginalStrikeExchange? {
         guard acceptsManualInput else { throw BattleError.illegalAction("Original source phase is not accepting manual input") }
@@ -33,6 +36,15 @@ final class OriginalBattleFlow {
     func manualWait(_ slot:Int) throws {
         guard acceptsManualInput else { throw BattleError.illegalAction("Original source phase is not accepting manual input") }
         _ = try session.waitManually(slot);try finishManualAction(slot)
+    }
+    /// MAIN2E0E6..2E833. A source refusal finishes without consuming the item
+    /// or the unit's action. Nil means retirement dialogue is pending.
+    @discardableResult
+    func manualItem(_ slot:Int,item:Int,target:Int? = nil,confirmed:Bool = true) throws -> OriginalItemExecution? {
+        guard acceptsManualInput else { throw BattleError.illegalAction("Original source phase is not accepting manual input") }
+        _ = try session.requireManualUnit(slot)
+        itemOperation = try OriginalItemOperation.begin(in:session,userSlot:slot,item:item,target:target,confirmed:confirmed)
+        lastItem = nil;try drivePhases();return lastItem
     }
     /// MAIN2DF80..2E01B: a completed gift ends the unit's action like a wait.
     /// False leaves the unit able to act because the receiver is full.
@@ -104,6 +116,26 @@ final class OriginalBattleFlow {
         }
         return true
     }
+    private func advanceItem() throws -> Bool {
+        while var operation = itemOperation {
+            if let notice = itemRetirementAcknowledgement {
+                guard try objectives() else { return false }
+                try operation.resumeRetirement(notice);itemRetirementAcknowledgement = nil
+            }
+            let step = try operation.advance(in:session);itemOperation = operation
+            switch step {
+            case .target:continue
+            case .retirement(let notice):
+                itemRetirementAcknowledgement = notice
+                guard try objectives() else { return false }
+            case .finished(let result):
+                lastItem = result;itemOperation = nil
+                if result.completed { pendingManualSlot = result.userSlot }
+                return true
+            }
+        }
+        return true
+    }
     private func advanceAttack() throws -> Bool {
         while var operation = attackOperation {
             if let notice = attackRetirementAcknowledgement {
@@ -133,6 +165,7 @@ final class OriginalBattleFlow {
         guard !suspended else { return }
         if attackOperation != nil { guard try advanceAttack() else { return } }
         if strategyOperation != nil { guard try advanceStrategy() else { return } }
+        if itemOperation != nil { guard try advanceItem() else { return } }
         if pendingManualSlot != nil {
             guard try objectives() else { return }
             let slot = pendingManualSlot!;pendingManualSlot = nil
