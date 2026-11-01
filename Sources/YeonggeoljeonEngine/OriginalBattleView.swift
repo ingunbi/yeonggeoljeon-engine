@@ -35,7 +35,9 @@ final class OriginalBattleView:NSView {
     /// Live play shows the phase opening; replays drive the flow directly.
     var announcesPhases = false
     private var announcedRound:Int?
-    private var message = "클릭: 부대 선택·이동 / 오른쪽 클릭·Esc: 취소, 기능 메뉴 / Return: 턴 종료 / 방향키·휠: 지도 이동"
+    /// A hint or result. It fades after a few seconds unless a step waits on it.
+    private var message = "" { didSet { messageTime = Date() } }
+    private var messageTime = Date()
     /// Steps of MAIN's unit command routine (2D9D4), one at a time.
     private enum Phase:Equatable { case idle,moving(Int),command(Int),attackTarget(Int),giveTarget(Int,item:Int),itemTarget(Int,item:Int) }
     private var phase = Phase.idle
@@ -59,7 +61,7 @@ final class OriginalBattleView:NSView {
         self.session = session;self.background = background;self.sprites = sprites;self.style = style
         flow = OriginalBattleFlow(session:session)
         camera = OriginalBattleCamera(width:session.width,height:session.height,layout:style.layout)
-        super.init(frame:CGRect(x:0,y:0,width:960,height:640))
+        super.init(frame:CGRect(x:0,y:0,width:960,height:600))
         autoresizingMask = [.width,.height]
         overlay.frame = bounds;overlay.autoresizingMask = [.width,.height];overlay.viewport = style.layout.viewportRect
         overlay.restoreFocus = { [weak self] in
@@ -78,16 +80,14 @@ final class OriginalBattleView:NSView {
         announcePhase();needsDisplay = true
     }
     private var canInput:Bool {flow.acceptsManualInput && (inputReady?() ?? true)}
-    // Canvas mapping matches the campaign view: fit 640×400 above a 40pt status bar.
-    private var scale:CGFloat { max(0.1,min(bounds.width/640,(bounds.height-40)/400)) }
-    private var canvasOrigin:CGPoint { CGPoint(x:(bounds.width-640*scale)/2,y:0) }
+    private var scale:CGFloat { CanvasGeometry(bounds:bounds).scale }
+    private var canvasOrigin:CGPoint { CanvasGeometry(bounds:bounds).origin }
     private func canvasPoint(_ event:NSEvent) -> CGPoint {
         let p = convert(event.locationInWindow,from:nil)
         return CGPoint(x:(p.x-canvasOrigin.x)/scale,y:(p.y-canvasOrigin.y)/scale)
     }
     private func yesNo(_ text:String,_ answer:@escaping (Bool) -> Void) {
-        overlay.show(CanvasMenu(title:text,options:[.init(label:"예",image:style.yes),.init(label:"아니요",image:style.no)],
-                                horizontal:true) { index in answer(index == 0) })
+        overlay.show(CanvasMenu(title:text,options:[.init(label:"예"),.init(label:"아니요")],horizontal:true) { index in answer(index == 0) })
     }
     private func notice(_ text:String) {
         overlay.show(CanvasNotice(speaker:"",text:text,portrait:nil) { })
@@ -120,7 +120,7 @@ final class OriginalBattleView:NSView {
             try flow.finishManual()
         }
         else if !suspended { try flow.start() }
-        message = "복원된 원작 순서로 턴을 진행했습니다."
+        message = ""
         announcePhase()
     }
     /// MAIN27876..27A3A. The opening view states the turn limit; the menu
@@ -256,7 +256,7 @@ final class OriginalBattleView:NSView {
             say(refusal("noStrategy")) { [weak self] in self?.openCommand(slot) }
             return
         }
-        let options = rows.map { CanvasMenu.Option(label:"\(strategyTitle($0.ability))  \($0.cost)",enabled:$0.enabled) }
+        let options = rows.map { CanvasMenu.Option(label:strategyTitle($0.ability),enabled:$0.enabled,value:"\($0.cost)") }
         overlay.show(CanvasMenu(title:"",options:options,cancellable:true,anchor:windowOrigin(slot,depth:1)) { [weak self] index in
             guard let self = self else { return }
             guard let index = index else { self.openCommand(slot);return }
@@ -652,9 +652,11 @@ final class OriginalBattleView:NSView {
         let maximum = (try? OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:session.combat)) ?? 0
         return "\(person.name) · 병력 \(person.rawTroops)/\(maximum) · Lv \(person.level) EXP \(person.experience) · 사기 \(unit.morale) · MP \(unit.mp)"
     }
-    private func drawStatus() {
-        let top = 400*scale+2,width = bounds.width-24
-        let turn = "\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(session.turns.weatherIndex)"
+    /// Turn, the selected unit and any hint float over the map window.
+    private func drawStatus(_ context:CGContext) {
+        let map = layoutFacts.viewportRect,width = map.width-32
+        CanvasTheme.chip("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(session.turns.weatherIndex)",
+                         at:CGPoint(x:map.minX+8,y:map.minY+18),centered:false,maximumWidth:width,in:context)
         var detail = (inspected ?? selected).flatMap(unitDetails) ?? ""
         if let choice = strategySelection {
             if choice.abilityID >= 30 {detail = "범위 대상 · Enter: 확인 · Esc: 취소"}
@@ -662,10 +664,14 @@ final class OriginalBattleView:NSView {
                 detail = "대상: \(person.name) · 병력 \(person.rawTroops) · 사기 \(unit.morale) · 화살표/Tab: 변경 · Enter: 실행 · Esc: 취소"
             }
         }
-        if !session.objectiveEvents.isEmpty && onRetirement == nil { detail = "원작 목표 이벤트 \(session.objectiveEvents.map(\.kind)) 발생 · 캠페인에 적용하지 않은 독립 검증입니다." }
-        text(externalStatus ?? message,in:CGRect(x:12,y:top,width:width-150,height:18),color:.lightGray,size:12)
-        text(turn,in:CGRect(x:bounds.width-160,y:top,width:148,height:18),color:.white,size:12,alignment:.right)
-        text(detail,in:CGRect(x:12,y:top+18,width:width,height:18),color:.white,size:12)
+        if !session.objectiveEvents.isEmpty && onRetirement == nil { detail = "원작 목표 이벤트 \(session.objectiveEvents.map(\.kind)) 발생 · 캠페인에 적용하지 않음" }
+        var y = map.maxY-18
+        if !detail.isEmpty,!overlay.active {
+            CanvasTheme.chip(detail,at:CGPoint(x:map.midX,y:y),maximumWidth:width,in:context);y -= 30
+        }
+        let waits = phase != .idle || strategySelection != nil
+        let note = externalStatus ?? (waits || Date().timeIntervalSince(messageTime) < 4 ? message : "")
+        if !note.isEmpty { CanvasTheme.chip(note,at:CGPoint(x:map.midX,y:y),maximumWidth:width,in:context) }
     }
     override func draw(_ dirtyRect:NSRect) {
         updateCamera()
@@ -674,9 +680,8 @@ final class OriginalBattleView:NSView {
         context.saveGState()
         context.translateBy(x:canvasOrigin.x,y:canvasOrigin.y);context.scaleBy(x:scale,y:scale)
         context.interpolationQuality = .none
-        drawFrame(context);drawField(context);drawList(context);drawMinimap(context)
+        drawFrame(context);drawField(context);drawList(context);drawMinimap(context);drawStatus(context)
         context.restoreGState()
-        drawStatus()
     }
     private func clickPanel(_ point:CGPoint) -> Bool {
         let facts = layoutFacts

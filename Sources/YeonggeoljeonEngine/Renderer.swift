@@ -129,7 +129,7 @@ final class Renderer {
         (value as NSString).draw(in:CGRect(x:CGFloat(origin[0]),y:CGFloat(origin[1])-1,width:width,height:18),
             withAttributes:[.font:font,.foregroundColor:NSColor(white:0.92,alpha:1),.paragraphStyle:paragraph])
     }
-    func render(_ runtime: Runtime, evidence: Bool = false, screen: OriginalFieldScreenState? = nil) throws -> RenderedFrame {
+    func render(_ runtime: Runtime, evidence: Bool = false, screen: OriginalFieldScreenState? = nil, dialogue showsDialogue: Bool = true) throws -> RenderedFrame {
         guard let context = CGContext(data:nil,width:640,height:400,bitsPerComponent:8,bytesPerRow:640*4,
                                       space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue),
               let pixels = context.data else { throw EngineError.invalid("Canvas allocation failed") }
@@ -220,7 +220,7 @@ final class Renderer {
         if runtime.mode == "title" && data.resources.title == nil {
             text("영걸전 연구 엔진",rect:CGRect(x:90,y:135,width:470,height:40),size:28)
             text("원작 타이틀 자료를 읽을 수 없습니다.\nEnter 또는 클릭으로 복원된 첫 장면을 시작합니다.",rect:CGRect(x:90,y:195,width:470,height:90),size:16)
-        } else if let dialogue = runtime.dialogue, framed != nil {
+        } else if showsDialogue, let dialogue = runtime.dialogue, framed != nil {
             // The original dialogue window primitives are not restored. This
             // native panel stays inside the viewport so the frame stays visible.
             let panel = CGRect(x:24,y:232,width:496,height:96)
@@ -235,7 +235,7 @@ final class Renderer {
             }
             if !dialogue.speaker.isEmpty { text(dialogue.speaker,rect:CGRect(x:textX,y:238,width:400,height:20),size:14,color:NSColor(red:1,green:0.85,blue:0.45,alpha:1)) }
             text(dialogue.text,rect:CGRect(x:textX,y:dialogue.speaker.isEmpty ? 240 : 258,width:512-textX,height:dialogue.speaker.isEmpty ? 84 : 66))
-        } else if let dialogue = runtime.dialogue {
+        } else if showsDialogue, let dialogue = runtime.dialogue {
             context.setFillColor(CGColor(gray:0.055,alpha:1)); context.fill(CGRect(x:16,y:337,width:608,height:63))
             context.setStrokeColor(CGColor(gray:0.65,alpha:1)); context.setLineWidth(1)
             context.stroke(CGRect(x:16.5,y:337.5,width:607,height:62))

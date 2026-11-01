@@ -130,6 +130,11 @@ final class OriginalCampaignHost {
         partySelection == nil && pendingTurnHook == nil && retirement == nil && interpreterReturn == nil && frameworkReturn == nil && explorationInput == nil &&
         shop == nil && cityEntry == nil && controllerIdle && !controllerInvocationPending && vm.state.currentRecordID == nil
     }
+    /// What a player needs to read. Script progress stays in `status`.
+    var playerStatus:String? {
+        if let ending = ending,case .unsupported = ending.output { return status }
+        return frameworkReturn?.outcome == .quit || interpreterReturn != nil || failure != nil ? status : nil
+    }
     var status:String {
         if let ending = ending {
             if case .unsupported(let frontier) = ending.output { return "엔딩 미복원 경계: \(frontier.resource) @\(frontier.offset) · \(frontier.reason)" }

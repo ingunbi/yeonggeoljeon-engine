@@ -11,6 +11,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     /// In-game selectors and waiting lines drawn above the stage and battle.
     private let overlay = CanvasOverlayView()
     private var imageCache:[String:CGImage] = [:]
+    /// Each shop list remembers its row while the visit moves between them.
+    private var shopCursor:[OriginalShopList:Int] = [:]
     override var isFlipped:Bool { true }
     override var acceptsFirstResponder:Bool { true }
     convenience init(data:DataSet) throws {
@@ -21,7 +23,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     init(host:OriginalCampaignHost) throws {
         self.host = host
         renderer = try Renderer(host.data)
-        super.init(frame:CGRect(x:0,y:0,width:960,height:640))
+        super.init(frame:CGRect(x:0,y:0,width:960,height:600))
         overlay.frame = bounds;overlay.autoresizingMask = [.width,.height];addSubview(overlay)
         overlay.restoreFocus = { [weak self] in
             guard let self = self else { return }
@@ -42,14 +44,10 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         guard let person = person,let value = host.data.resources.portraits?[String(person)] else { return nil }
         return image(Renderer.portraitPath(value,palette:palette))
     }
-    /// The two-button selector shows Yes before No (MAIN164A9..165C4) with
-    /// MARK member0 pictures; the answer is the source value (Yes1, No0).
+    /// The two-button selector shows Yes before No (MAIN164A9..165C4); the
+    /// answer is the source value (Yes1, No0).
     private func yesNo(_ text:String,_ answer:@escaping (Bool) -> Void) {
-        let palette = host.stage.palette
-        let yes = image(host.story.choiceButtonImage(value:1,palette:palette))
-        let no = image(host.story.choiceButtonImage(value:0,palette:palette))
-        overlay.show(CanvasMenu(title:text,options:[.init(label:"예",image:yes),.init(label:"아니요",image:no)],
-                                horizontal:true) { index in answer(index == 0) })
+        overlay.show(CanvasMenu(title:text,options:[.init(label:"예"),.init(label:"아니요")],horizontal:true) { index in answer(index == 0) })
     }
     /// Native saves live outside the app bundle and the original GAME folder.
     static func savesDirectory() throws -> URL {
@@ -69,7 +67,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     required init?(coder:NSCoder) { fatalError("init(coder:) is not supported") }
     func stop() { timer?.invalidate();timer = nil }
     private func tick() {
-        battleView?.externalStatus = errorText ?? inputNotice ?? host.notice
+        battleView?.externalStatus = errorText ?? inputNotice ?? host.notice ?? host.playerStatus
         guard !overlay.active,errorText == nil else { return }
         do {
             try host.advance(microseconds:16_667)
@@ -83,7 +81,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             else if host.shop != nil { presentShop() }
             else if let entry = host.cityEntry { yesNo(entry.question) { [weak self] enter in self?.act { try self?.host.answerCityEntry(enter) } } }
             else if host.retirementPresentation != nil { presentRetirement() }
-            else if host.stage.palette == 3,host.stage.dialogue != nil { presentBattleDialogue() }
+            else if host.stage.dialogue != nil { presentDialogue() }
         } catch { errorText = "\(error)";needsDisplay = true }
     }
     private func act(_ body:() throws -> Void) {
@@ -136,57 +134,76 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         }
         battleView?.needsDisplay = true
     }
+    private static let pictureViewport = CGRect(x:16,y:16,width:608,height:368)
     private func hideBattle() { battleView?.isHidden = true;overlay.viewport = CanvasOverlayView.fieldViewport }
-    private func presentBattleDialogue() {
+    /// A framed map keeps its window; a full picture gives the line the whole canvas.
+    private func presentDialogue() {
         guard let dialogue = host.stage.dialogue else { return }
+        if host.stage.palette != 3 { overlay.viewport = host.fieldScreenState() != nil ? CanvasOverlayView.fieldViewport : Self.pictureViewport }
         overlay.show(CanvasNotice(speaker:dialogue.speaker,text:dialogue.text,portrait:portrait(dialogue.person,palette:host.stage.palette)) { [weak self] in
             guard let self = self else { return }
             self.act { try self.host.acknowledge() }
         })
     }
-    /// One blocking call of the shop routine. The merchant's line stays up
-    /// behind lists and questions (speech modes C0 and 80).
+    /// A visit stays in one window. Each blocking call of the source routine
+    /// changes the merchant's line, the list and what answers it.
     private func presentShop() {
-        guard let prompt = host.shopPrompt else { return }
-        let catalog = host.shopCatalog,person = catalog.merchant.person,palette = host.stage.palette
-        func reply(_ value:Int?) {
-            act { try host.answerShop(value) }
-            if host.shop != nil,errorText == nil { presentShop() }
-        }
-        var line = CanvasNotice(speaker:(try? host.people.person(person).name) ?? "",text:prompt.text,portrait:portrait(person,palette:palette)) {}
-        let rows = prompt.rows.map { CanvasMenu.Option(label:$0) }
+        guard let shop = host.shop,let prompt = host.shopPrompt,let money = host.money else { return }
+        let catalog = host.shopCatalog,person = catalog.merchant.person,list = shop.list
+        let rows = (try? shopRows(shop,money:money)) ?? []
+        let mode:CanvasSheet.Mode
+        let hint:String
         switch prompt.kind {
-        case .say:
-            line.timeout = 2;line.onDismiss = { reply(0) }
-            overlay.show(line)
-        case .top:
-            overlay.show(CanvasMenu(title:"",options:rows,cancellable:true,anchor:CGPoint(x:catalog.windows.top.x,y:catalog.windows.top.y)) { reply($0) },message:line)
-        case .list:
-            let list = catalog.windows.list
-            overlay.show(CanvasMenu(title:"",options:rows,cancellable:true,anchor:CGPoint(x:list.x,y:list.y),visibleRows:list.rows) { reply($0) },message:line)
-        case .ask:
-            let yes = image(host.story.choiceButtonImage(value:1,palette:palette)),no = image(host.story.choiceButtonImage(value:0,palette:palette))
-            // The engine's line sits above a source window it would cover.
-            let panels = shopPanels(prompt)
-            line.atTop = !panels.isEmpty
-            let place = CGPoint(x:overlay.viewport.maxX-192,y:line.atTop ? overlay.viewport.minY+46 : overlay.viewport.maxY-66)
-            overlay.show(CanvasMenu(title:"",options:[.init(label:"예",image:yes),.init(label:"아니요",image:no)],horizontal:true,anchor:place) { reply($0 == 0 ? 1 : 0) },
-                         panels:panels,message:line)
+        case .say:mode = .timed;hint = ""
+        case .ask:mode = .buttons;hint = "←→ 이동 · ↩ 확인 · esc 아니요"
+        case .top:mode = .list;hint = "↑↓ 이동 · ↩ 선택 · esc 나가기"
+        case .list:mode = .list;hint = "↑↓ 이동 · ↩ 선택 · esc 뒤로"
         }
+        // The source breaks lines for its own window width.
+        let line = prompt.text.split(separator:"\n").map { $0.trimmingCharacters(in:.whitespaces) }.joined(separator:" ")
+        overlay.show(CanvasSheet(portrait:portrait(person,palette:host.stage.palette),speaker:(try? host.people.person(person).name) ?? "",
+            line:line,badge:("소지금","\(money)"),rows:rows,selected:min(shopCursor[list] ?? 0,max(0,rows.count-1)),mode:mode,
+            buttons:prompt.kind == .ask ? ["예","아니요"] : [],hint:hint) { [weak self] value in
+            guard let self = self else { return }
+            if prompt.kind == .top || prompt.kind == .list,let value = value { self.shopCursor[list] = value }
+            let answer = prompt.kind == .ask ? (value == 0 ? 1 : 0) : value
+            self.act { try self.host.answerShop(answer) }
+            if self.host.shop == nil { self.shopCursor.removeAll() }
+            else if self.errorText == nil { self.presentShop() }
+        })
     }
-    /// The item window (MAIN36244) or the receiver's slots (MAIN3668E).
-    private func shopPanels(_ prompt:OriginalShopPrompt) -> [CanvasPanel] {
-        let windows = host.shopCatalog.windows
-        if let item = prompt.item,let facts = host.source.combat.items.first(where:{$0.id == item}) {
-            let shape = windows.description
-            return [CanvasPanel(rect:CGRect(x:shape.x,y:shape.y,width:shape.width,height:shape.height),heading:facts.name ?? "",text:facts.description ?? "")]
+    private func itemName(_ item:Int) -> String { host.source.combat.items.first{$0.id == item}?.name ?? "" }
+    private func itemDetail(_ item:Int,facts:[(label:String,value:String)]) -> CanvasSheet.Detail {
+        .init(heading:itemName(item),body:host.source.combat.items.first{$0.id == item}?.description ?? "",facts:facts)
+    }
+    private func shopRows(_ shop:OriginalShopOperation,money:Int) throws -> [CanvasSheet.Row] {
+        let catalog = host.shopCatalog
+        func held(_ id:Int) throws -> [Int] { try host.people.person(id).itemIDs.filter{$0 != 255} }
+        switch shop.list {
+        case .top:
+            let goods = shop.stock.map { (label:itemName($0),value:"\(catalog.buyingPrice($0))") }
+            let owners = try OriginalShopOperation.customers(host.people).prefix(8).map { (label:try host.people.person($0).name,value:"\(try held($0).count) / 8") }
+            return [.init(label:catalog.menu[0],detail:.init(heading:catalog.menu[0],facts:goods)),
+                    .init(label:catalog.menu[1],detail:.init(heading:catalog.menu[1],facts:owners))]
+        case .stock:
+            return shop.stock.map { item in
+                let price = catalog.buyingPrice(item)
+                return .init(label:itemName(item),value:"\(price)",warns:price > money,
+                             detail:itemDetail(item,facts:[("구매가","\(price)"),("구매 후",price > money ? "-" : "\(money-price)")]))
+            }
+        case .customers:
+            return try OriginalShopOperation.customers(host.people).map { id in
+                let items = try held(id),name = try host.people.person(id).name
+                return .init(label:name,value:"\(items.count) / 8",warns:shop.receiving != nil && items.count == 8,
+                             detail:.init(heading:name,list:items.isEmpty ? [catalog.texts.noItems] : items.map(itemName)))
+            }
+        case .held(let person):
+            return try held(person).map { item in
+                let price = catalog.sellingPrice(item)
+                return .init(label:itemName(item),value:"\(price)",
+                             detail:itemDetail(item,facts:[("판매가","\(price)"),("판매 후","\(min(10000,money+price))")]))
+            }
         }
-        guard let person = prompt.inventory,let held = try? host.people.person(person).itemIDs else { return [] }
-        let shape = windows.inventory
-        let names = held.filter{$0 != 255}.map { item in host.source.combat.items.first{$0.id == item}?.name ?? "" }
-        return [CanvasPanel(rect:CGRect(x:shape.x,y:shape.y,width:shape.width,height:shape.height),
-                            rows:names.isEmpty ? [host.shopCatalog.texts.noItems] : names,
-                            rowOrigin:CGPoint(x:shape.textColumn*8,y:shape.firstRow),rowStep:CGFloat(shape.rowStep))]
     }
     private func presentRetirement() {
         guard let text = host.retirementText else { return }
@@ -202,7 +219,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         let chosen = Set(selection.selectedSlots.prefix(selection.capacity)),fixed = Set(selection.selectedSlots.prefix(selection.fixedCount))
         let rows = selection.candidates.compactMap { id in (try? host.people.person(id)).map { (id,$0) } }
         var options = rows.map { id,person in
-            CanvasMenu.Option(label:"\(person.name) · Lv \(person.level)",enabled:!fixed.contains(id),checked:chosen.contains(id))
+            CanvasMenu.Option(label:person.name,enabled:!fixed.contains(id),value:"Lv \(person.level)",checked:chosen.contains(id))
         }
         options.append(.init(label:"출전"))
         let status = footer ?? "남은 선택 \(selection.remaining) / 최대 \(selection.capacity)"
@@ -293,7 +310,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         let labels = host.framework?.fieldMenu?.items.map(\.text) ?? OriginalFieldMenuTexts.actions
         let options = labels.enumerated().map { CanvasMenu.Option(label:$0.element,
             enabled:["quit","load","save"].contains(OriginalFieldMenuTexts.actions[$0.offset])) }
-        overlay.show(CanvasMenu(title:"",options:options,cancellable:true) { [weak self] index in
+        let pointer = CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil))
+        overlay.show(CanvasMenu(title:"",options:options,cancellable:true,anchor:pointer) { [weak self] index in
             guard let self = self,let index = index else { return }
             self.fieldMenuChosen(OriginalFieldMenuTexts.actions[index])
         })
@@ -323,17 +341,14 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     override func draw(_ dirtyRect:NSRect) {
         NSColor.black.setFill();bounds.fill()
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        let scale = min(bounds.width/640,(bounds.height-40)/400)
+        let shape = CanvasGeometry(bounds:bounds)
         do {
-            let frame = try host.ending.map { try renderer.renderEnding($0) } ?? renderer.render(host.stage,screen:host.fieldScreenState())
-            Renderer.image(frame.image,in:CGRect(x:(bounds.width-640*scale)/2,y:0,width:640*scale,height:400*scale),context:context)
+            let frame = try host.ending.map { try renderer.renderEnding($0) } ?? renderer.render(host.stage,screen:host.fieldScreenState(),dialogue:false)
+            Renderer.image(frame.image,in:shape.rect,context:context)
         } catch { errorText = "\(error)" }
-        let text:String
-        if let error = errorText { text = error }
-        else if let notice = inputNotice ?? host.notice { text = notice }
-        else if let choice = host.choice { text = "원작 선택지 입력 대기 · \(choice.id)" }
-        else { text = host.status }
-        (text as NSString).draw(in:CGRect(x:12,y:bounds.height-35,width:bounds.width-24,height:32),withAttributes:[.font:NSFont.systemFont(ofSize:12),.foregroundColor:NSColor.lightGray])
+        // Only a state the player can act on or must know reaches the window.
+        guard let text = errorText ?? inputNotice ?? host.notice ?? host.playerStatus else { return }
+        CanvasTheme.chip(text,at:CGPoint(x:shape.rect.midX,y:shape.rect.maxY-30),maximumWidth:shape.rect.width-40,color:errorText == nil ? CanvasTheme.text : CanvasTheme.danger,in:context)
     }
     override func keyDown(with event:NSEvent) {
         if event.keyCode == 53 || host.frameworkReturn?.outcome == .quit { window?.performClose(nil);return }
@@ -354,9 +369,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         if !host.hasStarted { presentTitleMenu();needsDisplay = true;return }
         do {
             if host.explorationInputReady,[0,1,2].contains(host.vm.state.packedMap>>12) {
-                let scale = min(bounds.width/640,(bounds.height-40)/400)
-                let p = convert(event.locationInWindow,from:nil)
-                let x = (p.x-(bounds.width-640*scale)/2)/scale,y = p.y/scale,v = host.stage.viewport
+                let p = CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil))
+                let x = p.x,y = p.y,v = host.stage.viewport
                 if host.vm.state.packedMap>>12 == 1 {
                     let cities = host.exploration.cities.filter{$0.chapter == host.vm.state.chapter && $0.worldPositionKnown}
                     if let city = cities.first(where:{ city in

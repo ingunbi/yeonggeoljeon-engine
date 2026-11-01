@@ -8,6 +8,12 @@ func originalBattleScreenSelfTests() throws {
         guard condition else { throw EngineError.invalid("Original battle screen regression: \(message)") }
         checks += 1
     }
+    // The canvas fits the window and centres; a click maps back through the same numbers.
+    let sideBands = CanvasGeometry(bounds:CGRect(x:0,y:0,width:1200,height:600))
+    try check(sideBands.scale == 1.5 && sideBands.origin == CGPoint(x:120,y:0),"a wide window bands the sides")
+    let endBands = CanvasGeometry(bounds:CGRect(x:0,y:0,width:640,height:600))
+    try check(endBands.scale == 1 && endBands.origin == CGPoint(x:0,y:100),"a tall window bands the top and bottom")
+    try check(sideBands.canvas(CGPoint(x:270,y:150)) == CGPoint(x:100,y:100),"a view point maps to its canvas point")
     let layout = OriginalBattleLayout.source
     try check(layout.columns == 13 && layout.rows == 11,"the map window shows thirteen by eleven cells")
     // MAIN2898C..289C5 centres in eight-pixel steps.

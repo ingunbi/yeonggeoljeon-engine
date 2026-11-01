@@ -188,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     @objc func playOriginalCampaign() {
         guard let data = data else { return }
-        do { show(try OriginalCampaignView(data:data),title:"원작 캠페인 복원",size:NSSize(width:960,height:640)) }
+        do { show(try OriginalCampaignView(data:data),title:"원작 캠페인 복원",size:NSSize(width:960,height:600)) }
         catch { self.error(error) }
     }
     /// Native engine saves only; original MSAVE slots are not read.
@@ -196,7 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let data = data else { return }
         do {
             guard let host = try OriginalCampaignView.chooseResume(data:data) else { return }
-            show(try OriginalCampaignView(host:host),title:"원작 캠페인 복원 · 이어하기",size:NSSize(width:960,height:640))
+            show(try OriginalCampaignView(host:host),title:"원작 캠페인 복원 · 이어하기",size:NSSize(width:960,height:600))
         } catch { self.error(error) }
     }
     func showOriginalBattle(_ id:String) throws {

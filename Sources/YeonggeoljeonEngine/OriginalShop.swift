@@ -70,6 +70,9 @@ struct OriginalShopPrompt:Equatable {
     var inventory:Int? = nil
 }
 
+/// The list a step works on. Questions and refusals keep the list they came from.
+enum OriginalShopList:Hashable { case top,stock,customers,held(person:Int) }
+
 /// MAIN2CB4:3602 (0x36B42), its buying loop 0x362DA and its selling loop
 /// 0x367DC. Each case is one blocking call of the source routine; an answer
 /// is the value that call returned.
@@ -86,6 +89,21 @@ struct OriginalShopOperation {
     let itemName:(Int) -> String
     private(set) var phase = Phase.greeting
     var finished:Bool { phase == .finished }
+    var list:OriginalShopList {
+        switch phase {
+        case .greeting,.top,.farewell,.finished:return .top
+        case .buying,.buyConfirm,.shortMoney,.buyAgain:return .stock
+        case .receiver,.receiverFull,.receiverConfirm,.selling,.sellEmpty,.sellAgain:return .customers
+        case .sellItems(let person),.sellConfirm(let person,_):return .held(person:person)
+        }
+    }
+    /// The item a receiver is being chosen for.
+    var receiving:Int? {
+        switch phase {
+        case .receiver(let item),.receiverFull(let item),.receiverConfirm(let item,_):return item
+        default:return nil
+        }
+    }
 
     /// MAIN365B7..365D9: joined people of the player force, in person order.
     static func customers(_ people:OriginalPeople) throws -> [Int] {

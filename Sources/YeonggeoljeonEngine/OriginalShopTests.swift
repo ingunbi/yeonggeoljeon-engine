@@ -57,6 +57,25 @@ func originalShopSelfTests() throws {
     try shop.answer(0,people:cast,money:&money)
     try check(shop.finished && denied { _ = try shop.prompt(people:cast) },"the routine ends after the farewell")
 
+    // Every step keeps the list it came from, so a question can leave it on screen.
+    var lists = session(),funds = 1000
+    try check(lists.list == .top,"the greeting belongs to the top list")
+    try lists.answer(0,people:cast,money:&funds);try lists.answer(0,people:cast,money:&funds)
+    try check(lists.list == .stock && lists.receiving == nil,"buying works on the stock")
+    try lists.answer(0,people:cast,money:&funds)
+    try check(lists.list == .stock,"the offer keeps the stock")
+    try lists.answer(1,people:cast,money:&funds)
+    try check(lists.list == .customers && lists.receiving == 10,"the receiver list knows its item")
+    try lists.answer(1,people:cast,money:&funds)
+    try check(lists.phase == .receiverFull(item:10) && lists.list == .customers && lists.receiving == 10,"a full receiver keeps the list")
+    var selling = session(),purse = 100
+    try selling.answer(0,people:cast,money:&purse);try selling.answer(1,people:cast,money:&purse)
+    try check(selling.list == .customers && selling.receiving == nil,"selling starts on the people")
+    try selling.answer(1,people:cast,money:&purse)
+    try check(selling.list == .held(person:1),"the held list names its owner")
+    try selling.answer(0,people:cast,money:&purse)
+    try check(selling.list == .held(person:1),"the sale offer keeps the held list")
+
     // A purchase: confirm, receiver, slot, money, then the next question.
     shop = session();try shop.answer(0,people:cast,money:&money);try shop.answer(0,people:cast,money:&money)
     try check(try shop.prompt(people:cast) == .init(kind:.list,text:"buy?",rows:["i10","i11"]),"the stock is listed by name")

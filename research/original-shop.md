@@ -80,10 +80,14 @@ consonant. Color codes (ESC C digit) are dropped from exported lines.
 high, with text at column 28 from y 168 in 16-pixel rows. The item window is at
 x 112, y 160, 320 wide (`0x362C9`), and the value 0x80 is taken as its height.
 
-The native view draws these with the engine font and frame. It keeps the
-merchant's line at the bottom of the map window, and moves it to the top while a
-window is up so eight held items stay readable. That placement is engine
-presentation; the original speech window position was not traced.
+These are source positions. The native view does not use them: a visit stays in
+one engine window with the merchant's line, the list, a detail pane for the
+highlighted row, and the answers along the bottom. The steps, their order and
+what each answer does are the routine's. The window shows more than the source
+does at a given step: prices in the lists, slot counts, the highlighted item's
+description and the money after a purchase. A short-money row stays selectable
+and draws its price in the warning color, because the source refuses after the
+offer. Esc at a question answers No; the source question has no such key.
 
 ## Verification
 
@@ -104,6 +108,6 @@ compared with the running original.
 ## Not restored
 
 - The purchase, refusal and sale sound effects.
-- The original window frames and font.
+- The original window frames, positions and font.
 - The source's temporary player field 0A change around the confirm questions
   (`CF5:6656`, `CF5:ACF6`), whose purpose was not traced.

@@ -267,8 +267,6 @@ struct OriginalBattleStyle {
     var functionPressed:CGImage?
     var side:[[CGImage]] = []
     var gauge:[String:CGImage] = [:]
-    var yes:CGImage?
-    var no:CGImage?
     var ok:CGImage?
     var colors:[NSColor] = (0..<16).map { NSColor(white:CGFloat($0)/15,alpha:1) }
     var texts:OriginalBattleTexts?
@@ -295,8 +293,6 @@ struct OriginalBattleStyle {
         style.side = try screen.parts.side.map { try $0.compactMap { try picture($0.image) } }
         style.gauge = try screen.parts.gauge.compactMapValues { try picture($0.image) }
         style.ok = try picture(screen.parts.ok.image)
-        style.yes = try picture(catalog.choiceButtonImage(value:1,palette:3))
-        style.no = try picture(catalog.choiceButtonImage(value:0,palette:3))
         style.colors = screen.colors.map { NSColor(srgbRed:CGFloat($0[0])/255,green:CGFloat($0[1])/255,blue:CGFloat($0[2])/255,alpha:1) }
         return style
     }

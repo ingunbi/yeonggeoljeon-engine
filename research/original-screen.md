@@ -47,14 +47,24 @@ frames use the same path.
 Prompts that the original draws with its selector and window primitives are
 shown by a native overlay inside the viewport:
 
-- the 3D save question, its decline check and the retry prompt, with the
-  MARK member 0 Yes and No pictures (Yes first, as in `0x164A9..0x165C4`);
+- the 3D save question, its decline check and the retry prompt, with Yes
+  first, as in `0x164A9..0x165C4`;
 - scenario choices and record menus;
 - MAIN's title menu and the right-click field menu, with unrestored items
   disabled;
 - party selection, which toggles rows through the source selection rules
   (fixed prefix, capacity) and confirms on its last row;
-- battle dialogue and retirement lines, which wait for one input.
+- field and battle dialogue and retirement lines, which wait for one input;
+- the item shop ([original-shop.md](original-shop.md)).
+
+All of these share `CanvasTheme`, an engine design with no original basis: one
+surface color, rounded cards, a gold accent and the system font. The MARK Yes
+and No pictures are no longer drawn by these windows. The canvas now fills the
+window and centres. The old status bar under it is gone: script progress stays
+in `--verify-play` reports, and the window shows only an error, a notice or a
+state the player must know. In battle the turn, the selected unit and hints float
+over the map window, and a finished hint fades after four seconds. Replay frames
+keep the older dialogue drawing in `Renderer`.
 
 Arrow keys move the selection, Return or Space chooses, and Escape or a right
 click cancels where the menu allows it. Long lists scroll inside the
