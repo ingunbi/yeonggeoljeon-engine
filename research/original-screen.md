@@ -1,4 +1,4 @@
-# Field screen frame, HUD and in-canvas prompts
+# Field and battle screens, HUD and in-canvas prompts
 
 Static derivations from the pinned Korean DOS/V MAIN profile; no original
 program was run. Offsets are MAIN.EXE file offsets. The story producer
@@ -12,7 +12,7 @@ and calls `CF5:520E`, which blits PACKGRP member 0 (a 640×400 picture) at the
 origin. The map is then drawn into the frame's black window, the source
 viewport `(16,16,512,320)` that the scene and map producers already record.
 The battle routine (`0x1FE2E..0x1FE69`) calls the same blitter with AX one, so
-member 1 is the battle frame.
+member 1 is the battle frame. See [Battle screen](#battle-screen).
 
 `CF5:51B2` draws portrait 0 into the upper-right slot. The call at
 `0x1FE15` passes its x and y in AX and DX; the slot is 64×80.
@@ -60,13 +60,88 @@ Arrow keys move the selection, Return or Space chooses, and Escape or a right
 click cancels where the menu allows it. Long lists scroll inside the
 viewport. Scene dialogue is drawn in the same panel position by the renderer.
 
+## Battle screen
+
+The battle setup (`0x2895E`, object DS:`E1BC`) receives its map window from
+`0x270B4`: `(16,32,416,352)`, thirteen by eleven 32-pixel cells. Larger maps
+scroll. The scroll position is kept in half cells at `+8` and `+0A`, and every
+writer clears its low bit, so the window aligns to whole cells.
+
+Two routines move it. `0x2927E` centres on a half-cell position and clamps to
+the map. `0x2997E` runs for unit moves: it does nothing while the unit is within
+six half cells of the centred position, then recentres under the same clamps
+with two further edge rules. The original animates two half cells per step; the
+native view jumps to the target.
+
+| Element | Source | Native use |
+|---|---|---|
+| Frame | PACKGRP member 1, `0x1FE39` | Drawn behind the map window |
+| 기능 button | `(16,8,64,16)`, pressed art at `0x27CB5` | Opens the menu below |
+| Title box | Text at column 28, width 22, `0x28A52` | Map name line |
+| Force box | Column 56, width 10, y 40, `0x294C6` | Force of the list's side |
+| 아군 / 적군 | `(528,32)` and `(560,32)`, 32×32, `0x287B0` | Switch the list |
+| Unit list | `(448,72)`, ten 20-pixel rows, `0x29386..0x2968E` | Rows below |
+| Minimap | Base `(456,280)`, 4 pixels per cell, `0x2898C` | Rows below |
+
+Map names come from HEXZMAP member 58, one line per map. `0x282DC..0x28364`
+copies double-byte characters only, so digits and spaces end a name, then
+appends the DS:`3DFF` suffix. Force names are the fifteen DS:`0F1E` entries plus
+the DS:`3EB0` suffix. Force fourteen borrows the side leader's force.
+
+The list has a friendly side of slots 0 to 14 and an enemy side of slots 15 to
+44. Rows are built at `0x29500..0x295D0`: on the friendly side, live units of
+force zero come first. Other live units follow on both sides, and retired units
+come last with the DS:`3EB6` text. The enemy side skips the first pass, so a live
+enemy of force zero is not listed. Name colours come from `0x2C668..0x2C6DF`.
+
+A live row shows a gauge from `0x28806`. The bar is 88 pixels wide and is black
+under a repeated 8×10 MARK tile. The tile depends on tenths of current over
+maximum troops: seven or more, three or more, or below three. The text is
+`%4u/%4u`.
+
+The minimap needs no separate art. `0xD86E..0xD9BF` ranks the four most frequent
+colours of each 16×16 map tile, with ties going to the higher colour index, so
+an absent colour resolves to fifteen. Each tile then becomes two by two pixels
+through `0xD5FC`. The producer applies the same rule to the map tiles. Units are
+4×4 marks in colour 2 for slots below 15 and colour 1 for the others
+(`0x2988A`). The visible cells are outlined in colour 6 (`0x291CC`).
+
+The 기능 button lists nine DS:`3AA0` items. The native menu shows all nine and
+enables 턴 종료, 총퇴각 and 게임종료, whose handlers are restored; the others stay
+disabled.
+
+### Native input
+
+Clicks on the map select, move and attack as before. Native additions are:
+
+- arrow keys and the wheel scroll the map or the list under the pointer;
+- a click on the minimap centres there;
+- a click on a list row centres on that unit and shows its details;
+- a right click opens a native command list for the selected unit, or the
+  기능 menu when nothing is selected;
+- `S`, Space, Return, Backspace and Escape keep their previous meanings.
+
+The list and scroll positions are view state. They are not part of a save and
+do not change replays.
+
 ## Limits
 
 - The original font, text colours and the window frames drawn by the
   dialogue and selector primitives are not restored. The overlay panels are
   engine presentation, not original pixels.
-- The battle view does not draw the member 1 frame yet.
 - Panel positions are engine choices that keep the frame visible; they are
   not source coordinates.
+- The original per-unit command window is not restored, nor is the terrain
+  popup at `0x2A6D2`, which shows a cell's defence and recovery effects. The
+  native view reaches the restored actions by click, key or the right-click list.
+- The third button beside 아군 and 적군 has no restored handler.
+- The native view opens the friendly list at battle start. The list object
+  starts closed at `0x289CD`; when the original first opens it was not traced.
+- `0x2C52C` forces force zero under a condition on a segment byte that is not
+  traced, so that branch is not restored. Hover highlighting is replaced by the
+  inspected row.
+- Scroll animation, the original scroll input at `0x28F9C..0x29067` and the
+  text font metrics are not reproduced. Follow runs once per finished action,
+  not per step.
 - Frames are offscreen captures. They do not verify macOS input delivery or
   original-runtime pixel parity.

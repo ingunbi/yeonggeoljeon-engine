@@ -73,6 +73,9 @@ struct OriginalBattleMenuEntry: Codable, Equatable {
 }
 
 struct OriginalBattleMenuTexts: Codable, Equatable {
+    /// MAIN27D12: nine DS:3AA0 labels. Only some have restored handlers.
+    var items: [OriginalTitleMenuItem]
+    static let actions = ["end-turn", "retreat", "conditions", "unit-combat", "move-speed", "enemy-move", "bgm", "sound", "quit"]
     var retreat: OriginalBattleMenuEntry
     var quit: OriginalBattleMenuEntry
 }
@@ -130,6 +133,9 @@ struct OriginalCampaignProgram: Codable {
             let texts = [menu.retreat.label, menu.retreat.confirm.text, menu.retreat.refused?.text ?? "",
                          menu.quit.label, menu.quit.confirm.text]
             guard menu.retreat.rawResult == 1, menu.quit.rawResult == 4, menu.retreat.refused != nil,
+                  menu.items.map(\.index) == Array(0..<OriginalBattleMenuTexts.actions.count),
+                  menu.items.map(\.action) == OriginalBattleMenuTexts.actions,
+                  menu.items.allSatisfy({ !$0.text.isEmpty && $0.text.count <= 64 }),
                   texts.allSatisfy({ !$0.isEmpty && $0.count <= 256 }) else {
                 throw EngineError.invalid("Original battle menu facts are invalid")
             }

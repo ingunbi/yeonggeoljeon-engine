@@ -27,6 +27,7 @@ struct BattleDefinition: Codable {
     var coordinateSystem: String? = nil
     var tiles: [Int]? = nil
     var image: String? = nil
+    var minimap: String? = nil
     var pictureColumns:Int? = nil
     var pictureRows:Int? = nil
     var pictureTiles:[Int]? = nil

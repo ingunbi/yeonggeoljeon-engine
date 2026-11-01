@@ -36,6 +36,11 @@ final class CanvasOverlayView:NSView {
     private(set) var notice:CanvasNotice?
     /// First vertical row shown when a list is taller than the viewport.
     private var firstVisible = 0
+    /// The canvas area panels stay inside: the field map window by default,
+    /// the battle map window while a battle screen is up.
+    static let fieldViewport = CGRect(x:16,y:16,width:512,height:320)
+    var viewport = fieldViewport
+    private var noticeRect:CGRect { CGRect(x:viewport.minX+8,y:viewport.maxY-104,width:viewport.width-16,height:96) }
     /// Called after the overlay closes so the owner can restore focus.
     var restoreFocus:(() -> Void)?
     var active:Bool { selector != nil || notice != nil }
@@ -95,14 +100,14 @@ final class CanvasOverlayView:NSView {
     }
     private static let row:CGFloat = 24
     /// Panel width, text heights and how many vertical rows fit in the
-    /// 512×320 viewport (the panel stays at most 312 tall).
+    /// viewport (the panel stays eight pixels shorter than it).
     private func metrics(_ value:CanvasMenu) -> (width:CGFloat,title:CGFloat,footer:CGFloat,shown:Int) {
         let check:CGFloat = value.options.contains(where:{ $0.checked != nil }) ? 20 : 0
         let labelWidth = value.options.map { ceil(($0.label as NSString).size(withAttributes:attributes()).width) }.max() ?? 0
-        let width:CGFloat = value.horizontal ? 280 : min(420,max(240,labelWidth+56+check))
+        let width:CGFloat = value.horizontal ? 280 : min(viewport.width-16,max(240,labelWidth+56+check))
         let title = textHeight(value.title,width:width-32),footer = textHeight(value.footer,width:width-32)
         let chrome = 26+(title > 0 ? title+10 : 0)+(footer > 0 ? footer+8 : 0)
-        let shown = value.horizontal ? value.options.count : min(value.options.count,max(1,Int((312-chrome)/Self.row)))
+        let shown = value.horizontal ? value.options.count : min(value.options.count,max(1,Int((viewport.height-8-chrome)/Self.row)))
         return (width,title,footer,shown)
     }
     private func revealSelection() {
@@ -116,7 +121,7 @@ final class CanvasOverlayView:NSView {
         let m = metrics(value),width = m.width
         let rows:CGFloat = value.horizontal ? 28 : CGFloat(m.shown)*Self.row
         let height = 26+(m.title > 0 ? m.title+10 : 0)+rows+(m.footer > 0 ? m.footer+8 : 0)
-        let panel = CGRect(x:16+(512-width)/2,y:max(20,16+(320-height)/2),width:width,height:height).integral
+        let panel = CGRect(x:viewport.minX+(viewport.width-width)/2,y:max(viewport.minY+4,viewport.minY+(viewport.height-height)/2),width:width,height:height).integral
         let title = CGRect(x:panel.minX+16,y:panel.minY+14,width:width-32,height:m.title)
         let top = m.title > 0 ? title.maxY+10 : panel.minY+14
         var options:[(index:Int,rect:CGRect)] = []
@@ -183,18 +188,18 @@ final class CanvasOverlayView:NSView {
                 context.addLine(to:CGPoint(x:x,y:base+dy));context.closePath();context.fillPath()
             }
         } else if let value = notice {
-            let rect = CGRect(x:24,y:232,width:496,height:96)
+            let rect = noticeRect
             panel(rect,in:context)
-            var textX:CGFloat = 36
+            var textX = rect.minX+12
             if let portrait = value.portrait {
-                Renderer.image(portrait,in:CGRect(x:32,y:240,width:min(CGFloat(portrait.width),64),height:min(CGFloat(portrait.height),80)),context:context)
-                textX = 108
+                Renderer.image(portrait,in:CGRect(x:rect.minX+8,y:rect.minY+8,width:min(CGFloat(portrait.width),64),height:min(CGFloat(portrait.height),80)),context:context)
+                textX = rect.minX+84
             }
             if !value.speaker.isEmpty {
-                (value.speaker as NSString).draw(in:CGRect(x:textX,y:238,width:400,height:20),
+                (value.speaker as NSString).draw(in:CGRect(x:textX,y:rect.minY+6,width:rect.maxX-textX-8,height:20),
                     withAttributes:attributes(NSColor(red:1,green:0.85,blue:0.45,alpha:1)))
             }
-            (value.text as NSString).draw(with:CGRect(x:textX,y:value.speaker.isEmpty ? 240 : 258,width:512-textX,height:value.speaker.isEmpty ? 84 : 66),
+            (value.text as NSString).draw(with:CGRect(x:textX,y:rect.minY+(value.speaker.isEmpty ? 8 : 26),width:rect.maxX-textX-8,height:value.speaker.isEmpty ? 84 : 66),
                                           options:[.usesLineFragmentOrigin],attributes:attributes())
         }
         context.restoreGState()

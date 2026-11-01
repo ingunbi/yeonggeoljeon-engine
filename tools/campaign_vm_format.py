@@ -85,8 +85,12 @@ def checked_text(main: bytes, pointer: int, label: str) -> tuple[str, dict]:
     return value, source_span("MAIN.EXE", main, at, after - at)
 
 
+BATTLE_MENU_COUNT = 9
+BATTLE_MENU_ACTIONS = ["end-turn", "retreat", "conditions", "unit-combat", "move-speed", "enemy-move", "bgm", "sound", "quit"]
+
+
 def battle_menu(main: bytes) -> dict:
-    """Retreat and quit entries of the battle system menu.
+    """Items of the battle system menu, with its retreat and quit entries.
 
     Retreat asks the DS:[3D1E] question and writes raw battle result one,
     unless script context+1CB forbids it (DS:3D2E notice). Quit asks DS:3D4F
@@ -98,7 +102,7 @@ def battle_menu(main: bytes) -> dict:
             struct.unpack_from("<H", lea, 2)[0] != BATTLE_MENU_TABLE:
         raise SceneError("MAIN.EXE battle menu call does not match the examined profile")
     labels = {}
-    for item in (BATTLE_RETREAT_ITEM, BATTLE_QUIT_ITEM):
+    for item in range(BATTLE_MENU_COUNT):
         offset, paragraph = struct.unpack_from("<HH", span(main, MAIN_DATA_SEGMENT + BATTLE_MENU_TABLE + item * 4, 4, "MAIN.EXE"))
         if paragraph != MAIN_DATA_PARAGRAPH:
             raise SceneError("MAIN.EXE battle menu item is outside the data segment")
@@ -120,7 +124,9 @@ def battle_menu(main: bytes) -> dict:
         # mov bx,[bp+6]; mov byte [bx+1],value
         if span(main, at, 7, "MAIN.EXE") != bytes([0x8B, 0x5E, 0x06, 0xC6, 0x47, 0x01, value]):
             raise SceneError("MAIN.EXE battle menu result write does not match the examined profile")
-    return {"retreat": {"label": labels[BATTLE_RETREAT_ITEM][0], "labelSource": labels[BATTLE_RETREAT_ITEM][1],
+    return {"items": [{"index": item, "text": labels[item][0], "action": BATTLE_MENU_ACTIONS[item],
+                       "textSource": labels[item][1]} for item in range(BATTLE_MENU_COUNT)],
+            "retreat": {"label": labels[BATTLE_RETREAT_ITEM][0], "labelSource": labels[BATTLE_RETREAT_ITEM][1],
                         "confirm": {"text": retreat_text, "textSource": retreat_source,
                                     "callSource": source_span("MAIN.EXE", main, RETREAT_CONFIRM_CALL, 12),
                                     "selectorMode": 2, "yesResult": 1, "noResult": 0, "presentationOrder": [1, 0]},

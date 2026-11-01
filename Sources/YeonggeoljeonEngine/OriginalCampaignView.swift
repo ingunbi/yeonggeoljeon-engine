@@ -8,7 +8,6 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private var errorText:String?
     private var inputNotice:String?
     private var battleView:OriginalBattleView?
-    private var battleScroll:NSScrollView?
     /// In-game selectors and waiting lines drawn above the stage and battle.
     private let overlay = CanvasOverlayView()
     private var imageCache:[String:CGImage] = [:]
@@ -26,7 +25,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         overlay.frame = bounds;overlay.autoresizingMask = [.width,.height];addSubview(overlay)
         overlay.restoreFocus = { [weak self] in
             guard let self = self else { return }
-            if let board = self.battleView,self.battleScroll?.isHidden == false { self.window?.makeFirstResponder(board) }
+            if let board = self.battleView,!board.isHidden { self.window?.makeFirstResponder(board) }
             else { self.window?.makeFirstResponder(self) }
             self.needsDisplay = true
         }
@@ -70,6 +69,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     required init?(coder:NSCoder) { fatalError("init(coder:) is not supported") }
     func stop() { timer?.invalidate();timer = nil }
     private func tick() {
+        battleView?.externalStatus = errorText ?? inputNotice ?? host.notice
         guard !overlay.active,errorText == nil else { return }
         do {
             try host.advance(microseconds:16_667)
@@ -94,7 +94,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         yesNo(host.retryPromptText ?? "원작 재시작 선택") { [weak self] yes in
             guard let self = self else { return }
             self.act { try self.host.answerRetryPrompt(yes ? 1 : 0) }
-            if self.host.frameworkReturn?.outcome == .quit { self.battleScroll?.isHidden = true;self.window?.makeFirstResponder(self) }
+            if self.host.frameworkReturn?.outcome == .quit { self.hideBattle();self.window?.makeFirstResponder(self) }
         }
     }
     /// Exit code4 makes HERO.COM execute MAIN again. The engine replaces this
@@ -105,11 +105,13 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     }
     private func synchronizeBattle() throws {
         guard host.ending == nil,host.frameworkReturn?.outcome != .quit,host.stage.palette == 3,let session = host.battle else {
-            battleScroll?.isHidden = true;return
+            hideBattle();return
         }
         if battleView?.session !== session {
-            battleScroll?.removeFromSuperview()
-            let board = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:host.data.root),sprites:OriginalBattleSpriteRenderer(root:host.data.root))
+            battleView?.removeFromSuperview()
+            let board = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:host.data.root),
+                sprites:OriginalBattleSpriteRenderer(root:host.data.root),
+                style:OriginalBattleStyle.load(definition:session.definition,root:host.data.root,story:host.story))
             board.onHook = { [weak self] value in guard let self = self else { return false };return try self.host.beginTurnHook(value) }
             board.onRetirement = { [weak self] value in
                 guard let self = self else { return false }
@@ -117,12 +119,11 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             }
             board.inputReady = { [weak self] in self?.host.battleInputReady == true }
             board.menuTexts = host.framework?.battleMenu
-            let scroll = NSScrollView(frame:CGRect(x:0,y:0,width:bounds.width,height:bounds.height-40))
-            scroll.autoresizingMask = [.width,.height];scroll.hasVerticalScroller = true;scroll.hasHorizontalScroller = true;scroll.documentView = board
-            addSubview(scroll,positioned:.below,relativeTo:overlay);battleView = board;battleScroll = scroll
+            board.frame = bounds
+            addSubview(board,positioned:.below,relativeTo:overlay);battleView = board
             window?.makeFirstResponder(board)
         }
-        battleScroll?.isHidden = false
+        battleView?.isHidden = false;overlay.viewport = battleView?.style.layout.viewportRect ?? overlay.viewport
         if host.battleInputReady,let board = battleView {
             if session.turns.stage == .unstarted { try board.start() }
             else if board.suspended { try board.resumeSourceFlow() }
@@ -130,6 +131,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         }
         battleView?.needsDisplay = true
     }
+    private func hideBattle() { battleView?.isHidden = true;overlay.viewport = CanvasOverlayView.fieldViewport }
     private func presentBattleDialogue() {
         guard let dialogue = host.stage.dialogue else { return }
         overlay.show(CanvasNotice(speaker:dialogue.speaker,text:dialogue.text,portrait:portrait(dialogue.person,palette:host.stage.palette)) { [weak self] in

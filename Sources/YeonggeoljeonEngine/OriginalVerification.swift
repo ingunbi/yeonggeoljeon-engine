@@ -28,7 +28,9 @@ func verifyOriginalBattle(_ id:String,data:DataSet,output:URL) throws {
     let session = try source.isolatedBattle(id,rng:OriginalRNG(state:seed))
     let initial = session.units.values.sorted(by:{$0.slot < $1.slot})
     var hooks:[OriginalTurnHook] = [],reason = "driver-round-budget",rounds = 0
-    let view = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:data.root),sprites:OriginalBattleSpriteRenderer(root:data.root))
+    let view = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:data.root),sprites:OriginalBattleSpriteRenderer(root:data.root),
+                                      style:OriginalBattleStyle.load(definition:session.definition,root:data.root))
+    view.showsSlotNumbers = true
     // Capture is native AppKit offscreen rendering; no keyboard/mouse event is
     // synthesized and original-runtime pixel/AI/RNG parity is not asserted.
     try view.capture(to:output.appendingPathComponent("original-battle-initial.png"))

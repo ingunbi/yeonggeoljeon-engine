@@ -62,7 +62,7 @@ def hud_field(main: bytes, at: int) -> dict:
     return {"rect": [x, y, width, code[1]], "clearColor": code[3], "text": [column * 8, text_y]}
 
 
-def screen_facts(main: bytes) -> dict:
+def screen_facts(main: bytes, battle: dict | None = None) -> dict:
     if main[FIELD_FRAME_CALL:FIELD_FRAME_CALL + 7] != bytes([0x33, 0xC0, 0x9A]) + struct.pack("<HH", 0x520E, 0x0CF5) or \
             main[BATTLE_FRAME_CALL:BATTLE_FRAME_CALL + 8] != bytes([0xB8, 1, 0, 0x9A]) + struct.pack("<HH", 0x520E, 0x0CF5):
         raise ResourceError("MAIN screen frame selectors do not match the examined profile")
@@ -77,9 +77,100 @@ def screen_facts(main: bytes) -> dict:
                        "portraitID": 0, "source": "MAIN.EXE:0x1FE15..0x1FE21, CF5:51B2 (0x18B02..)"}
     return {"field": {"frameAsset": 0, "viewport": [16, 16, 512, 320], "hud": hud,
                       "source": "MAIN.EXE:0x1FDA6..0x1FE2C (CF5:C456), PACKGRP member0 via CF5:520E"},
-            "battle": {"frameAsset": 1, "source": "MAIN.EXE:0x1FE2E..0x1FE69, PACKGRP member1 via CF5:520E"},
+            "battle": {"frameAsset": 1, **(battle or {}), "source": "MAIN.EXE:0x1FE2E..0x1FE69, PACKGRP member1 via CF5:520E"},
             "limitations": ["Layout coordinates come from MAIN immediates; the original font and text colors are not restored.",
                             "Window frames for dialogue and selectors are drawn by other primitives and are not part of these facts."]}
+
+
+# Battle screen writers. Each entry is a file offset and the exact bytes that
+# carry the coordinates exported in `battle_layout`.
+BATTLE_SHAPES = {
+    "viewport": (0x270B4, "6a10 6a20 68a001 686001 68bce1 9afe53b61c"),
+    "functionButton": (0x27CB5, "6a10 6a08 6a40 6a10"),
+    "title": (0x28A52, "2d1600 f7d8 d1e8 051c00 50 6a08 689063"),
+    "force": (0x294C6, "2d0a00 f7d8 d1e8 053800 50 6a28 689063"),
+    "sideButtons": (0x287B5, "251000 3d0100 1bc9 80e1e0 81c13002 51 6a20 6a20 6a20"),
+    "listRow": (0x296B3, "68c001 6bc714 054800 50 68a000 6a14"),
+    "listRows": (0x29680, "807eff0a"),
+    "listName": (0x29612, "6a39 6b46e614 8946e2 054a00"),
+    "listStatus": (0x29630, "6a41"),
+    "listGauge": (0x2966C, "8b56e2 83c24e b80002 bb5800"),
+    "listTrack": (0x29704, "81ff7002"),
+    "listHover": (0x29814, "68c601 56 689400 6a14 6a01 6a07"),
+    "listThumb": (0x2973D, "81ff6002"),
+    "minimapX": (0x2898C, "b82800"),
+    "minimapBaseX": (0x289A2, "053900 c1e003"),
+    "minimapY": (0x289AB, "b81800"),
+    "minimapBaseY": (0x289BF, "052300 c1e003"),
+    "minimapUnit": (0x298C4, "6a04 6a04"),
+    "minimapPanel": (0x27096, "b82500 9a0e52f50c"),
+    "minimapPanelAt": (0x270A9, "b8c001 ba1001"),
+    "follow": (0x299CB, "83f906 7d12 83fe06"),
+    "forceTable": (0x294A2, "ffb71e0f"),
+    "forceSuffix": (0x294B3, "1e 68b03e"),
+    "retired": (0x29643, "68b63e"),
+}
+FORCE_TABLE, FORCE_COUNT, FORCE_SUFFIX, RETIRED_TEXT = 0xF1E, 15, 0x3EB0, 0x3EB6
+DATA_SEGMENT, DATA_PARAGRAPH = 0x37DA0, 0x313A
+FUNCTION_PICTURE, SIDE_PICTURES = 0x800, {(0, 0): 0xA00, (0, 1): 0xC00, (1, 0): 0xE00, (1, 1): 0x1000}
+GAUGE_TILES = {"high": 0x2230, "middle": 0x21E0, "low": 0x2208}
+
+
+def checked_shapes(main: bytes) -> None:
+    for name, (at, shape) in BATTLE_SHAPES.items():
+        expected = bytes.fromhex(shape.replace(" ", ""))
+        if main[at:at + len(expected)] != expected:
+            raise ResourceError(f"MAIN battle screen writer {name} at {at:#x} does not match the examined profile")
+
+
+def data_text(main: bytes, pointer: int) -> str:
+    start = DATA_SEGMENT + pointer
+    end = main.index(0, start)
+    return main[start:end].decode("cp949")
+
+
+def battle_texts(main: bytes) -> dict:
+    forces = []
+    for index in range(FORCE_COUNT):
+        pointer = struct.unpack_from("<H", main, DATA_SEGMENT + FORCE_TABLE + index * 2)[0]
+        forces.append(data_text(main, pointer))
+    if not all(forces):
+        raise ResourceError("MAIN force name table does not match the examined profile")
+    return {"forces": forces, "forceSuffix": data_text(main, FORCE_SUFFIX), "retired": data_text(main, RETIRED_TEXT),
+            "source": {"forces": f"DS:{FORCE_TABLE:04X}", "forceSuffix": f"DS:{FORCE_SUFFIX:04X}",
+                       "retired": f"DS:{RETIRED_TEXT:04X}", "resource": "MAIN.EXE"}}
+
+
+def battle_layout(panel_size: tuple[int, int]) -> dict:
+    """Coordinates of the checked writers; `checked_shapes` proves their bytes."""
+    return {"viewport": [0x10, 0x20, 0x1A0, 0x160], "cell": 32, "functionButton": [0x10, 0x08, 0x40, 0x10],
+            "title": {"column": 0x1C, "width": 0x16, "y": 0x08}, "force": {"column": 0x38, "width": 0x0A, "y": 0x28},
+            "sideButtons": [[0x210, 0x20, 0x20, 0x20], [0x230, 0x20, 0x20, 0x20]],
+            "list": {"rect": [0x1C0, 0x48, 0xA0, 0x14 * 10], "rowHeight": 0x14, "rows": 10, "nameColumn": 0x39,
+                     "statusColumn": 0x41, "textY": 0x4A, "gauge": [0x200, 0x4D, 0x58, 10], "track": [0x260, 0x48, 0x10, 0xC8],
+                     "hover": [0x1C6, 0x94]},
+            "minimap": {"panel": [0x1C0, 0x110, panel_size[0], panel_size[1]], "base": [0x39 * 8, 0x23 * 8], "span": [0x28, 0x18],
+                        "cellPixels": 4},
+            "followMargin": 6}
+
+
+def battle_parts(selected: dict, palette: list, output: Path) -> dict:
+    hexgrp = Archive(selected["HEXGRP.R3"][0], "HEXGRP.R3").decode(0)
+    mark = Archive(selected["MARK.R3"][0], "MARK.R3").decode(0)
+
+    def export(name: str, data: bytes, offset: int, width: int, height: int, member) -> dict:
+        size = (width + 7) // 8 * height * 4
+        relative = f"images/story/battle-{name}.png"
+        target = output / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(png_bytes(planar_image(data[offset:offset + size], width, height, interleaved=True), palette))
+        return {"image": relative, "width": width, "height": height,
+                "source": {**member.provenance(), "decodedOffset": offset, "length": size}}
+
+    return {"function": export("function", hexgrp.data, FUNCTION_PICTURE, 64, 16, hexgrp),
+            "side": [[export(f"side-{side}-{state}", hexgrp.data, SIDE_PICTURES[side, state], 32, 32, hexgrp) for state in (0, 1)]
+                     for side in (0, 1)],
+            "gauge": {name: export(f"gauge-{name}", mark.data, offset, 8, 10, mark) for name, offset in GAUGE_TILES.items()}}
 
 
 def prepare(game: Path, output: Path) -> dict:
@@ -87,7 +178,7 @@ def prepare(game: Path, output: Path) -> dict:
     if output == game or game in output.parents:
         raise ResourceError("story output must be outside the selected original directory")
     before = inventory(game)
-    selected = {name: read_resource(game, name) for name in ("MAIN.EXE", "TFDED.COM", "PACKGRP.R3", "FACEDAT.R3", "MARK.R3")}
+    selected = {name: read_resource(game, name) for name in ("MAIN.EXE", "TFDED.COM", "PACKGRP.R3", "FACEDAT.R3", "MARK.R3", "HEXGRP.R3")}
     main = selected["MAIN.EXE"][0]
     if hashlib.sha256(main).hexdigest() != EXAMINED_MAIN:
         raise ResourceError("MAIN does not match the examined original story layout")
@@ -147,7 +238,11 @@ def prepare(game: Path, output: Path) -> dict:
                                    "closeStart": 0x207C8, "interpreterLifetime": "0x1C1CF..0x1C1DF"}})
     if inventory(game) != before:
         raise ResourceError("original files changed during story extraction")
-    screens = screen_facts(main)
+    checked_shapes(main)
+    panel = next(asset for asset in assets if asset["id"] == 0x25)
+    screens = screen_facts(main, {"layout": battle_layout((panel["width"], panel["height"])),
+                                  "colors": [list(color) for color in palettes[3]], "texts": battle_texts(main),
+                                  "parts": battle_parts(selected, palettes[3], output)})
     result = {"format": 1, "assets": assets, "portraitAssets": portraits, "choiceButtons": buttons, "layouts": layouts,
               "screens": screens,
               "source": {"inputs": [item[1] for item in selected.values()], "originalHashesPreserved": True,

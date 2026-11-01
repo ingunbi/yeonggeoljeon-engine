@@ -22,7 +22,10 @@ struct OriginalHUDField:Codable,Equatable {
 struct OriginalFieldScreen:Codable {
     var frameAsset:Int; var viewport:[Int]; var hud:[String:OriginalHUDField]; var source:JSONValue?
 }
-struct OriginalBattleScreen:Codable { var frameAsset:Int; var source:JSONValue? }
+struct OriginalBattleScreen:Codable {
+    var frameAsset:Int; var layout:OriginalBattleLayout; var colors:[[Int]]
+    var texts:OriginalBattleTexts; var parts:OriginalBattleParts; var source:JSONValue?
+}
 /// PACKGRP screen frames and the field HUD layout read from MAIN immediates.
 struct OriginalScreenFacts:Codable {
     var field:OriginalFieldScreen; var battle:OriginalBattleScreen; var limitations:[String]?
@@ -48,6 +51,14 @@ struct OriginalStoryCatalog:Codable {
         if let screens = value.screens {
             let frames = [screens.field.frameAsset,screens.battle.frameAsset].map { id in value.assets.first(where:{$0.id == id}) }
             let inside:([Int]) -> Bool = { $0.count == 4 && $0[0] >= 0 && $0[1] >= 0 && $0[2] > 0 && $0[3] > 0 && $0[0]+$0[2] <= 640 && $0[1]+$0[3] <= 400 }
+            let battle = screens.battle
+            guard battle.layout == .source,battle.colors.count == 16,battle.colors.allSatisfy({ $0.count == 3 && $0.allSatisfy((0...255).contains) }),
+                  battle.texts.forces.count == 15,battle.texts.forces.allSatisfy({ !$0.isEmpty }),!battle.texts.retired.isEmpty,
+                  battle.parts.side.count == 2,battle.parts.side.allSatisfy({ $0.count == 2 && $0.allSatisfy({ $0.width == 32 && $0.height == 32 }) }),
+                  battle.parts.function.width == 64,battle.parts.function.height == 16,
+                  Set(battle.parts.gauge.keys) == ["high","middle","low"],battle.parts.gauge.values.allSatisfy({ $0.width == 8 && $0.height == 10 }) else {
+                throw EngineError.invalid("Original battle screen facts are invalid")
+            }
             guard frames.allSatisfy({ $0?.width == 640 && $0?.height == 400 }),screens.field.viewport == [16,16,512,320],
                   Set(screens.field.hud.keys) == OriginalScreenFacts.hudNames,screens.field.hud.values.allSatisfy({ inside($0.rect) }),
                   screens.field.hud["portrait"]?.rect.suffix(2) == [64,80] else {

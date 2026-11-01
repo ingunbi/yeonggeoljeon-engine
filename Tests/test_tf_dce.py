@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from prepare_story import BATTLE_FRAME_CALL, FIELD_FRAME_CALL, HUD_FIELDS, PORTRAIT_CALL, picture_directory, prepare, screen_facts
+from prepare_story import BATTLE_FRAME_CALL, BATTLE_SHAPES, FIELD_FRAME_CALL, HUD_FIELDS, PORTRAIT_CALL, battle_layout, checked_shapes, picture_directory, prepare, screen_facts
 from resource_formats import ResourceError
 from tf_dce import dce_picture
 
@@ -101,6 +101,19 @@ class DCEFormatTests(unittest.TestCase):
             picture_directory(struct.pack("<IH", 0, 6) + b"abc", 1)
 
 
+    def test_battle_screen_writers_must_match_the_examined_bytes(self):
+        main = bytearray(0x30000)
+        for at, shape in BATTLE_SHAPES.values():
+            expected = bytes.fromhex(shape.replace(" ", ""))
+            main[at:at + len(expected)] = expected
+        checked_shapes(bytes(main))
+        at = BATTLE_SHAPES["viewport"][0]
+        main[at + 1] = 0x18
+        with self.assertRaisesRegex(ResourceError, "viewport"):
+            checked_shapes(bytes(main))
+        layout = battle_layout((176, 112))
+        self.assertEqual((layout["viewport"], layout["minimap"]["panel"]), ([16, 32, 416, 352], [448, 272, 176, 112]))
+
     def test_field_screen_facts_read_hud_writers_and_frame_selectors(self):
         writers = {"caption": hud_writer(8, 300, 200, 12, 3, 2),
                    "money": hud_writer(480, 100, 40, 12, 3, 61),
@@ -142,6 +155,12 @@ class OriginalDCEConformanceTests(unittest.TestCase):
             self.assertEqual([button["value"] for button in result["choiceButtons"]], [1, 0])
             self.assertEqual([button["label"] for button in result["choiceButtons"]], ["Yes", "No"])
             screens = result["screens"]
+            battle = screens["battle"]
+            self.assertEqual(len(battle["texts"]["forces"]), 15)
+            self.assertEqual(len(battle["colors"]), 16)
+            parts = [battle["parts"]["function"], *battle["parts"]["gauge"].values(),
+                     *(part for row in battle["parts"]["side"] for part in row)]
+            self.assertTrue(all((Path(directory) / part["image"]).is_file() for part in parts))
             frames = [result["assets"][screens[name]["frameAsset"]] for name in ("field", "battle")]
             self.assertEqual([(frame["width"], frame["height"]) for frame in frames], [(640, 400), (640, 400)])
             self.assertEqual(screens["field"]["viewport"], [16, 16, 512, 320])

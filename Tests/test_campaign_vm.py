@@ -59,7 +59,9 @@ def synthetic_main(text: bytes, pointer: int = RETRY_PROMPT_POINTER, mode: int =
         data[MAIN_DATA_SEGMENT + offset:MAIN_DATA_SEGMENT + offset + len(label) + 1] = label + b"\0"
     data[BATTLE_MENU_COUNT_AT:BATTLE_MENU_COUNT_AT + 2] = bytes([0x6A, 9])
     data[BATTLE_MENU_TABLE_AT:BATTLE_MENU_TABLE_AT + 4] = bytes([0x8D, 0x1E]) + struct.pack("<H", BATTLE_MENU_TABLE)
-    for item, label in ((1, b"retreat"), (8, b"quit")):
+    labels = [f"menu{index}".encode("ascii") for index in range(9)]
+    labels[1], labels[8] = b"retreat", b"quit"
+    for item, label in enumerate(labels):
         offset = 0x2C80 + item * 0x10
         struct.pack_into("<HH", data, MAIN_DATA_SEGMENT + BATTLE_MENU_TABLE + item * 4, offset, MAIN_DATA_PARAGRAPH)
         data[MAIN_DATA_SEGMENT + offset:MAIN_DATA_SEGMENT + offset + len(label) + 1] = label + b"\0"
@@ -100,6 +102,10 @@ class CampaignVMFormatTests(unittest.TestCase):
         self.assertEqual((menu["retreat"]["label"], menu["retreat"]["confirm"]["text"], menu["retreat"]["refused"]["text"]),
                          ("retreat", "confirm", "refused"))
         self.assertEqual((menu["retreat"]["rawResult"], menu["quit"]["rawResult"], menu["quit"]["confirm"]["text"]), (1, 4, "quit?"))
+        self.assertEqual([item["index"] for item in menu["items"]], list(range(9)))
+        self.assertEqual([item["action"] for item in menu["items"]],
+                         ["end-turn", "retreat", "conditions", "unit-combat", "move-speed", "enemy-move", "bgm", "sound", "quit"])
+        self.assertEqual((menu["items"][0]["text"], menu["items"][1]["text"], menu["items"][8]["text"]), ("menu0", "retreat", "quit"))
         bad = bytearray(synthetic_main(b"x"))
         bad[RETREAT_RESULT_AT + 6] = 2
         with self.assertRaisesRegex(SceneError, "result write"):

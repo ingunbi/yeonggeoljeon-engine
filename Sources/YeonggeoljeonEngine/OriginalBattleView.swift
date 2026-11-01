@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import AppKit
 
-/// Native input surface over restored kernels. The isolated viewer records
-/// source script hooks; a campaign host must resolve them before continuing.
+/// Native input surface over restored kernels, drawn on MAIN's 640×400 battle
+/// screen. The isolated viewer records source script hooks; a campaign host
+/// must resolve them before continuing.
 final class OriginalBattleView:NSView {
     let session:OriginalBattleSession
     let background:CGImage?
     let sprites:OriginalBattleSpriteRenderer?
+    let style:OriginalBattleStyle
     let flow:OriginalBattleFlow
     var onHook:((OriginalTurnHook)throws->Bool)? { get { flow.onHook } set { flow.onHook = newValue } }
     var onRetirement:((OriginalRetirementNotice)throws->Bool)? { get { flow.onRetirement } set { flow.onRetirement = newValue } }
@@ -18,87 +20,128 @@ final class OriginalBattleView:NSView {
     private var strategySelection:StrategySelection?
     private var waitingForStrategy = false
     private var waitingForAttack = false
-    private let strategyButton = NSButton(title:"책략 (S)",target:nil,action:nil)
-    private let strategyConfirmButton = NSButton(title:"책략 실행 (Enter)",target:nil,action:nil)
-    private let strategyCancelButton = NSButton(title:"취소 (Esc)",target:nil,action:nil)
-    private let retreatButton = NSButton(title:"총퇴각",target:nil,action:nil)
-    private let quitButton = NSButton(title:"게임종료",target:nil,action:nil)
     /// Battle system menu texts exported from the caller's MAIN. Without a
     /// campaign host the retreat/quit results have no outer dispatcher.
-    var menuTexts:OriginalBattleMenuTexts? { didSet { applyMenuTexts() } }
+    var menuTexts:OriginalBattleMenuTexts? { didSet { needsDisplay = true } }
     var suspended:Bool { flow.suspended }
     var inputReady:(()->Bool)?
-    private var message = "클릭: 선택·이동·공격 / S: 책략 / Space: 대기 / Return: 턴 종료 / Backspace: 이동 취소"
-    private let cell:CGFloat = 32
-    private let origin = NSPoint(x:24,y:92)
+    /// Replaces the status line while the owner has something to report.
+    var externalStatus:String? { didSet { if externalStatus != oldValue { needsDisplay = true } } }
+    /// Replay captures label slots, because input files address units by slot.
+    var showsSlotNumbers = false
+    private var message = "클릭: 선택·이동·공격 / S: 책략 / Space: 대기 / Return: 턴 종료 / Backspace: 이동 취소 / 방향키·휠: 지도 이동"
+    private var layoutFacts:OriginalBattleLayout { style.layout }
+    private var camera:OriginalBattleCamera
+    private var listSide = 0
+    private var listTop = 0
+    /// The unit whose details the status line shows.
+    private var inspected:Int?
+    private var functionOpen = false
+    private var seenPositions:[Int:GridPoint] = [:]
+    private var seenStage:OriginalTurnStage?
+    private var wheelRemainder = CGPoint.zero
+    private let overlay = CanvasOverlayView()
     var hooks:[OriginalTurnHook] { flow.hooks }
     override var isFlipped:Bool { true }
     override var acceptsFirstResponder:Bool { true }
-    init(session:OriginalBattleSession,background:CGImage?,sprites:OriginalBattleSpriteRenderer? = nil) throws {
-        self.session = session; self.background = background;self.sprites = sprites;flow = OriginalBattleFlow(session:session)
-        super.init(frame:CGRect(x:0,y:0,width:max(920,CGFloat(session.width)*32+48),height:max(680,CGFloat(session.height)*32+260)))
-        for button in [strategyButton,strategyConfirmButton,strategyCancelButton,retreatButton,quitButton] {button.target = self;button.bezelStyle = .rounded;addSubview(button)}
-        retreatButton.action = #selector(requestRetreat(_:));quitButton.action = #selector(requestQuit(_:))
-        retreatButton.isHidden = true;quitButton.isHidden = true
-        strategyButton.action = #selector(showStrategyMenu(_:))
-        strategyConfirmButton.action = #selector(confirmStrategy(_:))
-        strategyCancelButton.action = #selector(cancelStrategy(_:))
-        layout()
-        refreshControls()
+    init(session:OriginalBattleSession,background:CGImage?,sprites:OriginalBattleSpriteRenderer? = nil,style:OriginalBattleStyle = .plain) throws {
+        self.session = session;self.background = background;self.sprites = sprites;self.style = style
+        flow = OriginalBattleFlow(session:session)
+        camera = OriginalBattleCamera(width:session.width,height:session.height,layout:style.layout)
+        super.init(frame:CGRect(x:0,y:0,width:960,height:640))
+        autoresizingMask = [.width,.height]
+        overlay.frame = bounds;overlay.autoresizingMask = [.width,.height];overlay.viewport = style.layout.viewportRect
+        overlay.restoreFocus = { [weak self] in
+            guard let self = self else { return }
+            self.window?.makeFirstResponder(self);self.needsDisplay = true
+        }
+        addSubview(overlay)
     }
     required init?(coder:NSCoder) { fatalError("init(coder:) is not supported") }
-    func start() throws { try flow.start();refreshControls();needsDisplay = true }
+    func start() throws { try flow.start();needsDisplay = true }
     func resumeSourceFlow() throws {
         try flow.resumeSourceFlow()
         if waitingForStrategy,let result = flow.lastStrategy {showStrategyResult(result);waitingForStrategy = false}
         if waitingForAttack,let result = flow.lastAttack {showAttackResult(result);waitingForAttack = false}
-        refreshControls();needsDisplay = true
+        needsDisplay = true
     }
     private var canInput:Bool {flow.acceptsManualInput && (inputReady?() ?? true)}
-    private var footerY:CGFloat {origin.y+CGFloat(session.height)*cell+12}
-    override func layout() {
-        super.layout()
-        strategyButton.frame = CGRect(x:24,y:footerY+52,width:128,height:28)
-        strategyConfirmButton.frame = CGRect(x:164,y:footerY+52,width:170,height:28)
-        strategyCancelButton.frame = CGRect(x:346,y:footerY+52,width:128,height:28)
-        retreatButton.frame = CGRect(x:486,y:footerY+52,width:110,height:28)
-        quitButton.frame = CGRect(x:608,y:footerY+52,width:110,height:28)
+    // Canvas mapping matches the campaign view: fit 640×400 above a 40pt status bar.
+    private var scale:CGFloat { max(0.1,min(bounds.width/640,(bounds.height-40)/400)) }
+    private var canvasOrigin:CGPoint { CGPoint(x:(bounds.width-640*scale)/2,y:0) }
+    private func canvasPoint(_ event:NSEvent) -> CGPoint {
+        let p = convert(event.locationInWindow,from:nil)
+        return CGPoint(x:(p.x-canvasOrigin.x)/scale,y:(p.y-canvasOrigin.y)/scale)
     }
-    private func applyMenuTexts() {
-        retreatButton.title = menuTexts?.retreat.label ?? "총퇴각";quitButton.title = menuTexts?.quit.label ?? "게임종료"
-        retreatButton.isHidden = menuTexts == nil;quitButton.isHidden = menuTexts == nil;refreshControls()
+    private func yesNo(_ text:String,_ answer:@escaping (Bool) -> Void) {
+        overlay.show(CanvasMenu(title:text,options:[.init(label:"예",image:style.yes),.init(label:"아니요",image:style.no)],
+                                horizontal:true) { index in answer(index == 0) })
     }
-    private func confirm(_ text:String) -> Bool {
-        let alert = NSAlert();alert.messageText = text
-        alert.addButton(withTitle:"예 (Yes)");alert.addButton(withTitle:"아니요 (No)")
-        return alert.runModal() == .alertFirstButtonReturn
+    private func notice(_ text:String) {
+        overlay.show(CanvasNotice(speaker:"",text:text,portrait:nil) { })
     }
     /// MAIN27D77..27DA3. The campaign host restarts from source36 afterwards.
-    @objc private func requestRetreat(_ sender:Any?) {
+    private func requestRetreat() {
         guard canInput,let texts = menuTexts else { return }
-        if !flow.retreatAllowed {
-            let alert = NSAlert();alert.messageText = texts.retreat.refused?.text ?? texts.retreat.label;alert.runModal();return
+        if !flow.retreatAllowed { notice(texts.retreat.refused?.text ?? texts.retreat.label);return }
+        yesNo(texts.retreat.confirm.text) { [weak self] yes in
+            guard let self = self,yes else { return }
+            do { try self.flow.requestRetreat();self.selected = nil;self.message = "총퇴각: 전투 개시 시점의 원작 체크포인트로 돌아갑니다." }
+            catch { self.message = "\(error)" }
+            self.needsDisplay = true
         }
-        guard confirm(texts.retreat.confirm.text) else { return }
-        do { try flow.requestRetreat();selected = nil;message = "총퇴각: 전투 개시 시점의 원작 체크포인트로 돌아갑니다." }
-        catch { message = "\(error)" }
-        refreshControls();needsDisplay = true
     }
     /// MAIN27E87..27EA3. The framework then shows MAIN's retry selector.
-    @objc private func requestQuit(_ sender:Any?) {
-        guard canInput,let texts = menuTexts,confirm(texts.quit.confirm.text) else { return }
-        do { try flow.requestQuit();selected = nil } catch { message = "\(error)" }
-        refreshControls();needsDisplay = true
+    private func requestQuit() {
+        guard canInput,let texts = menuTexts else { return }
+        yesNo(texts.quit.confirm.text) { [weak self] yes in
+            guard let self = self,yes else { return }
+            do { try self.flow.requestQuit();self.selected = nil } catch { self.message = "\(error)" }
+            self.needsDisplay = true
+        }
     }
-    private func refreshControls() {
-        let unit = selected.flatMap{try? session.requireManualUnit($0)}
-        strategyButton.isEnabled = canInput && unit != nil && unit!.scriptFlags&0x82 == 0
-        strategyConfirmButton.isHidden = strategySelection == nil
-        strategyCancelButton.isHidden = strategySelection == nil
-        strategyConfirmButton.isEnabled = canInput && strategySelection != nil
-        strategyCancelButton.isEnabled = canInput && strategySelection != nil
-        retreatButton.isEnabled = canInput && strategySelection == nil
-        quitButton.isEnabled = canInput && strategySelection == nil
+    private func endTurn() throws {
+        if session.turns.stage == .manualFriendly {
+            guard canInput else {return}
+            if let slot = selected { try session.cancelMove(slot);selected = nil }
+            try flow.finishManual()
+        }
+        else if !suspended { try flow.start() }
+        message = "복원된 원작 순서로 턴을 진행했습니다."
+    }
+    /// The 기능 button opens MAIN27D12's list. Items without a restored
+    /// handler stay visible and disabled.
+    private func openFunctionMenu() {
+        guard canInput else { return }
+        let restored:Set<String> = menuTexts == nil ? ["end-turn"] : ["end-turn","retreat","quit"]
+        let items = menuTexts?.items ?? [OriginalTitleMenuItem(index:0,action:"end-turn",text:"턴 종료")]
+        functionOpen = true;needsDisplay = true
+        overlay.show(CanvasMenu(title:"",options:items.map { .init(label:$0.text,enabled:restored.contains($0.action)) },cancellable:true) { [weak self] index in
+            guard let self = self else { return }
+            self.functionOpen = false;self.needsDisplay = true
+            guard let index = index else { return }
+            switch items[index].action {
+            case "end-turn": do { try self.endTurn() } catch { self.message = "\(error)" }
+            case "retreat": self.requestRetreat()
+            case "quit": self.requestQuit()
+            default: break
+            }
+        })
+    }
+    /// Native command list for the selected unit; original unit commands are
+    /// reached by key or click in this view.
+    private func openUnitMenu(_ slot:Int) {
+        overlay.show(CanvasMenu(title:"",options:[.init(label:"책략 (S)"),.init(label:"대기 (Space)"),.init(label:"이동 취소 (Backspace)")],cancellable:true) { [weak self] index in
+            guard let self = self,let index = index else { return }
+            do {
+                switch index {
+                case 0: try self.openStrategyMenu()
+                case 1: guard self.canInput else { return };try self.flow.manualWait(slot);self.selected = nil;self.message = "대기했습니다."
+                default: guard self.canInput else { return };try self.session.cancelMove(slot);self.message = "이동을 취소했습니다."
+                }
+            } catch { self.message = "\(error)" }
+            self.needsDisplay = true
+        })
     }
     private func strategyTitle(_ id:Int)->String {strategyName?(id) ?? "책략 #\(id)"}
     /// Source range owner followed by the dispatcher's nonmutating preflight:
@@ -116,44 +159,36 @@ final class OriginalBattleView:NSView {
             return probe.execution == nil
         }
     }
-    @objc private func showStrategyMenu(_ sender:Any?) {
-        do {try openStrategyMenu()} catch {message = "\(error)"}
-        refreshControls();needsDisplay = true
-    }
     private func openStrategyMenu() throws {
         guard canInput,let slot = selected else {throw BattleError.illegalAction("책략을 사용할 부대를 먼저 선택하세요.")}
         let unit = try session.requireManualUnit(slot),person = try session.people.person(unit.person)
         guard unit.scriptFlags&0x82 == 0 else {throw BattleError.illegalAction("이 부대는 현재 책략을 사용할 수 없습니다.")}
         let abilities = try session.movement.availableStrategies(classID:person.classID,level:person.level,mp:unit.mp)
         guard !abilities.isEmpty,let costs = session.movement.strategyMPCosts else {message = "현재 병과·레벨·MP로 사용할 수 있는 책략이 없습니다.";return}
-        let menu = NSMenu(title:"책략 선택");menu.autoenablesItems = false
+        var options:[CanvasMenu.Option] = []
         for ability in abilities {
             let targets = try legalStrategyTargets(ability,casterSlot:slot)
-            let item = NSMenuItem(title:"\(strategyTitle(ability)) · MP \(costs[ability])\(targets.isEmpty ? " · 대상 없음" : "")",action:#selector(selectStrategy(_:)),keyEquivalent:"")
-            item.target = self;item.tag = ability;item.isEnabled = !targets.isEmpty;menu.addItem(item)
+            options.append(.init(label:"\(strategyTitle(ability)) · MP \(costs[ability])\(targets.isEmpty ? " · 대상 없음" : "")",enabled:!targets.isEmpty))
         }
-        menu.popUp(positioning:nil,at:NSPoint(x:strategyButton.frame.minX,y:strategyButton.frame.maxY+4),in:self)
-        window?.makeFirstResponder(self)
+        overlay.show(CanvasMenu(title:"책략 선택",options:options,cancellable:true) { [weak self] index in
+            guard let self = self,let index = index else { return }
+            self.selectStrategy(abilities[index]);self.needsDisplay = true
+        })
     }
-    @objc private func selectStrategy(_ sender:NSMenuItem) {
+    private func selectStrategy(_ ability:Int) {
         do {
             guard canInput,let slot = selected else {return}
             _ = try session.requireManualUnit(slot)
-            let targets = try legalStrategyTargets(sender.tag,casterSlot:slot)
+            let targets = try legalStrategyTargets(ability,casterSlot:slot)
             guard !targets.isEmpty else {throw BattleError.illegalAction("현재 선택할 수 있는 대상이 없습니다.")}
-            strategySelection = StrategySelection(abilityID:sender.tag,targetSlot:sender.tag < 30 ? targets.first : nil)
-            message = sender.tag < 30 ? "\(strategyTitle(sender.tag)): 표시된 대상을 클릭하거나 화살표·Tab으로 선택한 뒤 Enter를 누르세요." : "\(strategyTitle(sender.tag)): 표시된 \(targets.count)개 부대에 적용합니다. 실행 또는 Enter로 확인하세요."
+            strategySelection = StrategySelection(abilityID:ability,targetSlot:ability < 30 ? targets.first : nil)
+            message = ability < 30 ? "\(strategyTitle(ability)): 표시된 대상을 클릭하거나 화살표·Tab으로 선택한 뒤 Enter를 누르세요." : "\(strategyTitle(ability)): 표시된 \(targets.count)개 부대에 적용합니다. Enter로 확인하세요."
         } catch {message = "\(error)"}
-        refreshControls();needsDisplay = true
     }
-    @objc private func confirmStrategy(_ sender:Any?) {
-        do {try executeSelectedStrategy()} catch {message = "\(error)"}
-        refreshControls();needsDisplay = true
-    }
-    @objc private func cancelStrategy(_ sender:Any?) {
+    private func cancelStrategy() {
         guard canInput else {return}
         strategySelection = nil;message = "책략 선택을 취소했습니다. 이동 위치는 유지됩니다."
-        refreshControls();needsDisplay = true
+        needsDisplay = true
     }
     private func executeSelectedStrategy() throws {
         guard canInput,let slot = selected,let selection = strategySelection else {return}
@@ -180,71 +215,203 @@ final class OriginalBattleView:NSView {
         let index = selection.targetSlot.flatMap{targets.firstIndex(of:$0)} ?? 0
         selection.targetSlot = targets[(index+step+targets.count)%targets.count];strategySelection = selection
     }
-    private func text(_ value:String,_ x:CGFloat,_ y:CGFloat,size:CGFloat = 13,color:NSColor = .white) {
-        (value as NSString).draw(at:NSPoint(x:x,y:y),withAttributes:[.font:NSFont.systemFont(ofSize:size),.foregroundColor:color])
+    /// MAIN's force label of a unit (MAIN2C51C..2C584). Force 14 borrows the
+    /// side leader's force.
+    private func force(of unit:OriginalLiveUnit) -> Int {
+        guard let person = try? session.people.person(unit.person) else { return 0 }
+        let id = person.sourceFlags&31
+        guard id == 14,let lead = session.units[unit.enemy ? 15 : 0],let leader = try? session.people.person(lead.person) else { return id }
+        return leader.sourceFlags&31
     }
-    override func draw(_ dirtyRect:NSRect) {
-        refreshControls()
-        NSColor(calibratedWhite:0.06,alpha:1).setFill();bounds.fill()
-        text("원작 전투 복원 · \(session.definition.id)",24,12,size:19,color:.systemYellow)
-        text("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · \(session.turns.stage.rawValue) · 날씨 코드 \(session.turns.weatherIndex)",24,42)
-        text(onHook == nil ? "독립 검증: 원작 수치·이동·복원 AI 사용 / 캠페인 이벤트는 기록 / 원작 화면·전체 난수 일치 미검증" : "원작 캠페인 상태와 연결된 전투",24,66,size:12,color:.lightGray)
-        if let background = background,let context = NSGraphicsContext.current?.cgContext {
-            Renderer.image(background,in:CGRect(x:origin.x,y:origin.y,width:CGFloat(session.width)*cell,height:CGFloat(session.height)*cell),context:context)
+    private var listRows:[Int] { OriginalBattleRoster.rows(side:listSide,units:session.units) { self.force(of:$0) } }
+    private var listTopLimit:Int { max(0,listRows.count-layoutFacts.list.rows) }
+    private func color(_ index:Int) -> NSColor { style.colors[index&15] }
+    private func text(_ value:String,in rect:CGRect,color:NSColor = .white,size:CGFloat = 13,alignment:NSTextAlignment = .left,monospaced:Bool = false) {
+        let paragraph = NSMutableParagraphStyle();paragraph.alignment = alignment;paragraph.lineBreakMode = .byClipping
+        let font = monospaced ? NSFont.monospacedDigitSystemFont(ofSize:size,weight:.regular) : (NSFont(name:"Apple SD Gothic Neo",size:size) ?? .systemFont(ofSize:size))
+        (value as NSString).draw(in:rect,withAttributes:[.font:font,.foregroundColor:color,.paragraphStyle:paragraph])
+    }
+    /// Keeps moved units in view as MAIN2997E does for each source move.
+    private func updateCamera() {
+        var moved:GridPoint?
+        for unit in session.units.values.sorted(by:{$0.slot < $1.slot}) where unit.status == 2 {
+            if let old = seenPositions[unit.slot],old != unit.position { moved = unit.position }
+            seenPositions[unit.slot] = unit.position
+        }
+        let stage = session.turns.stage
+        if stage == .manualFriendly,seenStage != stage,moved == nil {
+            moved = session.units.values.filter({ !$0.enemy && $0.status == 2 }).min(by:{$0.slot < $1.slot})?.position
+        }
+        seenStage = stage
+        if let cell = moved { camera.follow(cell,margin:layoutFacts.followMargin) }
+    }
+    private func drawFrame(_ context:CGContext) {
+        let facts = layoutFacts
+        if let frame = style.frame { Renderer.image(frame,in:CGRect(x:0,y:0,width:640,height:400),context:context) }
+        else {
+            context.setFillColor(CGColor(gray:0.14,alpha:1));context.fill(CGRect(x:0,y:0,width:640,height:400))
+            context.setFillColor(CGColor(red:0.1,green:0.14,blue:0.4,alpha:1));context.fill(OriginalBattleLayout.rect(facts.list.rect))
+            context.setStrokeColor(CGColor(gray:0.6,alpha:1));context.stroke(OriginalBattleLayout.rect(facts.functionButton))
+            text("기능",in:OriginalBattleLayout.rect(facts.functionButton),alignment:.center)
+        }
+        context.setFillColor(CGColor(gray:0,alpha:1));context.fill(facts.viewportRect)
+        if functionOpen,let picture = style.functionPressed { Renderer.image(picture,in:OriginalBattleLayout.rect(facts.functionButton),context:context) }
+        text(session.definition.name ?? session.definition.id,in:CGRect(x:facts.title.column*8,y:facts.title.y-1,width:facts.title.width*8,height:18),color:color(7),alignment:.center)
+    }
+    private func drawField(_ context:CGContext) {
+        let facts = layoutFacts,viewport = facts.viewportRect,cell = facts.cell
+        context.saveGState();context.clip(to:viewport)
+        func rect(_ point:GridPoint) -> CGRect { camera.rect(of:point,in:viewport,size:cell) }
+        if let background = background {
+            let map = CGRect(x:Int(viewport.minX)-camera.x*cell/2,y:Int(viewport.minY)-camera.y*cell/2,width:session.width*cell,height:session.height*cell)
+            Renderer.image(background,in:map,context:context)
         }
         let reachable = strategySelection == nil ? selected.flatMap { try? session.reachable($0) }.map(Set.init) ?? [] : []
         for point in reachable {
-            NSColor(calibratedRed:0.2,green:0.6,blue:1,alpha:0.25).setFill()
-            CGRect(x:origin.x+CGFloat(point.x)*cell,y:origin.y+CGFloat(point.y)*cell,width:cell,height:cell).fill()
+            NSColor(calibratedRed:0.2,green:0.6,blue:1,alpha:0.25).setFill();rect(point).fill()
         }
         let strategyTargets = strategySelection.flatMap { choice in selected.flatMap {try? legalStrategyTargets(choice.abilityID,casterSlot:$0)} } ?? []
         for slot in strategyTargets {
             guard let unit = session.units[slot] else {continue}
-            NSColor(calibratedRed:0.1,green:1,blue:0.7,alpha:0.3).setFill()
-            CGRect(x:origin.x+CGFloat(unit.position.x)*cell,y:origin.y+CGFloat(unit.position.y)*cell,width:cell,height:cell).fill()
+            NSColor(calibratedRed:0.1,green:1,blue:0.7,alpha:0.3).setFill();rect(unit.position).fill()
         }
         for unit in session.units.values.sorted(by:{$0.slot < $1.slot}) where unit.status == 2 {
             guard let person = try? session.people.person(unit.person) else { continue }
-            let rect = CGRect(x:origin.x+CGFloat(unit.position.x)*cell+3,y:origin.y+CGFloat(unit.position.y)*cell+3,width:cell-6,height:cell-6)
-            if let sprites = sprites,let context = NSGraphicsContext.current?.cgContext {
-                do { Renderer.image(try sprites.image(unit:unit,classID:person.classID),in:rect.insetBy(dx:-3,dy:-3),context:context) }
-                catch { message = "원작 그림 경계: \(error)";text("?",rect.minX,rect.minY,color:.systemYellow) }
+            let box = rect(unit.position)
+            if let sprites = sprites {
+                do { Renderer.image(try sprites.image(unit:unit,classID:person.classID),in:box,context:context) }
+                catch { message = "원작 그림 경계: \(error)";text("?",in:box,color:.systemYellow) }
             } else {
-                (unit.enemy ? NSColor.systemRed : NSColor.systemBlue).setFill();NSBezierPath(ovalIn:rect).fill()
+                (unit.enemy ? NSColor.systemRed : NSColor.systemBlue).setFill();NSBezierPath(ovalIn:box.insetBy(dx:3,dy:3)).fill()
             }
-            if selected == unit.slot { NSColor.systemYellow.setStroke();let p = NSBezierPath(rect:rect.insetBy(dx:-2,dy:-2));p.lineWidth = 2;p.stroke() }
-            if strategySelection?.targetSlot == unit.slot {NSColor.systemGreen.setStroke();let p = NSBezierPath(rect:rect.insetBy(dx:-3,dy:-3));p.lineWidth = 3;p.stroke()}
-            text(String(unit.slot),rect.minX,rect.maxY-8,size:9,color:.systemYellow)
+            if selected == unit.slot { NSColor.systemYellow.setStroke();let p = NSBezierPath(rect:box.insetBy(dx:1,dy:1));p.lineWidth = 2;p.stroke() }
+            if strategySelection?.targetSlot == unit.slot {NSColor.systemGreen.setStroke();let p = NSBezierPath(rect:box);p.lineWidth = 3;p.stroke()}
+            if showsSlotNumbers { text(String(unit.slot),in:CGRect(x:box.minX+1,y:box.maxY-11,width:24,height:11),color:.systemYellow,size:9) }
         }
-        if let duel = session.scriptActions.duel,duel.active,let sprites = sprites,let context = NSGraphicsContext.current?.cgContext {
-            let viewport = OriginalDuelSprites.sourceViewport.offsetBy(dx:origin.x-16,dy:origin.y-32)
-            context.saveGState();context.clip(to:viewport);context.setFillColor(CGColor(gray:0,alpha:1));context.fill(viewport)
+        if let duel = session.scriptActions.duel,duel.active,let sprites = sprites {
+            let duelViewport = OriginalDuelSprites.sourceViewport
+            context.saveGState();context.clip(to:duelViewport);context.setFillColor(CGColor(gray:0,alpha:1));context.fill(duelViewport)
             do {
                 for side in OriginalDuelSprites.sourceDrawOrder {
-                    let rect = try OriginalDuelSprites.sourceRect(duel:duel,side:side).offsetBy(dx:origin.x-16,dy:origin.y-32)
-                    Renderer.image(try sprites.duelImage(duel,side:side),in:rect,context:context)
+                    Renderer.image(try sprites.duelImage(duel,side:side),in:try OriginalDuelSprites.sourceRect(duel:duel,side:side),context:context)
                 }
             } catch { message = "원작 일기토 그림 경계: \(error)" }
             context.restoreGState()
         }
-        let y = footerY
-        text(message,24,y,color:.lightGray)
-        if let slot = selected,let unit = session.units[slot],let person = try? session.people.person(unit.person) {
-            let maximum = (try? OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:session.combat)) ?? 0
-            text("\(person.name) · 병력 \(person.rawTroops)/\(maximum) · Lv \(person.level) EXP \(person.experience) · 사기 \(unit.morale) · MP \(unit.mp)",24,y+23)
+        context.restoreGState()
+    }
+    private func drawList(_ context:CGContext) {
+        let facts = layoutFacts.list,rows = listRows
+        listTop = min(listTop,listTopLimit)
+        let force = rows.first.flatMap { _ in session.units[listSide == 0 ? 0 : 15] }.map { self.force(of:$0) }
+        if let force = force,let texts = style.texts,texts.forces.indices.contains(force) {
+            let box = layoutFacts.force
+            text(texts.forces[force]+texts.forceSuffix,in:CGRect(x:box.column*8,y:box.y-1,width:box.width*8,height:18),color:color(7),alignment:.center)
         }
+        for (button,rect) in layoutFacts.sideButtons.enumerated() where style.side.count == 2 {
+            Renderer.image(style.side[button][button == listSide ? 1 : 0],in:OriginalBattleLayout.rect(rect),context:context)
+        }
+        for row in 0..<facts.rows where listTop+row < rows.count {
+            guard let unit = session.units[rows[listTop+row]],let person = try? session.people.person(unit.person) else { continue }
+            let y = row*facts.rowHeight
+            if unit.slot == (inspected ?? selected) {
+                context.setStrokeColor(color(7).cgColor);context.setLineWidth(1)
+                context.stroke(CGRect(x:facts.hover[0],y:facts.rect[1]+y,width:facts.hover[1],height:facts.rowHeight).insetBy(dx:0.5,dy:0.5))
+            }
+            let name = color(OriginalBattleRoster.nameColor(unit))
+            text(person.name,in:CGRect(x:facts.nameColumn*8,y:facts.textY+y-1,width:(facts.statusColumn-facts.nameColumn)*8,height:18),color:name)
+            if unit.status != 2 {
+                text(style.texts?.retired ?? "",in:CGRect(x:facts.statusColumn*8,y:facts.textY+y-1,width:88,height:18),color:name)
+                continue
+            }
+            let maximum = (try? OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:session.combat)) ?? 0
+            let gauge = OriginalBattleGauge(current:person.rawTroops,maximum:maximum,width:facts.gauge[2])
+            let bar = CGRect(x:facts.gauge[0],y:facts.gauge[1]+y,width:facts.gauge[2],height:facts.gauge[3])
+            context.setFillColor(CGColor(gray:0,alpha:1));context.fill(bar)
+            context.saveGState();context.clip(to:CGRect(x:bar.minX,y:bar.minY,width:CGFloat(gauge.fill),height:bar.height))
+            if let tile = style.gauge[gauge.tile] {
+                var x = bar.minX
+                while x < bar.minX+CGFloat(gauge.fill) { Renderer.image(tile,in:CGRect(x:x,y:bar.minY,width:8,height:10),context:context);x += 8 }
+            } else { context.setFillColor(color(gauge.tile == "high" ? 4 : gauge.tile == "middle" ? 14 : 2).cgColor);context.fill(bar) }
+            context.restoreGState()
+            text(String(format:"%4d/%4d",person.rawTroops,maximum),in:CGRect(x:facts.statusColumn*8,y:facts.textY+y-1,width:80,height:16),color:color(7),size:11,alignment:.right,monospaced:true)
+        }
+        if listTopLimit > 0 {
+            let track = OriginalBattleLayout.rect(facts.track),height = track.height*CGFloat(facts.rows)/CGFloat(rows.count)
+            let top = track.minY+(track.height-height)*CGFloat(listTop)/CGFloat(listTopLimit)
+            context.setFillColor(color(7).cgColor);context.fill(CGRect(x:track.minX+4,y:top,width:track.width-8,height:height))
+        }
+    }
+    private func drawMinimap(_ context:CGContext) {
+        let facts = layoutFacts,scale = facts.minimap.cellPixels
+        let origin = facts.minimapOrigin(width:session.width,height:session.height)
+        let map = CGRect(x:origin.x,y:origin.y,width:CGFloat(session.width*scale),height:CGFloat(session.height*scale))
+        if let picture = style.minimap { Renderer.image(picture,in:map,context:context) }
+        else { context.setFillColor(CGColor(gray:0.2,alpha:1));context.fill(map) }
+        for unit in session.units.values where unit.status == 2 {
+            context.setFillColor(color(OriginalBattleRoster.markColor(unit)).cgColor)
+            context.fill(CGRect(x:map.minX+CGFloat(unit.position.x*scale),y:map.minY+CGFloat(unit.position.y*scale),width:CGFloat(scale),height:CGFloat(scale)))
+        }
+        // MAIN291CC..29278: a two-pixel colour6 box around the visible cells.
+        let box = CGRect(x:map.minX+CGFloat(camera.x*scale/2),y:map.minY+CGFloat(camera.y*scale/2),width:CGFloat(facts.columns*scale),height:CGFloat(facts.rows*scale))
+        context.setStrokeColor(color(6).cgColor);context.setLineWidth(2);context.stroke(box.insetBy(dx:1,dy:1))
+    }
+    private func unitDetails(_ slot:Int) -> String? {
+        guard let unit = session.units[slot],let person = try? session.people.person(unit.person) else { return nil }
+        let maximum = (try? OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:session.combat)) ?? 0
+        return "\(person.name) · 병력 \(person.rawTroops)/\(maximum) · Lv \(person.level) EXP \(person.experience) · 사기 \(unit.morale) · MP \(unit.mp)"
+    }
+    private func drawStatus() {
+        let top = 400*scale+2,width = bounds.width-24
+        let turn = "\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(session.turns.weatherIndex)"
+        var detail = (inspected ?? selected).flatMap(unitDetails) ?? ""
         if let choice = strategySelection {
-            if choice.abilityID >= 30 {text("범위 대상 \(strategyTargets.count)개 · Enter/실행: 확인 · Esc: 취소",24,y+88,color:.systemGreen)}
+            if choice.abilityID >= 30 {detail = "범위 대상 · Enter: 확인 · Esc: 취소"}
             else if let slot = choice.targetSlot,let unit = session.units[slot],let person = try? session.people.person(unit.person) {
-                text("대상: \(person.name) · 병력 \(person.rawTroops) · 사기 \(unit.morale) · 화살표/Tab: 대상 변경 · Enter: 실행 · Esc: 취소",24,y+88,color:.systemGreen)
+                detail = "대상: \(person.name) · 병력 \(person.rawTroops) · 사기 \(unit.morale) · 화살표/Tab: 변경 · Enter: 실행 · Esc: 취소"
             }
         }
-        if !session.objectiveEvents.isEmpty && onRetirement == nil { text("원작 목표 이벤트 \(session.objectiveEvents.map(\.kind)) 발생 · 캠페인에 적용하지 않은 독립 검증입니다.",24,y+118,color:.systemYellow) }
+        if !session.objectiveEvents.isEmpty && onRetirement == nil { detail = "원작 목표 이벤트 \(session.objectiveEvents.map(\.kind)) 발생 · 캠페인에 적용하지 않은 독립 검증입니다." }
+        text(externalStatus ?? message,in:CGRect(x:12,y:top,width:width-150,height:18),color:.lightGray,size:12)
+        text(turn,in:CGRect(x:bounds.width-160,y:top,width:148,height:18),color:.white,size:12,alignment:.right)
+        text(detail,in:CGRect(x:12,y:top+18,width:width,height:18),color:.white,size:12)
+    }
+    override func draw(_ dirtyRect:NSRect) {
+        updateCamera()
+        NSColor.black.setFill();bounds.fill()
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        context.translateBy(x:canvasOrigin.x,y:canvasOrigin.y);context.scaleBy(x:scale,y:scale)
+        context.interpolationQuality = .none
+        drawFrame(context);drawField(context);drawList(context);drawMinimap(context)
+        context.restoreGState()
+        drawStatus()
+    }
+    private func clickPanel(_ point:CGPoint) -> Bool {
+        let facts = layoutFacts
+        if OriginalBattleLayout.rect(facts.functionButton).contains(point) { openFunctionMenu();return true }
+        if let side = facts.sideButtons.firstIndex(where:{ OriginalBattleLayout.rect($0).contains(point) }) { listSide = side;listTop = 0;inspected = nil;return true }
+        if OriginalBattleLayout.rect(facts.list.rect).contains(point) {
+            let row = Int(point.y-CGFloat(facts.list.rect[1]))/facts.list.rowHeight+listTop,rows = listRows
+            if rows.indices.contains(row),let unit = session.units[rows[row]] {
+                inspected = unit.slot
+                if unit.status == 2 { camera.center(on:unit.position) }
+            }
+            return true
+        }
+        let cells = facts.minimap.cellPixels,origin = facts.minimapOrigin(width:session.width,height:session.height)
+        let map = CGRect(x:origin.x,y:origin.y,width:CGFloat(session.width*cells),height:CGFloat(session.height*cells))
+        if map.contains(point) {
+            camera.center(halfX:Int(point.x-map.minX)*2/cells,halfY:Int(point.y-map.minY)*2/cells);return true
+        }
+        return false
     }
     override func mouseDown(with event:NSEvent) {
         window?.makeFirstResponder(self)
-        let p = convert(event.locationInWindow,from:nil),point = GridPoint(x:Int(floor((p.x-origin.x)/cell)),y:Int(floor((p.y-origin.y)/cell)))
-        guard (0..<session.width).contains(point.x),(0..<session.height).contains(point.y) else { return }
+        let p = canvasPoint(event)
+        if clickPanel(p) { needsDisplay = true;return }
+        guard let point = camera.cell(at:p,in:layoutFacts.viewportRect,size:layoutFacts.cell) else { return }
+        inspected = nil
         do {
             guard canInput else { throw BattleError.illegalAction("Continue the current source phase first") }
             let target = session.units.values.first(where:{$0.status == 2 && $0.position == point})
@@ -252,7 +419,7 @@ final class OriginalBattleView:NSView {
                 let targets = try legalStrategyTargets(choice.abilityID,casterSlot:slot)
                 guard let target = target,targets.contains(target.slot) else {throw BattleError.illegalAction("표시된 책략 대상 중에서 선택하세요.")}
                 if choice.abilityID < 30 {choice.targetSlot = target.slot;strategySelection = choice;try executeSelectedStrategy()}
-                else {message = "범위 책략은 실행 버튼 또는 Enter로 전체 대상 적용을 확인하세요."}
+                else {message = "범위 책략은 Enter로 전체 대상 적용을 확인하세요."}
             } else if let target = target,!target.enemy {
                 if let old = selected,old != target.slot { try session.cancelMove(old) }
                 _ = try session.requireManualUnit(target.slot);selected = target.slot
@@ -263,35 +430,47 @@ final class OriginalBattleView:NSView {
                     else {waitingForAttack = true;message = "공격의 퇴장 대사·이벤트가 끝나기를 기다립니다."}
                     selected = nil
                 } else { _ = try session.move(slot,to:point);message = "이동했습니다. 행동을 선택하거나 Backspace로 취소하세요." }
-            }
+            } else if let target = target { inspected = target.slot }
         } catch { message = "\(error)" }
-        refreshControls();needsDisplay = true
+        needsDisplay = true
+    }
+    override func rightMouseDown(with event:NSEvent) {
+        if strategySelection != nil { cancelStrategy();return }
+        if let slot = selected,canInput { openUnitMenu(slot);return }
+        openFunctionMenu()
+    }
+    override func scrollWheel(with event:NSEvent) {
+        let facts = layoutFacts
+        wheelRemainder.x += event.scrollingDeltaX;wheelRemainder.y += event.scrollingDeltaY
+        let step:CGFloat = event.hasPreciseScrollingDeltas ? 24 : 1
+        let columns = Int(wheelRemainder.x/step),rows = Int(wheelRemainder.y/step)
+        guard columns != 0 || rows != 0 else { return }
+        wheelRemainder.x -= CGFloat(columns)*step;wheelRemainder.y -= CGFloat(rows)*step
+        if OriginalBattleLayout.rect(facts.list.rect).contains(canvasPoint(event)) { listTop = min(listTopLimit,max(0,listTop-rows)) }
+        else { camera.move(columns:-columns,rows:-rows) }
+        needsDisplay = true
     }
     override func keyDown(with event:NSEvent) {
+        if strategySelection == nil,let step = [123:(-1,0),124:(1,0),125:(0,1),126:(0,-1)][Int(event.keyCode)] {
+            camera.move(columns:step.0,rows:step.1);needsDisplay = true;return
+        }
         guard !event.isARepeat else { return }
         do {
             guard !suspended,inputReady?() ?? true else { return }
             if strategySelection != nil {
                 guard canInput else {return}
-                if event.keyCode == 53 {cancelStrategy(nil)}
+                if event.keyCode == 53 {cancelStrategy()}
                 else if [36,76].contains(event.keyCode) {try executeSelectedStrategy()}
                 else if [48,49,124,125].contains(event.keyCode) {try cycleStrategyTarget(event.modifierFlags.contains(.shift) ? -1 : 1)}
                 else if [123,126].contains(event.keyCode) {try cycleStrategyTarget(-1)}
                 else if event.keyCode == 1 || event.charactersIgnoringModifiers?.lowercased() == "s" {try openStrategyMenu()}
             } else if event.keyCode == 1 || event.charactersIgnoringModifiers?.lowercased() == "s" {try openStrategyMenu()}
             else if event.keyCode == 49,let slot = selected {guard canInput else {return};try flow.manualWait(slot);selected = nil;message = "대기했습니다." }
-            else if [36,76].contains(event.keyCode) {
-                if session.turns.stage == .manualFriendly {
-                    guard canInput else {return}
-                    if let slot = selected { try session.cancelMove(slot);selected = nil }
-                    try flow.finishManual()
-                }
-                else if !suspended { try flow.start() }
-                message = "복원된 원작 순서로 턴을 진행했습니다."
-            } else if event.keyCode == 51,let slot = selected {guard canInput else {return};try session.cancelMove(slot);message = "이동을 취소했습니다." }
+            else if [36,76].contains(event.keyCode) { try endTurn() }
+            else if event.keyCode == 51,let slot = selected {guard canInput else {return};try session.cancelMove(slot);message = "이동을 취소했습니다." }
             else { super.keyDown(with:event) }
         } catch { message = "\(error)" }
-        refreshControls();needsDisplay = true
+        needsDisplay = true
     }
     func capture(to url:URL) throws {
         guard let rep = bitmapImageRepForCachingDisplay(in:bounds) else { throw EngineError.invalid("Cannot allocate original battle capture") }

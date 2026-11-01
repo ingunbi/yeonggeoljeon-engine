@@ -56,6 +56,54 @@ def map_record(payload: bytes, index: int, source: dict) -> dict:
                        "neighborCode": "MAIN.EXE:0x2FCD2..0x2FF19; DS:4D1C"}}
 
 
+def map_names(text: bytes, count: int, suffix: bytes) -> list[str]:
+    """MAIN 0x282DC..0x28364: HEXZMAP's text member holds one line per map.
+    The copy keeps double-byte characters only, so digits and spaces end a name."""
+    names, at = [], 0
+    for index in range(count):
+        end = at
+        while end + 1 < len(text) and text[end] >= 0xA0:
+            end += 2
+        if end == at:
+            raise ResourceError(f"map name line {index} has no double-byte characters")
+        names.append((text[at:end] + suffix).decode("cp949"))
+        line_end = text.find(b"\n", at)
+        if line_end < 0 and index != count - 1:
+            raise ResourceError("map name member ends before its last map")
+        at = line_end + 1
+    return names
+
+
+def tile_colors(tile: IndexedImage) -> list[int]:
+    """Four most frequent colours of a tile (MAIN 0xD86E..0xD9BF); a tie keeps
+    the higher colour index because the source scan compares with >=."""
+    counts = [0] * 16
+    for value in tile.pixels:
+        counts[value] += 1
+    ranked = []
+    for _ in range(4):
+        best, top = 0, counts[0]
+        for color in range(16):
+            if counts[color] >= top:
+                best, top = color, counts[color]
+        ranked.append(best)
+        counts[best] = 0
+    return ranked
+
+
+def minimap_image(record: dict, ranks: list[list[int]]) -> IndexedImage:
+    """Each picture tile becomes two by two pixels (MAIN 0xD5FC..0xD6F8)."""
+    columns, rows = record["pictureColumns"], record["pictureRows"]
+    width, height = columns * 2, rows * 2
+    pixels = bytearray(width * height)
+    for ordinal, tile in enumerate(record["pictureTiles"]):
+        x, y = ordinal % columns * 2, ordinal // columns * 2
+        a, b, c, d = ranks[tile]
+        pixels[y * width + x], pixels[y * width + x + 1] = a, b
+        pixels[(y + 1) * width + x], pixels[(y + 1) * width + x + 1] = c, d
+    return IndexedImage(width, height, bytes(pixels))
+
+
 def placement_units(operands: bytes, opcode: int, source: dict, people: bytes) -> tuple[list, list, dict]:
     """Read source records without resolving campaign eligibility flags.
 
@@ -128,13 +176,20 @@ def export_maps(game: Path, output: Path, main: bytes) -> tuple[list, list]:
     alternate = set(struct.unpack_from("<19H", main, 0x37DA0 + 0x3DCC))
     colors = palette_at(main, 0x38DF0 + 3 * 48)
     maps = []
+    suffix = main[0x37DA0 + 0x3DFF:0x37DA0 + 0x3DFF + 8]
+    if main[0x28358:0x28360] != bytes.fromhex("511e68ff3d9ad446") or suffix[-1] != 0:
+        raise ResourceError("MAIN map name suffix does not match the examined profile")
+    names_member = archive.decode(58)
+    names = map_names(names_member.data, 58, suffix[:-1])
     for index in range(58):
         member = archive.decode(index)
         record = map_record(member.data, index, member.provenance())
+        record["name"] = names[index]
         bank_id = 2 if index in alternate else 1
         data = banks[0].data + banks[bank_id].data
         tile_images = [planar_image(data[offset:offset + 128], 16, 16)
                        for offset in range(0, len(data), 128)]
+        ranks = [tile_colors(tile) for tile in tile_images]
         canvas_width, canvas_height = record["pictureColumns"] * 16, record["pictureRows"] * 16
         pixels = bytearray(canvas_width * canvas_height)
         for ordinal, tile in enumerate(record["pictureTiles"]):
@@ -146,6 +201,10 @@ def export_maps(game: Path, output: Path, main: bytes) -> tuple[list, list]:
         (output / "images").mkdir(exist_ok=True)
         (output / relative).write_bytes(png_bytes(IndexedImage(canvas_width, canvas_height, bytes(pixels)), colors))
         record["image"] = relative
+        record["minimap"] = f"images/battle-minimap-{index:02}.png"
+        (output / record["minimap"]).write_bytes(png_bytes(minimap_image(record, ranks), colors))
+        record["source"]["name"] = {**names_member.provenance(), "code": "MAIN.EXE:0x282DC..0x28364"}
+        record["source"]["minimap"] = "MAIN.EXE:0xD86E..0xD9BF;0xD5FC..0xD6F8"
         record["source"]["graphics"] = {"commonBank": banks[0].provenance(), "selectedBank": banks[bank_id].provenance(),
                                            "selectorTableOffset": 0x37DA0 + 0x3DCC,
                                            "selectorCode": "MAIN.EXE:0x2827A..0x282AA",
@@ -216,7 +275,8 @@ def prepare(game: Path, output: Path) -> dict:
                     # Repeated source commands can replace a side. A projection
                     # with duplicate people/coordinates is retained but unplayable.
                     selected = maps[map_id] if 0 <= map_id < len(maps) else None
-                    result = {"id": identity, "name": None,
+                    result = {"id": identity, "name": selected["name"] if selected else None,
+                              "minimap": selected["minimap"] if selected else None,
                               "width": selected["width"] if selected else None,
                               "height": selected["height"] if selected else None,
                               "coordinateSystem": "orthogonal" if selected else None,

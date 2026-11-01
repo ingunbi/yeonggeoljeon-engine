@@ -38,8 +38,9 @@ operation stops the replay, writes the available evidence and returns failure.
 An input list ending means only that those selected operations were processed;
 it is never a complete-campaign or original-runtime-parity claim. AppKit
 frames are offscreen captures, not macOS keyboard/mouse-delivery verification.
-Field frames include MAIN's screen frame and HUD when the local story data
-carries them ([field screen](original-screen.md)).
+Field and battle frames include MAIN's screen frames when the local story data
+carries them ([screens](original-screen.md)). Battle captures also label unit
+slots, because input files address units by slot.
 
 Battle input shapes are `{kind:"battle-move",slot,x,y}`,
 `{kind:"battle-attack",slot,target}`, `{kind:"battle-strategy",slot,ability}`

@@ -205,11 +205,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         func bcd(_ n:Int?) -> UInt8 { let v = n ?? 0;return UInt8(((v/10)<<4)|(v%10)) }
         let rng = OriginalRNG.clockSeed(dayByte:bcd(c.day),hourByte:bcd(c.hour),minuteByte:bcd(c.minute),secondByte:bcd(c.second))
         let source = try OriginalGameData(root:data.root),session = try source.isolatedBattle(id,rng:rng)
-        let board = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:data.root),sprites:OriginalBattleSpriteRenderer(root:data.root))
-        let scroll = NSScrollView(frame:CGRect(x:0,y:0,width:1100,height:740))
-        scroll.hasVerticalScroller = true;scroll.hasHorizontalScroller = true;scroll.documentView = board
-        try board.start();show(scroll,title:"원작 전투 복원 · \(id)")
-        scroll.window?.makeFirstResponder(board)
+        let board = try OriginalBattleView(session:session,background:battleBackground(session.definition,root:data.root),sprites:OriginalBattleSpriteRenderer(root:data.root),
+                                           style:OriginalBattleStyle.load(definition:session.definition,root:data.root))
+        try board.start();show(board,title:"원작 전투 복원 · \(id)")
+        board.window?.makeFirstResponder(board)
     }
     func showBattle(_ definition:BattleDefinition) throws {
         let session = try BattleSession(definition:definition,policy:.experimentalV1)
@@ -310,7 +309,8 @@ do {
         try originalScriptActionSelfTests();try originalPartySelfTests();try originalPartyIntegrationSelfTests()
         try originalEndingSelfTests();try originalBattleSpriteSelfTests();try originalRetirementSelfTests()
         try originalStrategyFlowInputSelfTests();try originalPlayInputSelfTests();try originalExplorationInputSelfTests()
-        try originalAttackOperationSelfTests();try originalFrameworkSelfTests();try originalResumeSelfTests();exit(0)
+        try originalAttackOperationSelfTests();try originalFrameworkSelfTests();try originalResumeSelfTests()
+        try originalBattleScreenSelfTests();exit(0)
     }
     guard let root = options.data ?? Bundle.main.resourceURL?.appendingPathComponent("GameData",isDirectory:true) else {
         throw EngineError.invalid("Use --data PATH or an app bundle containing Resources/GameData")

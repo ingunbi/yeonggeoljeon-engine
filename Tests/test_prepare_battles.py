@@ -9,9 +9,9 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from prepare_battles import battle_identity_map, map_record, placement_units, prepare
+from prepare_battles import battle_identity_map, map_names, map_record, minimap_image, placement_units, prepare, tile_colors
 from prepare_scene import SceneError
-from resource_formats import ResourceError
+from resource_formats import IndexedImage, ResourceError
 
 
 def people_fixture():
@@ -52,6 +52,29 @@ class BattleExtractionTests(unittest.TestCase):
         for payload in (b"", bytes([3, 2]) + bytes(8), bytes([4, 2]) + bytes(9)):
             with self.assertRaises(ResourceError):
                 map_record(payload, 0, {})
+
+    def test_map_names_keep_double_byte_characters_of_their_line(self):
+        one, two = "\uac00\ub098".encode("cp949"), "\ub2e4".encode("cp949")
+        text = one + b"\n" + two + b"1\r\n" + one + b" \r\n"
+        suffix = " \uc804".encode("cp949")
+        self.assertEqual(map_names(text, 3, suffix), ["\uac00\ub098 \uc804", "\ub2e4 \uc804", "\uac00\ub098 \uc804"])
+        with self.assertRaises(ResourceError):
+            map_names(one + b"\n", 3, suffix)
+        with self.assertRaises(ResourceError):
+            map_names(b"1\n", 1, suffix)
+
+    def test_minimap_tile_keeps_four_most_frequent_colours_and_source_ties(self):
+        pixels = bytes([1] * 100 + [2] * 80 + [3] * 60 + [4] * 16)
+        self.assertEqual(tile_colors(IndexedImage(16, 16, pixels)), [1, 2, 3, 4])
+        # The source scan compares with >=, so a tie keeps the higher colour
+        # and absent colours resolve to fifteen.
+        self.assertEqual(tile_colors(IndexedImage(16, 16, bytes([1] * 128 + [2] * 128))), [2, 1, 15, 15])
+
+    def test_minimap_places_each_tile_as_two_by_two_pixels(self):
+        record = {"pictureColumns": 2, "pictureRows": 1, "pictureTiles": [0, 1]}
+        image = minimap_image(record, [[1, 2, 3, 4], [5, 6, 7, 8]])
+        self.assertEqual((image.width, image.height), (4, 2))
+        self.assertEqual(list(image.pixels), [1, 2, 5, 6, 3, 4, 7, 8])
 
     def test_source_eligibility_is_not_coerced_to_inactive(self):
         ordinary = struct.pack("<H7B", 1, 2, 3, 1, 0, 0, 3, 0)
@@ -117,6 +140,9 @@ class OriginalBattleExtractionTests(unittest.TestCase):
             self.assertFalse(battle["originalRosterComplete"])
             self.assertEqual(len(battle["tiles"]), 28 * 16)
             self.assertTrue((output / battle["image"]).is_file())
+            self.assertTrue((output / battle["minimap"]).is_file())
+            self.assertTrue(battle["name"].endswith("\uc804\ud22c"))
+            self.assertTrue(all(m["name"] and m["width"] <= 40 and m["height"] <= 24 for m in result["maps"]))
             self.assertTrue(all(u["hp"] is None for b in result["battles"] for u in b["units"]))
             self.assertEqual(json.loads((output / "battles.json").read_text())["format"], 1)
 

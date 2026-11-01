@@ -202,7 +202,9 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
         if battleView?.session !== session {
             let view = try OriginalBattleView(session: session,
                 background: battleBackground(session.definition, root: data.root),
-                sprites: OriginalBattleSpriteRenderer(root: data.root))
+                sprites: OriginalBattleSpriteRenderer(root: data.root),
+                style: OriginalBattleStyle.load(definition: session.definition, root: data.root, story: host.story))
+            view.showsSlotNumbers = true
             view.onHook = { try host.beginTurnHook($0) }
             view.onRetirement = { try host.beginRetirement($0) }
             view.inputReady = { host.battleInputReady }
