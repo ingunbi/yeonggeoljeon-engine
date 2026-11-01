@@ -42,6 +42,20 @@ struct OriginalBattleParts:Codable,Equatable {
     var gauge:[String:OriginalBattlePart]
 }
 
+/// Labels and refusals of the unit command routine (MAIN2D9D4..2DE42).
+struct OriginalBattleCommands:Codable,Equatable {
+    var labels:[String]; var ambush:[String]; var itemActions:[String]
+    var strategyNames:[String]; var messages:[String:String]; var source:JSONValue?
+    static let messageKeys:Set<String> = ["outOfMoveRange","notOurs","cannotControl","confused","finished","noStrategy",
+        "releaseAmbush","noItems","gave","inventoryFull","discarded","noAllyInRange","noEnemyInRange","enemyUnit",
+        "cannotAttackAlly","outOfItemRange","outOfAttackRange"]
+    var isValid:Bool {
+        labels.count == 4 && ambush.count == 2 && itemActions.count == 4 && strategyNames.count == 36 &&
+            Set(messages.keys) == Self.messageKeys && (labels+ambush+itemActions+strategyNames).allSatisfy({ !$0.isEmpty }) &&
+            messages.values.allSatisfy({ !$0.isEmpty })
+    }
+}
+
 /// Map scroll in half cells, as DS:E1BC+8/+0A. Both axes stay even, so the
 /// view always aligns to whole cells. Original scrolling steps two half cells
 /// per frame; the native view jumps to the target.
@@ -107,6 +121,41 @@ enum OriginalBattleRoster {
     }
 }
 
+/// Pure rules of the unit command routine, shared by the view and its tests.
+enum OriginalBattleCommand {
+    /// MAIN30EF1..30F4E: why a clicked unit opens no command, in source order.
+    /// Each case names its refusal in `OriginalBattleCommands.messages`.
+    static func denial(_ unit:OriginalLiveUnit) -> String? {
+        if unit.enemy { return "notOurs" }
+        if unit.scriptFlags&4 != 0 || unit.orderMode != 7 { return "cannotControl" }
+        if unit.scriptFlags&2 != 0 { return "confused" }
+        if unit.scriptFlags&0x80 != 0 { return "finished" }
+        return nil
+    }
+    /// MAIN2AA26..2AAC4: the window opens one cell right of the unit, stays
+    /// above row 272 and flips left past column 224. Each nested window steps
+    /// sixteen pixels on from its parent, away from the edge it was pushed from.
+    static func window(cell:GridPoint,camera:OriginalBattleCamera,layout:OriginalBattleLayout = .source) -> (origin:CGPoint,step:CGPoint) {
+        var x = (cell.x-camera.x/2+1)*layout.cell+layout.viewport[0]
+        var y = (cell.y-camera.y/2)*layout.cell+layout.viewport[1]
+        var step = CGPoint(x:16,y:16)
+        let rows = y>>4-17
+        if rows >= 0 { y -= rows<<4;step.y = -16 }
+        if UInt16(truncatingIfNeeded:x>>4-1) >= 13 { x -= 160;step.x = -16 }
+        return (CGPoint(x:x,y:y),step)
+    }
+    struct StrategyRow:Equatable { var ability:Int; var cost:Int; var enabled:Bool }
+    /// MAIN2DC83..2DD10 lists every ability the level allows. Rows the unit
+    /// cannot pay for, and fire rows in rain, stay listed but disabled.
+    static func strategyRows(classID:Int,level:Int,mp:UInt8,rain:Bool,levels:[[Int]],costs:[Int]) -> [StrategyRow] {
+        // MAIN2DB64 skips the whole list for class 17.
+        guard classID != 17,levels.count == 36,costs.count == 36 else { return [] }
+        return (0..<36).filter { levels[$0][classID] <= level }.map { ability in
+            StrategyRow(ability:ability,cost:costs[ability],enabled:costs[ability] <= Int(mp) && !(ability < 5 && rain))
+        }
+    }
+}
+
 /// MAIN28806..2895A: filled width and the tile chosen from the tenths ratio.
 struct OriginalBattleGauge:Equatable {
     var fill:Int; var tile:String
@@ -130,6 +179,7 @@ struct OriginalBattleStyle {
     var no:CGImage?
     var colors:[NSColor] = (0..<16).map { NSColor(white:CGFloat($0)/15,alpha:1) }
     var texts:OriginalBattleTexts?
+    var commands:OriginalBattleCommands?
 
     static var plain:Self { Self() }
     static func load(definition:BattleDefinition,root:URL,story:OriginalStoryCatalog? = nil) throws -> Self {
@@ -146,7 +196,7 @@ struct OriginalBattleStyle {
         let file = root.appendingPathComponent("story.json")
         let catalog = try story ?? (FileManager.default.fileExists(atPath:file.path) ? OriginalStoryCatalog.load(from:file) : nil)
         guard let catalog = catalog,let screen = catalog.screens?.battle else { return style }
-        style.layout = screen.layout;style.texts = screen.texts
+        style.layout = screen.layout;style.texts = screen.texts;style.commands = screen.commands
         style.frame = try picture(catalog.frameImage(screen.frameAsset,palette:3))
         style.functionPressed = try picture(screen.parts.function.image)
         style.side = try screen.parts.side.map { try $0.compactMap { try picture($0.image) } }

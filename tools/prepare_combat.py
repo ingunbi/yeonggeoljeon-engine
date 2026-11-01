@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import struct
 import sys
 
 from prepare_resources import EXAMINED_MAIN, inventory
@@ -17,6 +18,7 @@ DGROUP = 0x37DA0
 CLASS_COUNT = 19
 ITEM_COUNT = 64
 ITEM_BASE = 0xD00
+DATA_SEGMENT, ITEM_DESCRIPTIONS, ITEM_DESCRIPTION_COUNT = 0x37DA0, 0x21C8, 63
 ITEM_STRIDE = 16
 TABLES = {
     "attackBase": (0x0FFE, CLASS_COUNT),
@@ -58,9 +60,19 @@ def extract_tables(main: bytes, bak: bytes) -> dict:
             source_tables[name]["selection"] = "normal player/AI attack subtype; zero also permits counter roll"
     # MAIN 1E774..1E78C reads these 64 sixteen-byte records. The constructor
     # 1B162..1B1BA copies raw14 to value and clamps raw15 into category0..15.
+    def item_text(i: int) -> dict:
+        """1B162 keeps twelve name bytes and stores the record's own index,
+        which 7894 uses in the DS:21C8 description table of 63 items."""
+        record = bak[ITEM_BASE + i * ITEM_STRIDE:ITEM_BASE + (i + 1) * ITEM_STRIDE]
+        name = record[:12].split(b"\0")[0].decode("cp949")
+        if i >= ITEM_DESCRIPTION_COUNT:
+            return {"name": name, "description": ""}
+        start = DATA_SEGMENT + struct.unpack_from("<H", main, DATA_SEGMENT + ITEM_DESCRIPTIONS + i * 2)[0]
+        return {"name": name, "description": main[start:main.index(0, start)].decode("cp949")}
+
     result["items"] = [
         {"id": i, "category": min(15, bak[ITEM_BASE + i * ITEM_STRIDE + 15]),
-         "value": bak[ITEM_BASE + i * ITEM_STRIDE + 14],
+         "value": bak[ITEM_BASE + i * ITEM_STRIDE + 14], **item_text(i),
          "source": {"resource": "BAKDATA.R3", "offset": ITEM_BASE + i * ITEM_STRIDE,
                     "bytes": ITEM_STRIDE, "valueByteOffset": 14, "categoryByteOffset": 15,
                     "rawCategory": bak[ITEM_BASE + i * ITEM_STRIDE + 15]}}

@@ -111,6 +111,23 @@ BATTLE_SHAPES = {
     "retired": (0x29643, "68b63e"),
 }
 FORCE_TABLE, FORCE_COUNT, FORCE_SUFFIX, RETIRED_TEXT = 0xF1E, 15, 0x3EB0, 0x3EB6
+# Unit command routine (MAIN 0x2D9D4..0x2DE42) and its helpers. Each entry is
+# the checked instruction that names a table or message.
+COMMAND_SHAPES = {
+    "commandTable": (0x2DA75, "8b870c43"), "ambushTable": (0x2DAE5, "b86648"),
+    "itemActionTable": (0x2DEE9, "684643"), "strategyNameTable": (0x2DB88, "81c33844"),
+    "windowRow": (0x2AA89, "c1ef04 83ef11 780e c1e704 297c29"),
+    "windowColumn": (0x2AAA8, "c1e804 48 3d0d00 720d 816c27a000"),
+}
+COMMAND_MESSAGES = {
+    "outOfMoveRange": (0x30FF8, 0x4D3C), "notOurs": (0x3103F, 0x4D51), "cannotControl": (0x3104D, 0x4D66),
+    "confused": (0x31067, 0x4D80), "finished": (0x31075, 0x4DA2), "noStrategy": (0x2DD80, 0x488A),
+    "releaseAmbush": (0x2DDAD, 0x48AA), "noItems": (0x2DEC9, 0x48BD), "gave": (0x2E009, 0x48D8),
+    "inventoryFull": (0x2E025, 0x48F0), "discarded": (0x2E06D, 0x4916), "noAllyInRange": (0x29B74, 0x3EC1),
+    "noEnemyInRange": (0x29B7A, 0x3EDB), "enemyUnit": (0x29C11, 0x3EF7), "cannotAttackAlly": (0x29C51, 0x3F07),
+    "outOfItemRange": (0x29C67, 0x3F21), "outOfAttackRange": (0x29C6D, 0x3F33),
+}
+COMMAND_LABELS, AMBUSH_ACTIONS, ITEM_ACTIONS, STRATEGY_COUNT = 4, 2, 4, 36
 DATA_SEGMENT, DATA_PARAGRAPH = 0x37DA0, 0x313A
 FUNCTION_PICTURE, SIDE_PICTURES = 0x800, {(0, 0): 0xA00, (0, 1): 0xC00, (1, 0): 0xE00, (1, 1): 0x1000}
 GAUGE_TILES = {"high": 0x2230, "middle": 0x21E0, "low": 0x2208}
@@ -139,6 +156,36 @@ def battle_texts(main: bytes) -> dict:
     return {"forces": forces, "forceSuffix": data_text(main, FORCE_SUFFIX), "retired": data_text(main, RETIRED_TEXT),
             "source": {"forces": f"DS:{FORCE_TABLE:04X}", "forceSuffix": f"DS:{FORCE_SUFFIX:04X}",
                        "retired": f"DS:{RETIRED_TEXT:04X}", "resource": "MAIN.EXE"}}
+
+
+def far_texts(main: bytes, table: int, count: int) -> list[str]:
+    result = []
+    for index in range(count):
+        offset, paragraph = struct.unpack_from("<HH", main, DATA_SEGMENT + table + index * 4)
+        if paragraph != DATA_PARAGRAPH:
+            raise ResourceError(f"MAIN text table DS:{table:04X} leaves the data segment")
+        result.append(data_text(main, offset).strip())
+    return result
+
+
+def battle_commands(main: bytes) -> dict:
+    """Labels and refusals of the unit command routine, from checked sites."""
+    for name, (at, shape) in COMMAND_SHAPES.items():
+        expected = bytes.fromhex(shape.replace(" ", ""))
+        if main[at:at + len(expected)] != expected:
+            raise ResourceError(f"MAIN command site {name} at {at:#x} does not match the examined profile")
+    messages = {}
+    for name, (at, pointer) in COMMAND_MESSAGES.items():
+        if main[at:at + 4] != b"\x1e\x68" + struct.pack("<H", pointer):
+            raise ResourceError(f"MAIN command message {name} at {at:#x} does not match the examined profile")
+        messages[name] = data_text(main, pointer)
+    # Entry zero of DS:430C is the unused empty string before the four commands.
+    labels = far_texts(main, 0x430C, COMMAND_LABELS + 1)[1:]
+    return {"labels": labels, "ambush": far_texts(main, 0x4866, AMBUSH_ACTIONS),
+            "itemActions": far_texts(main, 0x4346, ITEM_ACTIONS),
+            "strategyNames": far_texts(main, 0x4438, STRATEGY_COUNT), "messages": messages,
+            "source": {"routine": "MAIN.EXE:0x2D9D4..0x2DE42", "window": "MAIN.EXE:0x2AA26..0x2AAC4",
+                       "picker": "MAIN.EXE:0x29ADE..0x29CAF", "moveDenials": "MAIN.EXE:0x30ED2..0x31083"}}
 
 
 def battle_layout(panel_size: tuple[int, int]) -> dict:
@@ -242,6 +289,7 @@ def prepare(game: Path, output: Path) -> dict:
     panel = next(asset for asset in assets if asset["id"] == 0x25)
     screens = screen_facts(main, {"layout": battle_layout((panel["width"], panel["height"])),
                                   "colors": [list(color) for color in palettes[3]], "texts": battle_texts(main),
+                                  "commands": battle_commands(main),
                                   "parts": battle_parts(selected, palettes[3], output)})
     result = {"format": 1, "assets": assets, "portraitAssets": portraits, "choiceButtons": buttons, "layouts": layouts,
               "screens": screens,

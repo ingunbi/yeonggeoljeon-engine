@@ -29,7 +29,12 @@ final class OriginalBattleView:NSView {
     var externalStatus:String? { didSet { if externalStatus != oldValue { needsDisplay = true } } }
     /// Replay captures label slots, because input files address units by slot.
     var showsSlotNumbers = false
-    private var message = "클릭: 선택·이동·공격 / S: 책략 / Space: 대기 / Return: 턴 종료 / Backspace: 이동 취소 / 방향키·휠: 지도 이동"
+    private var message = "클릭: 부대 선택·이동 / 오른쪽 클릭·Esc: 취소, 기능 메뉴 / Return: 턴 종료 / 방향키·휠: 지도 이동"
+    /// Steps of MAIN's unit command routine (2D9D4), one at a time.
+    private enum Phase:Equatable { case idle,moving(Int),command(Int),attackTarget(Int),giveTarget(Int,item:Int) }
+    private var phase = Phase.idle
+    /// A unit whose move range stays shown behind its refusal (MAIN30F5A).
+    private var previewSlot:Int?
     private var layoutFacts:OriginalBattleLayout { style.layout }
     private var camera:OriginalBattleCamera
     private var listSide = 0
@@ -103,7 +108,8 @@ final class OriginalBattleView:NSView {
     private func endTurn() throws {
         if session.turns.stage == .manualFriendly {
             guard canInput else {return}
-            if let slot = selected { try session.cancelMove(slot);selected = nil }
+            if let slot = selected { try session.cancelMove(slot) }
+            resetCommand()
             try flow.finishManual()
         }
         else if !suspended { try flow.start() }
@@ -112,9 +118,9 @@ final class OriginalBattleView:NSView {
     /// The 기능 button opens MAIN27D12's list. Items without a restored
     /// handler stay visible and disabled.
     private func openFunctionMenu() {
-        guard canInput else { return }
+        guard canInput,phase == .idle,strategySelection == nil else { return }
         let restored:Set<String> = menuTexts == nil ? ["end-turn"] : ["end-turn","retreat","quit"]
-        let items = menuTexts?.items ?? [OriginalTitleMenuItem(index:0,action:"end-turn",text:"턴 종료")]
+        let items = menuTexts?.items ?? [OriginalTitleMenuItem(index:0,action:"end-turn",text:"End turn")]
         functionOpen = true;needsDisplay = true
         overlay.show(CanvasMenu(title:"",options:items.map { .init(label:$0.text,enabled:restored.contains($0.action)) },cancellable:true) { [weak self] index in
             guard let self = self else { return }
@@ -128,22 +134,151 @@ final class OriginalBattleView:NSView {
             }
         })
     }
-    /// Native command list for the selected unit; original unit commands are
-    /// reached by key or click in this view.
-    private func openUnitMenu(_ slot:Int) {
-        overlay.show(CanvasMenu(title:"",options:[.init(label:"책략 (S)"),.init(label:"대기 (Space)"),.init(label:"이동 취소 (Backspace)")],cancellable:true) { [weak self] index in
-            guard let self = self,let index = index else { return }
-            do {
-                switch index {
-                case 0: try self.openStrategyMenu()
-                case 1: guard self.canInput else { return };try self.flow.manualWait(slot);self.selected = nil;self.message = "대기했습니다."
-                default: guard self.canInput else { return };try self.session.cancelMove(slot);self.message = "이동을 취소했습니다."
-                }
-            } catch { self.message = "\(error)" }
-            self.needsDisplay = true
-        })
+    private func refusal(_ key:String) -> String { style.commands?.messages[key] ?? key }
+    private func filled(_ key:String,_ value:String) -> String { refusal(key).replacingOccurrences(of:"%s",with:value) }
+    private func resetCommand() { phase = .idle;selected = nil;strategySelection = nil;previewSlot = nil }
+    /// A nested window sits one step on from its parent (MAIN2AACA..2AB3C).
+    private func windowOrigin(_ slot:Int,depth:Int) -> CGPoint? {
+        guard let unit = session.units[slot] else { return nil }
+        let window = OriginalBattleCommand.window(cell:unit.position,camera:camera,layout:layoutFacts)
+        return CGPoint(x:window.origin.x+window.step.x*CGFloat(depth),y:window.origin.y+window.step.y*CGFloat(depth))
     }
-    private func strategyTitle(_ id:Int)->String {strategyName?(id) ?? "책략 #\(id)"}
+    /// MAIN2DAE0: a hidden unit (mask20 clear) gets the two ambush entries.
+    private func commandMenu(_ slot:Int,_ choose:@escaping (Int?) -> Void) -> CanvasMenu? {
+        guard let unit = session.units[slot] else { return nil }
+        let labels = unit.scriptFlags&0x20 != 0 ? (style.commands?.labels ?? ["Attack","Strategy","Item","Wait"]) : (style.commands?.ambush ?? ["Strike","Release"])
+        return CanvasMenu(title:"",options:labels.map { .init(label:$0) },cancellable:true,anchor:windowOrigin(slot,depth:0),onChoose:choose)
+    }
+    private func openCommand(_ slot:Int) {
+        updateCamera()
+        guard let unit = session.units[slot],unit.status == 2 else { resetCommand();return }
+        selected = slot;phase = .command(slot);inspected = nil;strategySelection = nil
+        let hidden = unit.scriptFlags&0x20 == 0
+        guard let menu = commandMenu(slot,{ [weak self] index in
+            guard let self = self else { return }
+            guard let index = index else { self.cancelCommand(slot);return }
+            do { if hidden { try self.runAmbushCommand(index,slot) } else { try self.runCommand(index,slot) } }
+            catch { self.message = "\(error)";self.openCommand(slot) }
+            self.needsDisplay = true
+        }) else { return }
+        overlay.show(menu)
+    }
+    /// MAIN2DE08..2DE1D clears moved40 and returns the unit to its origin.
+    private func cancelCommand(_ slot:Int) {
+        do { try session.cancelMove(slot) } catch { message = "\(error)" }
+        resetCommand();needsDisplay = true
+    }
+    private func runCommand(_ index:Int,_ slot:Int) throws {
+        switch index {
+        case 0: try beginAttack(slot)
+        case 1: try openStrategies(slot)
+        case 2: openItems(slot)
+        default:
+            guard canInput else { return }
+            try flow.manualWait(slot);resetCommand();message = "대기했습니다."
+        }
+    }
+    private func runAmbushCommand(_ index:Int,_ slot:Int) throws {
+        if index == 0 { try beginAttack(slot);return }
+        yesNo(refusal("releaseAmbush")) { [weak self] yes in
+            guard let self = self else { return }
+            if yes {
+                do { try self.flow.manualReleaseAmbush(slot) } catch { self.message = "\(error)" }
+            }
+            self.openCommand(slot)
+        }
+    }
+    private func actor(_ slot:Int) throws -> (board:OriginalMovementBoard,actor:OriginalMovementActor) {
+        let board = try session.board()
+        guard let actor = board.actors.first(where:{$0.runtimeSlot == slot}) else { throw BattleError.invalid("Original unit is missing from its source board") }
+        return (board,actor)
+    }
+    private func attackCells(_ slot:Int) throws -> Set<GridPoint> {
+        let value = try actor(slot)
+        return Set(try OriginalAI.attackCells(profile:session.movement,board:value.board,actor:value.actor))
+    }
+    /// MAIN2DF5E gives within range code one around the unit.
+    private func giveCells(_ slot:Int) throws -> Set<GridPoint> {
+        let value = try actor(slot)
+        return Set(try OriginalAI.rangeCells(profile:session.movement,board:value.board,point:value.actor.position,raw:1))
+    }
+    /// MAIN29B68: with nobody in range the picker refuses and returns.
+    private func beginAttack(_ slot:Int) throws {
+        let cells = try attackCells(slot)
+        guard session.units.values.contains(where:{ $0.status == 2 && $0.enemy && cells.contains($0.position) }) else {
+            overlay.show(CanvasNotice(speaker:"",text:refusal("noEnemyInRange"),portrait:nil) { [weak self] in self?.openCommand(slot) })
+            return
+        }
+        phase = .attackTarget(slot);message = "공격할 적을 클릭하세요. 오른쪽 클릭·Esc: 취소"
+    }
+    private func openStrategies(_ slot:Int) throws {
+        guard let unit = session.units[slot],let levels = session.movement.strategyLevelRequirements,let costs = session.movement.strategyMPCosts else {
+            throw BattleError.unsupported("Original strategy tables are unavailable")
+        }
+        let person = try session.people.person(unit.person)
+        let rain = session.combat.strategyEnvironmentLookup[Int(session.turns.weatherIndex)] == 2
+        let rows = OriginalBattleCommand.strategyRows(classID:person.classID,level:person.level,mp:unit.mp,rain:rain,levels:levels,costs:costs)
+        guard !rows.isEmpty else {
+            overlay.show(CanvasNotice(speaker:"",text:refusal("noStrategy"),portrait:nil) { [weak self] in self?.openCommand(slot) })
+            return
+        }
+        let options = rows.map { CanvasMenu.Option(label:"\(strategyTitle($0.ability))  \($0.cost)",enabled:$0.enabled) }
+        overlay.show(CanvasMenu(title:"",options:options,cancellable:true,anchor:windowOrigin(slot,depth:1)) { [weak self] index in
+            guard let self = self else { return }
+            guard let index = index else { self.openCommand(slot);return }
+            self.selectStrategy(rows[index].ability,slot);self.needsDisplay = true
+        },behind:[commandMenu(slot) { _ in }].compactMap { $0 })
+    }
+    private func heldItems(_ slot:Int) -> [Int] {
+        guard let unit = session.units[slot],let person = try? session.people.person(unit.person) else { return [] }
+        return person.itemIDs.filter { $0 != 255 }
+    }
+    private func itemRecord(_ id:Int) -> OriginalItemEffect? { session.combat.items.first(where:{ $0.id == id }) }
+    private func itemName(_ id:Int) -> String { itemRecord(id)?.name ?? "도구 #\(id)" }
+    private var itemActionLabels:[String] { style.commands?.itemActions ?? ["Use","Give","Drop","Inspect"] }
+    private func itemActionMenu(_ slot:Int,_ choose:@escaping (Int?) -> Void) -> CanvasMenu {
+        CanvasMenu(title:"",options:itemActionLabels.map { .init(label:$0) },cancellable:true,anchor:windowOrigin(slot,depth:1),onChoose:choose)
+    }
+    /// MAIN2DE42..2DEF7: the item command needs at least one held item.
+    private func openItems(_ slot:Int) {
+        guard !heldItems(slot).isEmpty else {
+            overlay.show(CanvasNotice(speaker:"",text:refusal("noItems"),portrait:nil) { [weak self] in self?.openCommand(slot) })
+            return
+        }
+        overlay.show(itemActionMenu(slot) { [weak self] action in
+            guard let self = self else { return }
+            guard let action = action else { self.openCommand(slot);return }
+            self.openItemList(slot,action:action)
+        },behind:[commandMenu(slot) { _ in }].compactMap { $0 })
+    }
+    private func openItemList(_ slot:Int,action:Int) {
+        let items = heldItems(slot)
+        guard !items.isEmpty else { openItems(slot);return }
+        overlay.show(CanvasMenu(title:"",options:items.map { .init(label:itemName($0)) },cancellable:true,anchor:windowOrigin(slot,depth:2)) { [weak self] index in
+            guard let self = self else { return }
+            guard let index = index else { self.openItems(slot);return }
+            do { try self.runItemAction(action,item:items[index],slot) } catch { self.message = "\(error)";self.openItemList(slot,action:action) }
+            self.needsDisplay = true
+        },behind:[commandMenu(slot) { _ in },itemActionMenu(slot) { _ in }].compactMap { $0 })
+    }
+    private func runItemAction(_ action:Int,item:Int,_ slot:Int) throws {
+        let again:() -> Void = { [weak self] in self?.openItemList(slot,action:action) }
+        switch action {
+        case 0:
+            // MAIN2E0E6..2E833 owns the item effects, which are not restored.
+            // The item stays held and the unit keeps its action.
+            overlay.show(CanvasNotice(speaker:"",text:"\(itemName(item))의 사용 효과는 아직 복원하지 않았습니다.",portrait:nil,onDismiss:again))
+        case 1:
+            phase = .giveTarget(slot,item:item);message = "\(itemName(item))을(를) 건넬 아군을 클릭하세요. 오른쪽 클릭·Esc: 취소"
+        case 2:
+            guard let unit = session.units[slot] else { return }
+            try session.people.discardItem(person:unit.person,item:item)
+            overlay.show(CanvasNotice(speaker:"",text:filled("discarded",itemName(item)),portrait:nil,onDismiss:again))
+        default:
+            overlay.show(CanvasNotice(speaker:itemName(item),text:itemRecord(item)?.description ?? "",portrait:nil,onDismiss:again))
+        }
+    }
+    private func strategyTitle(_ id:Int)->String {strategyName?(id) ?? style.commands?.strategyNames[id] ?? "책략 #\(id)"}
     /// Source range owner followed by the dispatcher's nonmutating preflight:
     /// do not duplicate terrain/weather/full-healing rules in this view.
     private func legalStrategyTargets(_ ability:Int,casterSlot:Int) throws -> [Int] {
@@ -159,35 +294,21 @@ final class OriginalBattleView:NSView {
             return probe.execution == nil
         }
     }
-    private func openStrategyMenu() throws {
-        guard canInput,let slot = selected else {throw BattleError.illegalAction("책략을 사용할 부대를 먼저 선택하세요.")}
-        let unit = try session.requireManualUnit(slot),person = try session.people.person(unit.person)
-        guard unit.scriptFlags&0x82 == 0 else {throw BattleError.illegalAction("이 부대는 현재 책략을 사용할 수 없습니다.")}
-        let abilities = try session.movement.availableStrategies(classID:person.classID,level:person.level,mp:unit.mp)
-        guard !abilities.isEmpty,let costs = session.movement.strategyMPCosts else {message = "현재 병과·레벨·MP로 사용할 수 있는 책략이 없습니다.";return}
-        var options:[CanvasMenu.Option] = []
-        for ability in abilities {
-            let targets = try legalStrategyTargets(ability,casterSlot:slot)
-            options.append(.init(label:"\(strategyTitle(ability)) · MP \(costs[ability])\(targets.isEmpty ? " · 대상 없음" : "")",enabled:!targets.isEmpty))
-        }
-        overlay.show(CanvasMenu(title:"책략 선택",options:options,cancellable:true) { [weak self] index in
-            guard let self = self,let index = index else { return }
-            self.selectStrategy(abilities[index]);self.needsDisplay = true
-        })
-    }
-    private func selectStrategy(_ ability:Int) {
+    private func selectStrategy(_ ability:Int,_ slot:Int) {
         do {
-            guard canInput,let slot = selected else {return}
+            guard canInput else {return}
             _ = try session.requireManualUnit(slot)
             let targets = try legalStrategyTargets(ability,casterSlot:slot)
             guard !targets.isEmpty else {throw BattleError.illegalAction("현재 선택할 수 있는 대상이 없습니다.")}
+            selected = slot
             strategySelection = StrategySelection(abilityID:ability,targetSlot:ability < 30 ? targets.first : nil)
             message = ability < 30 ? "\(strategyTitle(ability)): 표시된 대상을 클릭하거나 화살표·Tab으로 선택한 뒤 Enter를 누르세요." : "\(strategyTitle(ability)): 표시된 \(targets.count)개 부대에 적용합니다. Enter로 확인하세요."
-        } catch {message = "\(error)"}
+        } catch {message = "\(error)";openCommand(slot)}
     }
     private func cancelStrategy() {
         guard canInput else {return}
         strategySelection = nil;message = "책략 선택을 취소했습니다. 이동 위치는 유지됩니다."
+        if case .command(let slot) = phase { openCommand(slot) }
         needsDisplay = true
     }
     private func executeSelectedStrategy() throws {
@@ -198,8 +319,12 @@ final class OriginalBattleView:NSView {
         }
         let result = try flow.manualStrategy(slot,abilityID:selection.abilityID,target:selection.targetSlot)
         strategySelection = nil
-        if let result {showStrategyResult(result);if result.completed {selected = nil}}
-        else {waitingForStrategy = true;selected = nil;message = "책략의 퇴장 대사·이벤트가 끝나기를 기다립니다."}
+        if let result {
+            showStrategyResult(result)
+            // MAIN2DDCD returns to the command window unless the unit acted.
+            if result.completed {resetCommand()} else {openCommand(slot)}
+        }
+        else {waitingForStrategy = true;resetCommand();message = "책략의 퇴장 대사·이벤트가 끝나기를 기다립니다."}
     }
     private func showStrategyResult(_ result:OriginalStrategyExecution) {
         if result.completed {message = "\(strategyTitle(result.abilityID)) 실행 · \(result.targets.count)개 대상 처리"}
@@ -266,9 +391,16 @@ final class OriginalBattleView:NSView {
             let map = CGRect(x:Int(viewport.minX)-camera.x*cell/2,y:Int(viewport.minY)-camera.y*cell/2,width:session.width*cell,height:session.height*cell)
             Renderer.image(background,in:map,context:context)
         }
-        let reachable = strategySelection == nil ? selected.flatMap { try? session.reachable($0) }.map(Set.init) ?? [] : []
-        for point in reachable {
-            NSColor(calibratedRed:0.2,green:0.6,blue:1,alpha:0.25).setFill();rect(point).fill()
+        var rangeSlot = previewSlot
+        if case .moving(let slot) = phase { rangeSlot = slot }
+        if let slot = rangeSlot,let cells = try? session.reachable(slot) {
+            for point in Set(cells) { NSColor(calibratedRed:0.2,green:0.6,blue:1,alpha:0.25).setFill();rect(point).fill() }
+        }
+        if case .attackTarget(let slot) = phase,let cells = try? attackCells(slot) {
+            for point in cells { NSColor(calibratedRed:1,green:0.25,blue:0.2,alpha:0.3).setFill();rect(point).fill() }
+        }
+        if case .giveTarget(let slot,_) = phase,let cells = try? giveCells(slot) {
+            for point in cells { NSColor(calibratedRed:0.1,green:1,blue:0.7,alpha:0.3).setFill();rect(point).fill() }
         }
         let strategyTargets = strategySelection.flatMap { choice in selected.flatMap {try? legalStrategyTargets(choice.abilityID,casterSlot:$0)} } ?? []
         for slot in strategyTargets {
@@ -420,25 +552,74 @@ final class OriginalBattleView:NSView {
                 guard let target = target,targets.contains(target.slot) else {throw BattleError.illegalAction("표시된 책략 대상 중에서 선택하세요.")}
                 if choice.abilityID < 30 {choice.targetSlot = target.slot;strategySelection = choice;try executeSelectedStrategy()}
                 else {message = "범위 책략은 Enter로 전체 대상 적용을 확인하세요."}
-            } else if let target = target,!target.enemy {
-                if let old = selected,old != target.slot { try session.cancelMove(old) }
-                _ = try session.requireManualUnit(target.slot);selected = target.slot
-            } else if let slot = selected {
-                _ = try session.requireManualUnit(slot)
-                if let target = target {
-                    if let result = try flow.manualAttack(slot,target:target.slot) { showAttackResult(result) }
-                    else {waitingForAttack = true;message = "공격의 퇴장 대사·이벤트가 끝나기를 기다립니다."}
-                    selected = nil
-                } else { _ = try session.move(slot,to:point);message = "이동했습니다. 행동을 선택하거나 Backspace로 취소하세요." }
-            } else if let target = target { inspected = target.slot }
+            } else { try clickField(point,target) }
         } catch { message = "\(error)" }
         needsDisplay = true
     }
-    override func rightMouseDown(with event:NSEvent) {
-        if strategySelection != nil { cancelStrategy();return }
-        if let slot = selected,canInput { openUnitMenu(slot);return }
-        openFunctionMenu()
+    /// One map click in the current step of the unit command routine.
+    private func clickField(_ point:GridPoint,_ target:OriginalLiveUnit?) throws {
+        switch phase {
+        case .idle:
+            guard let unit = target else { return }
+            if let denial = OriginalBattleCommand.denial(unit) {
+                previewSlot = unit.slot;inspected = unit.slot
+                overlay.show(CanvasNotice(speaker:"",text:refusal(denial),portrait:nil) { [weak self] in self?.previewSlot = nil;self?.needsDisplay = true })
+                return
+            }
+            _ = try session.requireManualUnit(unit.slot)
+            selected = unit.slot
+            // MAIN2D9F3: a hidden unit keeps its cell and goes straight to commands.
+            if unit.scriptFlags&0x20 == 0 { openCommand(unit.slot) } else { phase = .moving(unit.slot) }
+        case .moving(let slot):
+            guard let unit = session.units[slot] else { return }
+            if point == unit.position { openCommand(slot);return }
+            guard try session.reachable(slot).contains(point) else {
+                overlay.show(CanvasNotice(speaker:"",text:refusal("outOfMoveRange"),portrait:nil) { })
+                return
+            }
+            _ = try session.move(slot,to:point)
+            openCommand(slot)
+        case .attackTarget(let slot):
+            guard try attackCells(slot).contains(point) else {
+                overlay.show(CanvasNotice(speaker:"",text:refusal("outOfAttackRange"),portrait:nil) { });return
+            }
+            guard let target = target else { return }
+            guard target.enemy else {
+                overlay.show(CanvasNotice(speaker:"",text:refusal("cannotAttackAlly"),portrait:nil) { });return
+            }
+            if let result = try flow.manualAttack(slot,target:target.slot) { showAttackResult(result) }
+            else {waitingForAttack = true;message = "공격의 퇴장 대사·이벤트가 끝나기를 기다립니다."}
+            resetCommand()
+        case .giveTarget(let slot,let item):
+            guard let unit = session.units[slot] else { return }
+            guard try giveCells(slot).contains(point) || point == unit.position else {
+                overlay.show(CanvasNotice(speaker:"",text:refusal("outOfItemRange"),portrait:nil) { });return
+            }
+            guard let target = target else { return }
+            if target.enemy { overlay.show(CanvasNotice(speaker:"",text:refusal("enemyUnit"),portrait:nil) { });return }
+            if target.slot == slot { openItemList(slot,action:1);return }
+            if try flow.manualGive(slot,to:target.slot,item:item) {
+                resetCommand()
+                overlay.show(CanvasNotice(speaker:"",text:filled("gave",itemName(item)),portrait:nil) { })
+            } else {
+                overlay.show(CanvasNotice(speaker:"",text:refusal("inventoryFull"),portrait:nil) { [weak self] in self?.openItemList(slot,action:1) })
+            }
+        case .command: break
+        }
     }
+    /// Right click and Escape step back one level of the routine.
+    private func stepBack() {
+        if strategySelection != nil { cancelStrategy();return }
+        switch phase {
+        case .moving: resetCommand()
+        case .attackTarget(let slot): openCommand(slot)
+        case .giveTarget(let slot,_): openItemList(slot,action:1)
+        case .idle: openFunctionMenu()
+        case .command: break
+        }
+        needsDisplay = true
+    }
+    override func rightMouseDown(with event:NSEvent) { stepBack() }
     override func scrollWheel(with event:NSEvent) {
         let facts = layoutFacts
         wheelRemainder.x += event.scrollingDeltaX;wheelRemainder.y += event.scrollingDeltaY
@@ -463,12 +644,11 @@ final class OriginalBattleView:NSView {
                 else if [36,76].contains(event.keyCode) {try executeSelectedStrategy()}
                 else if [48,49,124,125].contains(event.keyCode) {try cycleStrategyTarget(event.modifierFlags.contains(.shift) ? -1 : 1)}
                 else if [123,126].contains(event.keyCode) {try cycleStrategyTarget(-1)}
-                else if event.keyCode == 1 || event.charactersIgnoringModifiers?.lowercased() == "s" {try openStrategyMenu()}
-            } else if event.keyCode == 1 || event.charactersIgnoringModifiers?.lowercased() == "s" {try openStrategyMenu()}
-            else if event.keyCode == 49,let slot = selected {guard canInput else {return};try flow.manualWait(slot);selected = nil;message = "대기했습니다." }
-            else if [36,76].contains(event.keyCode) { try endTurn() }
-            else if event.keyCode == 51,let slot = selected {guard canInput else {return};try session.cancelMove(slot);message = "이동을 취소했습니다." }
-            else { super.keyDown(with:event) }
+            } else if event.keyCode == 53 || event.keyCode == 51 {
+                if phase != .idle || event.keyCode == 53 { stepBack() }
+            } else if [36,76].contains(event.keyCode) {
+                if phase == .idle { try endTurn() }
+            } else { super.keyDown(with:event) }
         } catch { message = "\(error)" }
         needsDisplay = true
     }

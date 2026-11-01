@@ -78,5 +78,62 @@ func originalBattleScreenSelfTests() throws {
     let none = OriginalBattleGauge(current:5,maximum:0,width:88)
     try check(none.fill == 0 && none.tile == "low","a zero maximum draws an empty low gauge")
     try check(OriginalBattleGauge(current:900,maximum:100,width:88).fill == 88,"an overfull value stays inside the bar")
+
+    // MAIN30EF1..30F4E refusals come in source order.
+    try check(OriginalBattleCommand.denial(unit(15,mode:7)) == "notOurs","an enemy unit is refused first")
+    try check(OriginalBattleCommand.denial(unit(1,mode:1)) == "cannotControl","an allied AI unit cannot be ordered")
+    try check(OriginalBattleCommand.denial(unit(1,flags:0x24,mode:7)) == "cannotControl","mask four blocks orders")
+    try check(OriginalBattleCommand.denial(unit(1,flags:0x22,mode:7)) == "confused","confusion is reported before acted")
+    try check(OriginalBattleCommand.denial(unit(1,flags:0xA2,mode:7)) == "confused","confusion outranks the acted flag")
+    try check(OriginalBattleCommand.denial(unit(1,flags:0xA0,mode:7)) == "finished","an acted unit is finished")
+    try check(OriginalBattleCommand.denial(unit(1,mode:7)) == nil,"a ready player unit opens commands")
+
+    // MAIN2AA26..2AAC4 window placement.
+    let corner = OriginalBattleCamera(width:28,height:16)
+    let first = OriginalBattleCommand.window(cell:GridPoint(x:0,y:0),camera:corner)
+    try check(first.origin == CGPoint(x:48,y:32) && first.step == CGPoint(x:16,y:16),"the window opens one cell right of the unit")
+    let right = OriginalBattleCommand.window(cell:GridPoint(x:5,y:0),camera:corner)
+    try check(right.origin.x == 208 && right.step.x == 16,"the last column that stays right of the unit")
+    let flipped = OriginalBattleCommand.window(cell:GridPoint(x:6,y:0),camera:corner)
+    try check(flipped.origin.x == 80 && flipped.step.x == -16,"past column 224 the window moves left by 160")
+    let upper = OriginalBattleCommand.window(cell:GridPoint(x:0,y:7),camera:corner)
+    try check(upper.origin.y == 256 && upper.step.y == 16,"the last row that keeps its height")
+    let lower = OriginalBattleCommand.window(cell:GridPoint(x:0,y:10),camera:corner)
+    try check(lower.origin.y == 272 && lower.step.y == -16,"lower rows stop at 272 and step upward")
+    var scrolled = OriginalBattleCamera(width:28,height:16)
+    scrolled.center(on:GridPoint(x:14,y:8))
+    let shifted = OriginalBattleCommand.window(cell:GridPoint(x:scrolled.x/2,y:scrolled.y/2),camera:scrolled)
+    try check(shifted.origin == CGPoint(x:48,y:32),"placement follows the scrolled window")
+
+    // MAIN2DC83..2DD10 strategy rows.
+    var levels = Array(repeating:Array(repeating:99,count:19),count:36)
+    levels[0][2] = 1;levels[6][2] = 5;levels[7][2] = 6
+    var costs = Array(repeating:4,count:36)
+    costs[6] = 9
+    let rows = OriginalBattleCommand.strategyRows(classID:2,level:5,mp:8,rain:false,levels:levels,costs:costs)
+    try check(rows.map(\.ability) == [0,6],"the level gate decides which rows exist")
+    try check(rows.map(\.enabled) == [true,false],"a row the unit cannot pay for stays listed and disabled")
+    let wet = OriginalBattleCommand.strategyRows(classID:2,level:6,mp:20,rain:true,levels:levels,costs:costs)
+    try check(wet.map(\.enabled) == [false,true,true],"rain disables only the five fire rows")
+    try check(OriginalBattleCommand.strategyRows(classID:17,level:99,mp:99,rain:false,levels:levels,costs:costs).isEmpty,"class 17 has no strategy list")
+
+    // MAIN2DF95..2E05C inventory moves.
+    let tables = OriginalCombatTables(format:1,attackBase:Array(repeating:10,count:19),defenseBase:Array(repeating:10,count:19),
+        troopBase:Array(repeating:10,count:19),troopGrowth:Array(repeating:0,count:19),physicalSubtypeByClass:Array(repeating:0,count:19),
+        terrainDefensePercent:Array(repeating:0,count:256),strategyEnvironmentLookup:Array(repeating:0,count:256),
+        items:(0..<64).map{OriginalItemEffect(id:$0,category:15,value:0)})
+    let catalog = OriginalPersonCatalog(format:1,people:(0..<384).map{id in
+        OriginalPersonDefinition(id:id,name:"p\(id)",classID:0,level:1,experience:0,rawTroops:10,defenseScalar:1,attackScalar:1,
+            intellectScalar:1,personality:0,personalScalar:0,itemIDs:id == 2 ? Array(1...8) : [7,9,7,255,255,255,255,255],sourceFlags:0,
+            sourceRole:0,sourceContext2:0,sourceContext3:0)
+    })
+    let people = try OriginalPeople(catalog:catalog,tables:tables)
+    try people.discardItem(person:0,item:7)
+    try check(try people.person(0).itemIDs == [255,9,7,255,255,255,255,255],"a discard clears the first matching slot and leaves a hole")
+    try check(try people.giveItem(from:0,to:1,item:9),"a free receiver accepts the gift")
+    let giver = try people.person(0).itemIDs,receiver = try people.person(1).itemIDs
+    try check(giver == [255,255,7,255,255,255,255,255] && receiver[3] == 9,"the receiver fills its first empty slot")
+    try check(try !people.giveItem(from:0,to:2,item:7),"a full receiver refuses")
+    try check(try people.person(0).itemIDs.contains(7),"a refused gift keeps the item")
     print("Original battle screen self-tests passed: \(checks)")
 }

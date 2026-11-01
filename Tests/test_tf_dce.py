@@ -8,7 +8,8 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from prepare_story import BATTLE_FRAME_CALL, BATTLE_SHAPES, FIELD_FRAME_CALL, HUD_FIELDS, PORTRAIT_CALL, battle_layout, checked_shapes, picture_directory, prepare, screen_facts
+from prepare_story import (BATTLE_FRAME_CALL, BATTLE_SHAPES, COMMAND_MESSAGES, COMMAND_SHAPES, DATA_PARAGRAPH, DATA_SEGMENT, FIELD_FRAME_CALL,
+                           HUD_FIELDS, PORTRAIT_CALL, battle_commands, battle_layout, checked_shapes, picture_directory, prepare, screen_facts)
 from resource_formats import ResourceError
 from tf_dce import dce_picture
 
@@ -114,6 +115,40 @@ class DCEFormatTests(unittest.TestCase):
         layout = battle_layout((176, 112))
         self.assertEqual((layout["viewport"], layout["minimap"]["panel"]), ([16, 32, 416, 352], [448, 272, 176, 112]))
 
+    def test_battle_commands_read_labels_and_refusals_from_checked_sites(self):
+        main = bytearray(DATA_SEGMENT + 0x10000)
+        for at, shape in COMMAND_SHAPES.values():
+            expected = bytes.fromhex(shape.replace(" ", ""))
+            main[at:at + len(expected)] = expected
+        for name, (at, pointer) in COMMAND_MESSAGES.items():
+            main[at:at + 4] = b"\x1e\x68" + struct.pack("<H", pointer)
+            text = name.encode("ascii") + b"\0"
+            main[DATA_SEGMENT + pointer:DATA_SEGMENT + pointer + len(text)] = text
+        # Far pointer tables, each entry naming a short synthetic label.
+        place = 0x8000
+
+        def table(base, count):
+            nonlocal place
+            for index in range(count):
+                struct.pack_into("<HH", main, DATA_SEGMENT + base + index * 4, place, DATA_PARAGRAPH)
+                main[DATA_SEGMENT + place:DATA_SEGMENT + place + 4] = b" %c\0\0" % (65 + index)
+                place += 4
+        table(0x430C, 5)
+        table(0x4866, 2)
+        table(0x4346, 4)
+        table(0x4438, 36)
+        facts = battle_commands(bytes(main))
+        self.assertEqual(facts["labels"], ["B", "C", "D", "E"])
+        self.assertEqual(len(facts["strategyNames"]), 36)
+        self.assertEqual(facts["messages"]["notOurs"], "notOurs")
+        struct.pack_into("<H", main, DATA_SEGMENT + 0x430C + 2, 0x1234)
+        with self.assertRaisesRegex(ResourceError, "data segment"):
+            battle_commands(bytes(main))
+        struct.pack_into("<H", main, DATA_SEGMENT + 0x430C + 2, DATA_PARAGRAPH)
+        main[COMMAND_MESSAGES["gave"][0] + 1] = 0x90
+        with self.assertRaisesRegex(ResourceError, "gave"):
+            battle_commands(bytes(main))
+
     def test_field_screen_facts_read_hud_writers_and_frame_selectors(self):
         writers = {"caption": hud_writer(8, 300, 200, 12, 3, 2),
                    "money": hud_writer(480, 100, 40, 12, 3, 61),
@@ -158,6 +193,7 @@ class OriginalDCEConformanceTests(unittest.TestCase):
             battle = screens["battle"]
             self.assertEqual(len(battle["texts"]["forces"]), 15)
             self.assertEqual(len(battle["colors"]), 16)
+            self.assertEqual((len(battle["commands"]["labels"]), len(battle["commands"]["strategyNames"])), (4, 36))
             parts = [battle["parts"]["function"], *battle["parts"]["gauge"].values(),
                      *(part for row in battle["parts"]["side"] for part in row)]
             self.assertTrue(all((Path(directory) / part["image"]).is_file() for part in parts))

@@ -296,7 +296,8 @@ enum OriginalAI {
         return try rangeCells(profile:profile,board:board,point:origin ?? actor.position,
                               raw:profile.attackRangeCodes[actor.classID])
     }
-    private static func rangeCells(profile:OriginalMovementProfile,board:OriginalMovementBoard,
+    /// MAIN2F578 range codes. Bit seven extends the reach by one ring.
+    static func rangeCells(profile:OriginalMovementProfile,board:OriginalMovementBoard,
                                    point:GridPoint,raw:Int) throws -> [GridPoint] {
         guard board.contains(point),(0...255).contains(raw) else { throw OriginalAIError.invalid("attack origin/range code") }
         if raw == 255 { return [] }

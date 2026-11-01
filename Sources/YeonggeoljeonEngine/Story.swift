@@ -24,7 +24,8 @@ struct OriginalFieldScreen:Codable {
 }
 struct OriginalBattleScreen:Codable {
     var frameAsset:Int; var layout:OriginalBattleLayout; var colors:[[Int]]
-    var texts:OriginalBattleTexts; var parts:OriginalBattleParts; var source:JSONValue?
+    var texts:OriginalBattleTexts; var parts:OriginalBattleParts
+    var commands:OriginalBattleCommands; var source:JSONValue?
 }
 /// PACKGRP screen frames and the field HUD layout read from MAIN immediates.
 struct OriginalScreenFacts:Codable {
@@ -55,7 +56,7 @@ struct OriginalStoryCatalog:Codable {
             guard battle.layout == .source,battle.colors.count == 16,battle.colors.allSatisfy({ $0.count == 3 && $0.allSatisfy((0...255).contains) }),
                   battle.texts.forces.count == 15,battle.texts.forces.allSatisfy({ !$0.isEmpty }),!battle.texts.retired.isEmpty,
                   battle.parts.side.count == 2,battle.parts.side.allSatisfy({ $0.count == 2 && $0.allSatisfy({ $0.width == 32 && $0.height == 32 }) }),
-                  battle.parts.function.width == 64,battle.parts.function.height == 16,
+                  battle.parts.function.width == 64,battle.parts.function.height == 16,battle.commands.isValid,
                   Set(battle.parts.gauge.keys) == ["high","middle","low"],battle.parts.gauge.values.allSatisfy({ $0.width == 8 && $0.height == 10 }) else {
                 throw EngineError.invalid("Original battle screen facts are invalid")
             }

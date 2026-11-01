@@ -5,6 +5,9 @@ struct OriginalItemEffect: Codable, Equatable {
     var id: Int
     var category: Int
     var value: Int
+    /// Local-only record texts, absent from synthetic tables.
+    var name: String? = nil
+    var description: String? = nil
 }
 
 struct OriginalCombatTables: Codable {

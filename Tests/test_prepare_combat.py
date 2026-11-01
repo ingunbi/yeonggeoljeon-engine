@@ -41,6 +41,8 @@ class OriginalCombatTableTests(unittest.TestCase):
                 at=0xD00+item["id"]*16
                 self.assertEqual(item["value"],bak[at+14])
                 self.assertEqual(item["category"],min(15,bak[at+15]))
+                self.assertTrue(item["name"])
+            self.assertTrue(all(item["description"] for item in value["items"][:63]))
             self.assertTrue((Path(directory)/"combat.json").is_file())
 
 

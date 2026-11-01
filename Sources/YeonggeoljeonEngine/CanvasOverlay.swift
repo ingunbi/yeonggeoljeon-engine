@@ -20,6 +20,9 @@ struct CanvasMenu {
     var cancellable = false
     /// A status line under the options (remaining capacity, a refusal).
     var footer = ""
+    /// Top-left corner for a window that opens beside a map cell. The panel
+    /// keeps a compact width and stays inside the viewport.
+    var anchor:CGPoint? = nil
     var onChoose:(Int?) -> Void
 }
 
@@ -34,13 +37,23 @@ struct CanvasNotice {
 final class CanvasOverlayView:NSView {
     private(set) var selector:CanvasMenu?
     private(set) var notice:CanvasNotice?
+    /// Parent windows still on screen behind the active selector.
+    private var parents:[CanvasMenu] = []
     /// First vertical row shown when a list is taller than the viewport.
     private var firstVisible = 0
     /// The canvas area panels stay inside: the field map window by default,
     /// the battle map window while a battle screen is up.
     static let fieldViewport = CGRect(x:16,y:16,width:512,height:320)
     var viewport = fieldViewport
-    private var noticeRect:CGRect { CGRect(x:viewport.minX+8,y:viewport.maxY-104,width:viewport.width-16,height:96) }
+    private func noticeRect(_ value:CanvasNotice) -> CGRect {
+        guard value.portrait == nil,value.speaker.isEmpty else {
+            return CGRect(x:viewport.minX+8,y:viewport.maxY-104,width:viewport.width-16,height:96)
+        }
+        // A plain refusal is a small box in the middle of the map window.
+        let width = min(viewport.width-16,ceil((value.text as NSString).size(withAttributes:attributes()).width)+32)
+        let height = textHeight(value.text,width:width-24)+24
+        return CGRect(x:viewport.midX-width/2,y:viewport.midY-height/2,width:width,height:height).integral
+    }
     /// Called after the overlay closes so the owner can restore focus.
     var restoreFocus:(() -> Void)?
     var active:Bool { selector != nil || notice != nil }
@@ -51,21 +64,22 @@ final class CanvasOverlayView:NSView {
 
     /// keepScroll preserves the list position when a menu is shown again
     /// after one of its rows changed (party toggles).
-    func show(_ value:CanvasMenu,keepScroll:Bool = false) {
+    func show(_ value:CanvasMenu,keepScroll:Bool = false,behind:[CanvasMenu] = []) {
         var value = value
         if !value.options.indices.contains(value.selected) || !value.options[value.selected].enabled {
             value.selected = value.options.firstIndex(where:\.enabled) ?? 0
         }
         if !keepScroll { firstVisible = 0 }
+        parents = behind
         selector = value;notice = nil;revealSelection();present()
     }
-    func show(_ value:CanvasNotice) { notice = value;selector = nil;present() }
+    func show(_ value:CanvasNotice) { notice = value;selector = nil;parents = [];present() }
     private func present() {
         isHidden = false;needsDisplay = true
         window?.makeFirstResponder(self)
     }
     private func close() {
-        selector = nil;notice = nil;needsDisplay = true
+        selector = nil;notice = nil;parents = [];needsDisplay = true
         restoreFocus?()
     }
     private func choose(_ index:Int?) {
@@ -104,7 +118,8 @@ final class CanvasOverlayView:NSView {
     private func metrics(_ value:CanvasMenu) -> (width:CGFloat,title:CGFloat,footer:CGFloat,shown:Int) {
         let check:CGFloat = value.options.contains(where:{ $0.checked != nil }) ? 20 : 0
         let labelWidth = value.options.map { ceil(($0.label as NSString).size(withAttributes:attributes()).width) }.max() ?? 0
-        let width:CGFloat = value.horizontal ? 280 : min(viewport.width-16,max(240,labelWidth+56+check))
+        let width:CGFloat = value.horizontal ? 280 : value.anchor != nil ? min(viewport.width-16,max(88,labelWidth+40+check)) :
+            min(viewport.width-16,max(240,labelWidth+56+check))
         let title = textHeight(value.title,width:width-32),footer = textHeight(value.footer,width:width-32)
         let chrome = 26+(title > 0 ? title+10 : 0)+(footer > 0 ? footer+8 : 0)
         let shown = value.horizontal ? value.options.count : min(value.options.count,max(1,Int((viewport.height-8-chrome)/Self.row)))
@@ -121,7 +136,10 @@ final class CanvasOverlayView:NSView {
         let m = metrics(value),width = m.width
         let rows:CGFloat = value.horizontal ? 28 : CGFloat(m.shown)*Self.row
         let height = 26+(m.title > 0 ? m.title+10 : 0)+rows+(m.footer > 0 ? m.footer+8 : 0)
-        let panel = CGRect(x:viewport.minX+(viewport.width-width)/2,y:max(viewport.minY+4,viewport.minY+(viewport.height-height)/2),width:width,height:height).integral
+        var panel = CGRect(x:viewport.minX+(viewport.width-width)/2,y:max(viewport.minY+4,viewport.minY+(viewport.height-height)/2),width:width,height:height).integral
+        if let anchor = value.anchor {
+            panel.origin = CGPoint(x:min(max(anchor.x,viewport.minX+4),viewport.maxX-width-4),y:min(max(anchor.y,viewport.minY+4),viewport.maxY-height-4))
+        }
         let title = CGRect(x:panel.minX+16,y:panel.minY+14,width:width-32,height:m.title)
         let top = m.title > 0 ? title.maxY+10 : panel.minY+14
         var options:[(index:Int,rect:CGRect)] = []
@@ -141,9 +159,47 @@ final class CanvasOverlayView:NSView {
         return Layout(panel:panel,title:title,options:options,footer:footer,
                       moreAbove:first > 0,moreBelow:first+m.shown < value.options.count)
     }
-    private func panel(_ rect:CGRect,in context:CGContext) {
-        context.setFillColor(CGColor(red:0.03,green:0.04,blue:0.16,alpha:0.95));context.fill(rect)
+    private func panel(_ rect:CGRect,in context:CGContext,opaque:Bool = false) {
+        context.setFillColor(CGColor(red:0.03,green:0.04,blue:0.16,alpha:opaque ? 1 : 0.95));context.fill(rect)
         context.setStrokeColor(CGColor(gray:0.8,alpha:1));context.setLineWidth(1);context.stroke(rect.insetBy(dx:0.5,dy:0.5))
+    }
+    private func drawMenu(_ value:CanvasMenu,in context:CGContext) {
+        let shape = layout(value)
+        panel(shape.panel,in:context,opaque:value.anchor != nil)
+        (value.title as NSString).draw(with:shape.title,options:[.usesLineFragmentOrigin],attributes:attributes())
+        for (index,rect) in shape.options {
+            let option = value.options[index]
+            if index == value.selected {
+                context.setFillColor(CGColor(red:0.25,green:0.35,blue:0.7,alpha:1));context.fill(rect.insetBy(dx:-3,dy:-2))
+            }
+            if let image = option.image {
+                let picture = CGRect(x:rect.midX-24,y:rect.midY-10,width:48,height:20)
+                Renderer.image(image,in:picture,context:context)
+            } else {
+                let color:NSColor = option.enabled ? .white : NSColor(white:0.5,alpha:1)
+                var inset = value.horizontal ? rect : rect.insetBy(dx:8,dy:2)
+                if let checked = option.checked {
+                    let box = CGRect(x:inset.minX,y:rect.midY-6,width:12,height:12)
+                    context.setStrokeColor(color.cgColor);context.setLineWidth(1);context.stroke(box.insetBy(dx:0.5,dy:0.5))
+                    if checked { context.setFillColor(color.cgColor);context.fill(box.insetBy(dx:3,dy:3)) }
+                    inset = inset.offsetBy(dx:20,dy:0)
+                }
+                let paragraph = NSMutableParagraphStyle();paragraph.alignment = value.horizontal ? .center : .left
+                var style = attributes(color);style[.paragraphStyle] = paragraph
+                (option.label as NSString).draw(in:inset,withAttributes:style)
+            }
+        }
+        if !value.footer.isEmpty {
+            (value.footer as NSString).draw(with:shape.footer,options:[.usesLineFragmentOrigin],
+                                            attributes:attributes(NSColor(red:1,green:0.85,blue:0.45,alpha:1)))
+        }
+        context.setFillColor(CGColor(gray:0.8,alpha:1))
+        for (more,y,dy) in [(shape.moreAbove,shape.options.first?.rect.minY ?? 0,CGFloat(-5)),
+                            (shape.moreBelow,shape.options.last?.rect.maxY ?? 0,CGFloat(5))] where more {
+            let x = shape.panel.maxX-14,base = y+(dy < 0 ? 4 : -4)
+            context.move(to:CGPoint(x:x-5,y:base));context.addLine(to:CGPoint(x:x+5,y:base))
+            context.addLine(to:CGPoint(x:x,y:base+dy));context.closePath();context.fillPath()
+        }
     }
     override func draw(_ dirtyRect:NSRect) {
         guard active,let context = NSGraphicsContext.current?.cgContext else { return }
@@ -151,44 +207,10 @@ final class CanvasOverlayView:NSView {
         context.translateBy(x:origin.x,y:origin.y);context.scaleBy(x:scale,y:scale)
         context.interpolationQuality = .none
         if let value = selector {
-            let shape = layout(value)
-            panel(shape.panel,in:context)
-            (value.title as NSString).draw(with:shape.title,options:[.usesLineFragmentOrigin],attributes:attributes())
-            for (index,rect) in shape.options {
-                let option = value.options[index]
-                if index == value.selected {
-                    context.setFillColor(CGColor(red:0.25,green:0.35,blue:0.7,alpha:1));context.fill(rect.insetBy(dx:-3,dy:-2))
-                }
-                if let image = option.image {
-                    let picture = CGRect(x:rect.midX-24,y:rect.midY-10,width:48,height:20)
-                    Renderer.image(image,in:picture,context:context)
-                } else {
-                    let color:NSColor = option.enabled ? .white : NSColor(white:0.5,alpha:1)
-                    var inset = value.horizontal ? rect : rect.insetBy(dx:8,dy:2)
-                    if let checked = option.checked {
-                        let box = CGRect(x:inset.minX,y:rect.midY-6,width:12,height:12)
-                        context.setStrokeColor(color.cgColor);context.setLineWidth(1);context.stroke(box.insetBy(dx:0.5,dy:0.5))
-                        if checked { context.setFillColor(color.cgColor);context.fill(box.insetBy(dx:3,dy:3)) }
-                        inset = inset.offsetBy(dx:20,dy:0)
-                    }
-                    let paragraph = NSMutableParagraphStyle();paragraph.alignment = value.horizontal ? .center : .left
-                    var style = attributes(color);style[.paragraphStyle] = paragraph
-                    (option.label as NSString).draw(in:inset,withAttributes:style)
-                }
-            }
-            if !value.footer.isEmpty {
-                (value.footer as NSString).draw(with:shape.footer,options:[.usesLineFragmentOrigin],
-                                                attributes:attributes(NSColor(red:1,green:0.85,blue:0.45,alpha:1)))
-            }
-            context.setFillColor(CGColor(gray:0.8,alpha:1))
-            for (more,y,dy) in [(shape.moreAbove,shape.options.first?.rect.minY ?? 0,CGFloat(-5)),
-                                (shape.moreBelow,shape.options.last?.rect.maxY ?? 0,CGFloat(5))] where more {
-                let x = shape.panel.maxX-14,base = y+(dy < 0 ? 4 : -4)
-                context.move(to:CGPoint(x:x-5,y:base));context.addLine(to:CGPoint(x:x+5,y:base))
-                context.addLine(to:CGPoint(x:x,y:base+dy));context.closePath();context.fillPath()
-            }
+            for parent in parents { drawMenu(parent,in:context) }
+            drawMenu(value,in:context)
         } else if let value = notice {
-            let rect = noticeRect
+            let rect = noticeRect(value)
             panel(rect,in:context)
             var textX = rect.minX+12
             if let portrait = value.portrait {
@@ -199,7 +221,7 @@ final class CanvasOverlayView:NSView {
                 (value.speaker as NSString).draw(in:CGRect(x:textX,y:rect.minY+6,width:rect.maxX-textX-8,height:20),
                     withAttributes:attributes(NSColor(red:1,green:0.85,blue:0.45,alpha:1)))
             }
-            (value.text as NSString).draw(with:CGRect(x:textX,y:rect.minY+(value.speaker.isEmpty ? 8 : 26),width:rect.maxX-textX-8,height:value.speaker.isEmpty ? 84 : 66),
+            (value.text as NSString).draw(with:CGRect(x:textX,y:rect.minY+(value.speaker.isEmpty ? 12 : 26),width:rect.maxX-textX-(value.speaker.isEmpty ? 12 : 8),height:rect.height-(value.speaker.isEmpty ? 16 : 30)),
                                           options:[.usesLineFragmentOrigin],attributes:attributes())
         }
         context.restoreGState()

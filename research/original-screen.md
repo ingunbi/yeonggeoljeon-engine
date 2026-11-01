@@ -110,16 +110,63 @@ The 기능 button lists nine DS:`3AA0` items. The native menu shows all nine and
 enables 턴 종료, 총퇴각 and 게임종료, whose handlers are restored; the others stay
 disabled.
 
+### Unit commands
+
+A click on a unit starts `0x2D9D4`, which owns one unit's whole turn.
+
+The move step (`0x30ED2`) refuses a unit in source order: not friendly, not under
+player control (mask 4 or order mode other than 7), confused (mask 2), finished
+(mask `0x80`). Each refusal has its own text, and the unit's move range stays
+visible behind it. A ready unit shows its range and waits for a cell. Its own
+cell skips the move. A cell outside the range shows the DS:`4D3C` text.
+
+The command window then opens beside the unit. `0x2AA26` places it one cell to
+the right. Past x 224 it moves left by 160, and below y 272 it stops there. Each
+nested window steps sixteen pixels from its parent, in the direction it was
+pushed.
+
+The DS:`430C` table has eight entries, but the routine only uses four of them
+plus a fifth from `E5AA+0`. That byte is set to `FF` at `0x335A8`, and a static
+search found no other writer, so the native window omits 개문, 결괴 and 방화.
+
+| Entry | Handler | Native behaviour |
+|---|---|---|
+| 공격 | `0x30DC2`, picker `0x29ADE` | Red cells; a click on an enemy attacks |
+| 책략 | `0x2DB5C` | List, then the existing target selection |
+| 도구 | `0x2DE42` | 사용한다, 준다, 버린다, 본다, then an item list |
+| 대기 | `0x2DDA2` | Sets mask `0x80` through the existing wait |
+
+The picker has its own refusals: nobody in range, the wrong side, and a cell
+outside the range. It returns to the window when cancelled.
+
+The strategy list shows every ability the level allows, in id order, with its
+cost. An ability the unit cannot pay for stays listed but disabled, and so do the
+five fire abilities in rain. Class 17 has no list.
+
+The item menu needs at least one held item. 본다 shows the name and the DS:`21C8`
+description. 버린다 clears the first matching slot and does not end the turn.
+준다 picks a friendly unit in range code 1. It fills the receiver's first empty
+slot, clears the giver's first match and ends the unit's action, and it refuses
+when the receiver is full. Item records keep twelve name bytes, and the
+constructor at `0x1B162` stores the record's own index, which selects the
+description.
+
+A hidden unit (mask `0x20` clear) keeps its cell and gets the two DS:`4866`
+entries instead. 기습 uses the attack handler. 해제 asks the DS:`48AA` question and
+sets the mask, after which the normal window opens.
+
+Cancelling the window clears mask `0x40` and returns the unit to its origin
+(`0x2DE08`).
+
 ### Native input
 
-Clicks on the map select, move and attack as before. Native additions are:
-
-- arrow keys and the wheel scroll the map or the list under the pointer;
-- a click on the minimap centres there;
-- a click on a list row centres on that unit and shows its details;
-- a right click opens a native command list for the selected unit, or the
-  기능 menu when nothing is selected;
-- `S`, Space, Return, Backspace and Escape keep their previous meanings.
+- Arrow keys and the wheel scroll the map or the list under the pointer.
+- A click on the minimap centres there.
+- A click on a list row centres on that unit and shows its details.
+- A right click or Escape steps back one level. With nothing selected it opens
+  the 기능 menu.
+- Return ends the turn when no unit is selected. During strategy targeting it
+  confirms the target.
 
 The list and scroll positions are view state. They are not part of a save and
 do not change replays.
@@ -131,9 +178,16 @@ do not change replays.
   engine presentation, not original pixels.
 - Panel positions are engine choices that keep the frame visible; they are
   not source coordinates.
-- The original per-unit command window is not restored, nor is the terrain
-  popup at `0x2A6D2`, which shows a cell's defence and recovery effects. The
-  native view reaches the restored actions by click, key or the right-click list.
+- 사용한다 stops with an explicit notice. The effects at `0x2E0E6..0x2E833` are
+  not restored: class changes and promotions, attack and confusion items,
+  recovery, morale and the 0x21 item. The item stays held and the unit keeps its
+  action.
+- The command windows use the native panel, not the `0x3310` window pixels, and
+  the unit walk and attack animations are not played.
+- A discarded item leaves the native list at once. The source list is built once
+  per entry, so it keeps showing the discarded item until the menu closes.
+- The terrain popup at `0x2A6D2`, which shows a cell's defence and recovery
+  effects, is not restored.
 - The third button beside 아군 and 적군 has no restored handler.
 - The native view opens the friendly list at battle start. The list object
   starts closed at `0x289CD`; when the original first opens it was not traced.

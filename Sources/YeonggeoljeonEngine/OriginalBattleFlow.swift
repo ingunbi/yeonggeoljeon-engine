@@ -34,6 +34,24 @@ final class OriginalBattleFlow {
         guard acceptsManualInput else { throw BattleError.illegalAction("Original source phase is not accepting manual input") }
         _ = try session.waitManually(slot);try finishManualAction(slot)
     }
+    /// MAIN2DF80..2E01B: a completed gift ends the unit's action like a wait.
+    /// False leaves the unit able to act because the receiver is full.
+    func manualGive(_ slot:Int,to target:Int,item:Int) throws -> Bool {
+        guard acceptsManualInput else { throw BattleError.illegalAction("Original source phase is not accepting manual input") }
+        let unit = try session.requireManualUnit(slot)
+        guard let receiver = session.units[target],!receiver.enemy,receiver.status == 2 else {
+            throw BattleError.illegalAction("Original gift target must be a live friendly unit")
+        }
+        guard try session.people.giveItem(from:unit.person,to:receiver.person,item:item) else { return false }
+        try manualWait(slot);return true
+    }
+    /// MAIN2DDAD..2DDCB clears the hidden state; the unit may still act.
+    func manualReleaseAmbush(_ slot:Int) throws {
+        guard acceptsManualInput else { throw BattleError.illegalAction("Original source phase is not accepting manual input") }
+        let unit = try session.requireManualUnit(slot)
+        guard unit.scriptFlags&0x20 == 0 else { throw BattleError.illegalAction("Original unit is not in ambush") }
+        session.units[slot]!.scriptFlags |= 0x20
+    }
     @discardableResult
     func manualStrategy(_ slot:Int,abilityID:Int,target:Int?) throws -> OriginalStrategyExecution? {
         guard acceptsManualInput else { throw BattleError.illegalAction("Original source phase is not accepting manual input") }

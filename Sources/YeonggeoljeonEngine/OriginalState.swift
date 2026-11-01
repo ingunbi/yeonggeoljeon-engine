@@ -123,6 +123,22 @@ final class OriginalPeople {
         try update(id) { $0.level = result.level; $0.experience = result.experience }
         return result
     }
+    /// MAIN2E035..2E05C discards by the first slot holding the item.
+    func discardItem(person id:Int,item:Int) throws {
+        try update(id) { person in
+            guard let slot = person.itemIDs.firstIndex(of:item) else { throw BattleError.invalid("Original person does not hold this item") }
+            person.itemIDs[slot] = 255
+        }
+    }
+    /// MAIN2DF95..2DFF4: the receiver takes its first empty slot, then the
+    /// giver clears its first match. False means the receiver is full.
+    func giveItem(from giver:Int,to receiver:Int,item:Int) throws -> Bool {
+        guard try person(giver).itemIDs.contains(item) else { throw BattleError.invalid("Original person does not hold this item") }
+        guard let slot = try person(receiver).itemIDs.firstIndex(of:255) else { return false }
+        try update(receiver) { $0.itemIDs[slot] = item }
+        try discardItem(person:giver,item:item)
+        return true
+    }
     /// MAIN15B78 keeps the upper three bits; these flags are not unit status.
     func setAffiliation(person id:Int,value:Int) throws {
         guard (0...255).contains(value) else { throw BattleError.invalid("Original affiliation operand is not a byte") }
