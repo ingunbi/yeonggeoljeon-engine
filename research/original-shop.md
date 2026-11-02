@@ -107,7 +107,6 @@ compared with the running original.
 
 ## Not restored
 
-- The purchase, refusal and sale sound effects.
 - The original window frames, positions and font.
 - The source's temporary player field 0A change around the confirm questions
   (`CF5:6656`, `CF5:ACF6`), whose purpose was not traced.

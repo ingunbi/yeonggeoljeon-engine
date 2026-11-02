@@ -106,3 +106,12 @@ These have no source counterpart and never change game state.
   counter chance. The blow draws no random number (`0x31474`). The counter compares
   the defender's attack scalar with a draw below 150, so the chance is that scalar
   over 150 when the source would allow a counter.
+- D (or ⌘D) tints every cell a visible enemy could strike this turn: its move
+  range under the player's own move rule, then its class attack pattern from each
+  reachable cell. Strategies and AI orders are left out, so it is an upper bound for
+  physical attacks only. Hidden enemies add nothing.
+- Tab and Shift-Tab pick the next or previous friendly unit that can still act, as
+  a click on it would, and centre it.
+- In the campaign, ending a friendly phase while such a unit remains asks first.
+  The source's end-turn entry ends it at once (`27D12`).
+- The unit under the pointer fills the status line.

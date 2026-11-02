@@ -65,10 +65,10 @@ audio. The BGM entries of the field and battle menus switch it on and off.
 
 ## Not restored
 
-- Sound effects. The driver has a two-track effect player (0x491, 0xE13), but the
-  table it reads was not found.
-- Volume, the opening and the ending music.
+- The source's own volume. The field menu's volume row sets one output level, an
+  engine addition.
 - The 20-to-1 fade the source uses when it leaves a scene (`CF5:5F56`).
+- Duel sounds past the approach.
 
 ## Sound effects
 

@@ -73,7 +73,7 @@ final class OriginalBattleView:NSView {
             overlay.viewport = layoutFacts.viewportRect;listTop = 0;needsDisplay = true
         }
     }
-    private var camera:OriginalBattleCamera
+    private(set) var camera:OriginalBattleCamera
     private var listSide = 0
     private var listTop = 0
     /// The unit whose details the status line shows.
@@ -219,6 +219,73 @@ final class OriginalBattleView:NSView {
             self.needsDisplay = true
         }
     }
+    /// Engine addition: the campaign asks before it ends a phase in which a
+    /// unit could still act. The source ends it at once (MAIN27D12).
+    var confirmsTurnEnd = false
+    private func requestEndTurn() {
+        let left = session.turns.stage == .manualFriendly ? readyUnits().count : 0
+        guard confirmsTurnEnd,left > 0,canInput else {
+            do { try endTurn() } catch { message = "\(error)" }
+            return
+        }
+        yesNo("아직 행동하지 않은 부대가 \(left)개 있습니다. 턴을 끝낼까요?") { [weak self] yes in
+            guard let self = self,yes else { return }
+            do { try self.endTurn() } catch { self.message = "\(error)" }
+            self.needsDisplay = true
+        }
+    }
+    /// Friendly units the player may still command this phase, in slot order.
+    private func readyUnits() -> [Int] {
+        session.units.values.filter { unit in
+            unit.status == 2 && OriginalBattleCommand.denial(unit) == nil && (try? session.requireManualUnit(unit.slot)) != nil
+        }.map(\.slot).sorted()
+    }
+    /// Engine addition: Tab picks the next unit that can still act, as a
+    /// click on it would, and brings it into view. Shift goes back.
+    private func selectNextUnit(_ step:Int) {
+        guard canInput,strategySelection == nil,session.turns.stage == .manualFriendly else { return }
+        let current:Int?
+        switch phase {
+        case .idle:current = selected
+        case .moving(let slot):current = slot
+        default:return
+        }
+        let ready = readyUnits()
+        guard !ready.isEmpty else { message = "행동할 수 있는 부대가 없습니다.";return }
+        let index = current.flatMap { ready.firstIndex(of:$0) }.map { ($0+step+ready.count)%ready.count } ?? (step > 0 ? 0 : ready.count-1)
+        guard let unit = session.units[ready[index]] else { return }
+        resetCommand();inspected = nil
+        camera.center(on:unit.position)
+        selected = unit.slot
+        if unit.scriptFlags&0x20 == 0 { openCommand(unit.slot) } else { phase = .moving(unit.slot) }
+    }
+    /// Engine addition: the cells visible enemies could strike this turn.
+    var showsThreat = false { didSet { if showsThreat != oldValue { needsDisplay = true } } }
+    private var threatCache:(key:[Int],cells:Set<GridPoint>)?
+    @objc func toggleThreat(_ sender:Any?) { showsThreat.toggle() }
+    private func threatCells() -> Set<GridPoint> {
+        let key = session.units.values.filter { $0.status == 2 }.sorted { $0.slot < $1.slot }.flatMap { unit in
+            [unit.slot,unit.position.x,unit.position.y,Int(unit.scriptFlags),(try? session.people.person(unit.person).classID) ?? -1]
+        }
+        if let cache = threatCache,cache.key == key { return cache.cells }
+        let cells = (try? session.threatCells()) ?? []
+        threatCache = (key,cells)
+        return cells
+    }
+    /// A tinted cell and an edge where the region ends.
+    private func drawThreat(_ context:CGContext,rect:(GridPoint) -> CGRect) {
+        let cells = threatCells()
+        context.setFillColor(CGColor(red:1,green:0.42,blue:0.12,alpha:0.2))
+        for point in cells { context.fill(rect(point)) }
+        context.setStrokeColor(CGColor(red:1,green:0.55,blue:0.2,alpha:0.85));context.setLineWidth(1.5)
+        for point in cells {
+            let box = rect(point)
+            if !cells.contains(GridPoint(x:point.x,y:point.y-1)) { context.strokeLineSegments(between:[CGPoint(x:box.minX,y:box.minY),CGPoint(x:box.maxX,y:box.minY)]) }
+            if !cells.contains(GridPoint(x:point.x,y:point.y+1)) { context.strokeLineSegments(between:[CGPoint(x:box.minX,y:box.maxY),CGPoint(x:box.maxX,y:box.maxY)]) }
+            if !cells.contains(GridPoint(x:point.x-1,y:point.y)) { context.strokeLineSegments(between:[CGPoint(x:box.minX,y:box.minY),CGPoint(x:box.minX,y:box.maxY)]) }
+            if !cells.contains(GridPoint(x:point.x+1,y:point.y)) { context.strokeLineSegments(between:[CGPoint(x:box.maxX,y:box.minY),CGPoint(x:box.maxX,y:box.maxY)]) }
+        }
+    }
     private func endTurn() throws {
         if session.turns.stage == .manualFriendly {
             guard canInput else {return}
@@ -273,7 +340,7 @@ final class OriginalBattleView:NSView {
             self.functionOpen = false;self.needsDisplay = true
             guard let index = index else { return }
             switch items[index].action {
-            case "end-turn": do { try self.endTurn() } catch { self.message = "\(error)" }
+            case "end-turn": self.requestEndTurn()
             case "unit-combat","move-speed","enemy-move","bgm","sound": self.openSetting(items[index].action)
             case "retreat": self.requestRetreat()
             case "conditions": self.showConditions(opening:false)
@@ -769,6 +836,7 @@ final class OriginalBattleView:NSView {
             let map = CGRect(x:Int(viewport.minX)-camera.x*cell/2,y:Int(viewport.minY)-camera.y*cell/2,width:session.width*cell,height:session.height*cell)
             Renderer.image(background,in:map,context:context)
         }
+        if showsThreat { drawThreat(context,rect:rect) }
         var rangeSlot = previewSlot
         if case .moving(let slot) = phase { rangeSlot = slot }
         if let slot = rangeSlot,let cells = try? session.reachable(slot) {
@@ -907,7 +975,7 @@ final class OriginalBattleView:NSView {
             CanvasTheme.chip("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(weatherName)",
                              at:CGPoint(x:map.minX+8,y:map.minY+18),centered:false,maximumWidth:width,in:context)
         }
-        var detail = (inspected ?? selected).flatMap(unitDetails) ?? ""
+        var detail = (inspected ?? selected ?? hovered).flatMap(unitDetails) ?? ""
         if let choice = strategySelection {
             if choice.abilityID >= 30 {detail = "범위 대상 · Enter: 확인 · Esc: 취소"}
             else if let slot = choice.targetSlot,let unit = session.units[slot],let person = try? session.people.person(unit.person) {
@@ -933,9 +1001,13 @@ final class OriginalBattleView:NSView {
         drawFrame(context);drawField(context);drawList(context);drawMinimap(context);drawStatus(context)
         if combatPlayer == nil { drawForecasts(context) }
         if combatPlayer != nil { drawCombat(context) }
+        let area = layoutFacts.viewportRect
+        var corner = area.minY+16
         if fastForward {
-            let area = layoutFacts.viewportRect
-            CanvasTheme.chip("빨리 감기 ×\(OriginalBattleView.fastRate)",at:CGPoint(x:area.maxX-56,y:area.minY+16),maximumWidth:120,in:context)
+            CanvasTheme.chip("빨리 감기 ×\(OriginalBattleView.fastRate)",at:CGPoint(x:area.maxX-56,y:corner),maximumWidth:120,in:context);corner += 24
+        }
+        if showsThreat,combatPlayer == nil {
+            CanvasTheme.chip("적 공격 범위",at:CGPoint(x:area.maxX-50,y:corner),maximumWidth:120,color:NSColor(red:1,green:0.62,blue:0.3,alpha:1),in:context)
         }
         if let notice = animator.notice,let catalog = combatArt?.catalog {
             let area = layoutFacts.viewportRect,text = catalog.text(notice,person:personName,strategy:strategyTitle,kind:kindLabel)
@@ -947,7 +1019,7 @@ final class OriginalBattleView:NSView {
         let names = combatArt?.catalog.weathers ?? [],index = Int(session.turns.weatherIndex)
         return names.indices.contains(index) ? names[index] : String(index)
     }
-    /// Held Tab runs the campaign this many times as fast.
+    /// Held Control runs the campaign this many times as fast.
     static let fastRate = 4
     var fastForward = false { didSet { if fastForward != oldValue { needsDisplay = true } } }
     /// Fast-forward closes lines and timed notices as a click would.
@@ -1172,6 +1244,22 @@ final class OriginalBattleView:NSView {
         }
         needsDisplay = true
     }
+    /// Engine addition: the unit under the pointer fills the status line.
+    private var hovered:Int?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect:bounds,options:[.mouseMoved,.mouseEnteredAndExited,.activeInKeyWindow],owner:self))
+    }
+    override func mouseMoved(with event:NSEvent) {
+        let cell = camera.cell(at:canvasPoint(event),in:layoutFacts.viewportRect,size:layoutFacts.cell)
+        // A hidden enemy stays hidden here too (MAIN2A143).
+        let unit = cell.flatMap { point in
+            session.units.values.first { $0.status == 2 && $0.position == point && !($0.enemy && $0.scriptFlags&0x20 == 0) }
+        }
+        if unit?.slot != hovered { hovered = unit?.slot;needsDisplay = true }
+    }
+    override func mouseExited(with event:NSEvent) { if hovered != nil { hovered = nil;needsDisplay = true } }
     /// The source has no such shortcut; a scene has no effect on results.
     override func rightMouseDown(with event:NSEvent) {
         if combatPlayer != nil { combatPlayer?.finish();return }
@@ -1198,9 +1286,12 @@ final class OriginalBattleView:NSView {
             camera.move(columns:step.0,rows:step.1);needsDisplay = true;return
         }
         guard !event.isARepeat else { return }
+        if event.keyCode == 2,event.modifierFlags.intersection([.command,.control,.option]).isEmpty { showsThreat.toggle();return }
         do {
             guard !suspended,inputReady?() ?? true else { return }
-            if strategySelection != nil {
+            if strategySelection == nil,event.keyCode == 48 {
+                selectNextUnit(event.modifierFlags.contains(.shift) ? -1 : 1)
+            } else if strategySelection != nil {
                 guard canInput else {return}
                 if event.keyCode == 53 {cancelStrategy()}
                 else if [36,76].contains(event.keyCode) {try executeSelectedStrategy()}
@@ -1209,10 +1300,15 @@ final class OriginalBattleView:NSView {
             } else if event.keyCode == 53 || event.keyCode == 51 {
                 if phase != .idle || event.keyCode == 53 { stepBack() }
             } else if [36,76].contains(event.keyCode) {
-                if phase == .idle { try endTurn() }
+                if phase == .idle { requestEndTurn() }
             } else { super.keyDown(with:event) }
         } catch { message = "\(error)" }
         needsDisplay = true
+    }
+    /// The menu shows whether the threat view is on, however it was turned on.
+    @objc func validateMenuItem(_ item:NSMenuItem) -> Bool {
+        if item.action == #selector(toggleThreat(_:)) { item.state = showsThreat ? .on : .off }
+        return true
     }
     func capture(to url:URL) throws {
         guard let rep = bitmapImageRepForCachingDisplay(in:bounds) else { throw EngineError.invalid("Cannot allocate original battle capture") }

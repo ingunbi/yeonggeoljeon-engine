@@ -156,6 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         gameMenu.addItem(.separator())
         gameMenu.addItem(withTitle:"대사 기록",action:Selector(("openDialogueLog:")),keyEquivalent:"j")
         gameMenu.addItem(withTitle:"빨리 감기 고정",action:Selector(("toggleFastForward:")),keyEquivalent:"t")
+        gameMenu.addItem(withTitle:"적 공격 범위",action:Selector(("toggleThreat:")),keyEquivalent:"d")
         NSApplication.shared.mainMenu = menu
     }
     @objc private func toggleOriginalFrames(_ sender:NSMenuItem) {

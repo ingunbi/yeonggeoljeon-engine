@@ -59,6 +59,16 @@ func originalIntegrationSelfTests() throws {
     let blow = try forecasting.physicalContext(attackerSlot:0,targetSlot:15,subtype:0)
     try check(forecast.damage == blow.strike.damage && forecast.moraleLoss == blow.strike.moraleLoss,"the forecast matches the blow")
     try check(forecast.counterPercent == min(150,try forecastPeople.person(1).attackScalar)*100/150,"the counter chance reads the defender's attack scalar")
+    var lineRoster = OriginalRoster();lineRoster.header = header
+    lineRoster.slots[0] = placements[0];lineRoster.slots[0].x = 0;lineRoster.slots[0].y = 0
+    lineRoster.slots[1] = placements[2];lineRoster.slots[1].x = 8;lineRoster.slots[1].y = 0
+    let line = try OriginalBattleSession(definition:BattleDefinition(id:"line",width:9,height:1,coordinateSystem:"orthogonal",tiles:Array(repeating:0,count:9)),
+        roster:&lineRoster,people:try OriginalPeople(catalog:catalog,tables:tables),combat:tables,movement:profile,rng:OriginalRNG(state:9))
+    let lineRNG = line.rng,threat = try line.threatCells()
+    try check(threat == Set((4...8).map { GridPoint(x:$0,y:0) }),"a threat is three steps and one cardinal strike: \(threat.sorted { $0.x < $1.x })")
+    try check(line.rng == lineRNG && line.units[15]?.position == GridPoint(x:8,y:0),"a threat draws nothing and moves nobody")
+    line.units[15]!.scriptFlags &= ~UInt8(0x20)
+    try check(try line.threatCells().isEmpty,"a hidden enemy shows no threat")
     var taught = profile;taught.strategyLevelRequirements![4][0] = 3;taught.strategyLevelRequirements![6][0] = 3;taught.strategyLevelRequirements![31][0] = 3
     let learner = try OriginalBattleSession(definition:definition,roster:&hiddenRoster,people:hiddenPeople,combat:tables,movement:taught,rng:OriginalRNG(state:4))
     let gained = OriginalExperienceMutation(level:3,experience:0,levelsGained:2,ignoredReason:nil)

@@ -304,6 +304,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             board.menuTexts = host.framework?.battleMenu
             board.objective = { [weak self] in (self?.host.vm.state.chapter ?? 0,self?.host.vm.state.objectiveText) }
             board.announcesPhases = true
+            board.confirmsTurnEnd = true
             board.animatesActions = true
             board.settingsTexts = host.framework?.settings
             board.combatArt = combatArt

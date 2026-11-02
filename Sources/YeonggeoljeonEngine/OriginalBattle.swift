@@ -381,4 +381,18 @@ extension OriginalBattleSession {
         return OriginalAttackForecast(damage:strike.damage,moraleLoss:strike.moraleLoss,defeats:strike.damage >= d.troops,
                                       counterPercent:counters ? min(150,max(0,d.attackScalar))*100/150 : 0)
     }
+    /// Engine addition: every cell a visible enemy could strike after a move
+    /// this turn, from the player's own move rule and the class attack range.
+    /// Strategies and the AI's orders are not part of it.
+    func threatCells() throws -> Set<GridPoint> {
+        let board = try board()
+        var cells = Set<GridPoint>()
+        for unit in units.values.sorted(by:{$0.slot < $1.slot}) where unit.status == 2 && unit.enemy && unit.scriptFlags&0x20 != 0 {
+            guard let actor = board.actors.first(where:{$0.runtimeSlot == unit.slot}) else { continue }
+            for origin in Set(try reachable(unit.slot)) {
+                cells.formUnion(try OriginalAI.attackCells(profile:movement,board:board,actor:actor,origin:origin))
+            }
+        }
+        return cells
+    }
 }
