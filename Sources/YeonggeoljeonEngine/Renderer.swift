@@ -107,6 +107,11 @@ final class Renderer {
         case .frame(let value):frame = value
         case .unsupported:frame = session.program.frames.last!
         }
+        // END 0:8B18 opens the first picture from its middle, two rows a tick.
+        if session.state.frameIndex == 0 {
+            let half = min(88,Int(Double(session.state.elapsedSourceTicks)/OriginalScreenPlayer.tick)*2)
+            context.clip(to:CGRect(x:0,y:192-half,width:640,height:half*2))
+        }
         let assets = Dictionary(uniqueKeysWithValues:session.catalog.assets.map{($0.id,$0)})
         func draw(_ id:String,x:Int,y:Int) throws {
             guard let asset = assets[id] else { throw EngineError.invalid("Ending frame references an unavailable source asset") }

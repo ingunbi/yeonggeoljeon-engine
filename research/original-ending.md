@@ -43,5 +43,5 @@ alternate display mode remains outside this first export.
 asset validation, exact frame ordering, source clock units and source-bound
 checkpoints for this first scene. Its frontier at END file `0x4B9A` is where the
 scene programs take over ([original-screen-programs.md](original-screen-programs.md)).
-The center-out initial reveal of this first scene is still not restored. Nothing
-here establishes original DOS framebuffer parity.
+The picture opens from its middle (`0:8B18`), two rows a tick. Nothing here
+establishes original DOS framebuffer parity.
