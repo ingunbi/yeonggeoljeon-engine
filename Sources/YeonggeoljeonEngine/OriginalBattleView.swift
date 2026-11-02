@@ -33,6 +33,15 @@ final class OriginalBattleView:NSView {
     var isAnimating:Bool { !animator.isIdle }
     private var afterCues:(()->Void)?
     var settingsTexts:OriginalSettingsTexts?
+    /// The enlarged view, when its local art exists.
+    var combatArt:OriginalCombatArt?
+    var portraitImage:((Int)->CGImage?)?
+    /// Whether a sound effect is still playing, and a way to stop it.
+    var soundBusy:(()->Bool)?
+    var stopSound:(()->Void)?
+    private var combatPlayer:OriginalCombatPlayer?
+    private var combatPicture:(index:Int,image:CGImage)?
+    var isInCombatView:Bool { combatPlayer != nil }
     var inputReady:(()->Bool)?
     /// Replaces the status line while the owner has something to report.
     var externalStatus:String? { didSet { if externalStatus != oldValue { needsDisplay = true } } }
@@ -119,26 +128,55 @@ final class OriginalBattleView:NSView {
             } else if let first = path.first { camera.follow(first,margin:layoutFacts.followMargin) }
         case .shot(_,let to,_)?:camera.follow(to,margin:layoutFacts.followMargin)
         case .effect(_,let x,let y)?:camera.follow(GridPoint(x:x/2,y:y/2),margin:layoutFacts.followMargin)
-        case nil:break
+        case .combat?,nil:break
         }
     }
     func advanceAnimation(_ seconds:Double) {
+        if var player = combatPlayer {
+            for action in player.advance(seconds,soundBusy:soundBusy?() ?? false) {
+                switch action {
+                case .sound(let id):onSound?(id)
+                case .stopSound:stopSound?()
+                }
+            }
+            combatPlayer = player.finished ? nil : player
+            if combatPlayer == nil { stopSound?();combatPicture = nil;updateRosterAfterCombat() }
+            needsDisplay = true
+            return
+        }
         guard !animator.isIdle else { return }
         for id in animator.advance(seconds) { onSound?(id) }
         followCue();needsDisplay = true
         if animator.isIdle,let done = afterCues { afterCues = nil;done() }
     }
+    private func updateRosterAfterCombat() { inspected = nil }
+    /// True when a scene opened; a terrain outside the source tables has none.
+    private func startCombat(_ cues:[OriginalBattleCue]) -> Bool {
+        guard case .combat(let snapshot)? = cues.first,let art = combatArt,
+              var scene = try? OriginalCombatScene(catalog:art.catalog,snapshot:snapshot),
+              let attacker = try? session.people.person(snapshot.attackerPerson).name,
+              let target = try? session.people.person(snapshot.targetPerson).name else { return false }
+        scene.addResults(attackerName:attacker,targetName:target)
+        combatPlayer = OriginalCombatPlayer(scene:scene);combatPicture = nil;needsDisplay = true
+        return true
+    }
     func resumeSourceFlow() throws {
-        guard animator.isIdle else { return }
-        let held = flow.takeCues().filter(visible)
+        guard animator.isIdle,combatPlayer == nil else { return }
+        var held = flow.takeCues().filter(visible)
+        if case .combat? = held.first {
+            if startCombat(held) { return }
+            held = []
+        }
         if !held.isEmpty { perform(held);return }
         try flow.resumeSourceFlow()
+        // A counter follows at once, so the map never shows between its scenes.
+        if case .combat? = flow.peekCues.first,startCombat(flow.takeCues()) { return }
         if waitingForStrategy,let result = flow.lastStrategy {showStrategyResult(result);waitingForStrategy = false}
         if waitingForAttack,let result = flow.lastAttack {showAttackResult(result);waitingForAttack = false}
         if waitingForItem,let result = flow.lastItem {waitingForItem = false;finishItem(result)}
         announcePhase();needsDisplay = true
     }
-    private var canInput:Bool {animator.isIdle && flow.acceptsManualInput && (inputReady?() ?? true)}
+    private var canInput:Bool {animator.isIdle && combatPlayer == nil && flow.acceptsManualInput && (inputReady?() ?? true)}
     private var scale:CGFloat { CanvasGeometry(bounds:bounds).scale }
     private var canvasOrigin:CGPoint { CanvasGeometry(bounds:bounds).origin }
     private func canvasPoint(_ event:NSEvent) -> CGPoint {
@@ -865,7 +903,78 @@ final class OriginalBattleView:NSView {
         context.translateBy(x:canvasOrigin.x,y:canvasOrigin.y);context.scaleBy(x:scale,y:scale)
         context.interpolationQuality = .none
         drawFrame(context);drawField(context);drawList(context);drawMinimap(context);drawStatus(context)
+        if combatPlayer != nil { drawCombat(context) }
         context.restoreGState()
+    }
+    /// MAIN2A556 and F752: the scene at (16,32,416,208) and two stat windows.
+    private func drawCombat(_ context:CGContext) {
+        guard let player = combatPlayer,let art = combatArt else { return }
+        context.setFillColor(CanvasTheme.background);context.fill(layoutFacts.viewportRect)
+        if let shown = player.picture {
+            if combatPicture?.index != shownIndex(player),let image = art.picture(shown,scene:player.scene) {
+                combatPicture = (shownIndex(player),image)
+            }
+            if let image = combatPicture?.image { Renderer.image(image,in:CGRect(x:16,y:32,width:416,height:208),context:context) }
+        }
+        let s = player.scene.snapshot,texts = art.catalog.texts,friendly = s.attackerSlot < 15
+        drawCombatPanel(context,side:0,art:art,person:friendly ? s.attackerPerson : s.targetPerson,classID:friendly ? s.attackerClass : s.targetClass,
+            level:friendly ? s.attackerLevel : s.targetLevel,value:friendly ? s.attackValue : s.defenseValue,valueLabel:friendly ? texts.attack : texts.defense,
+            troops:friendly ? s.attackerTroops : s.targetTroops,maximum:friendly ? s.attackerMaxTroops : s.targetMaxTroops,
+            morale:friendly ? s.attackerMorale : s.targetMorale,last:friendly ? (texts.exp,s.experience,100) : (texts.terrain,nil,s.terrainPercent))
+        drawCombatPanel(context,side:1,art:art,person:friendly ? s.targetPerson : s.attackerPerson,classID:friendly ? s.targetClass : s.attackerClass,
+            level:friendly ? s.targetLevel : s.attackerLevel,value:friendly ? s.defenseValue : s.attackValue,valueLabel:friendly ? texts.defense : texts.attack,
+            troops:friendly ? s.targetTroops : s.attackerTroops,maximum:friendly ? s.targetMaxTroops : s.attackerMaxTroops,
+            morale:friendly ? s.targetMorale : s.attackerMorale,last:friendly ? (texts.terrain,nil,s.terrainPercent) : nil)
+        guard let frame = player.frame else { return }
+        if let notice = frame.notice {
+            CanvasTheme.chip(notice,at:CGPoint(x:224,y:152),maximumWidth:320,in:context)
+        }
+        guard let page = frame.page else { return }
+        let window = CGRect(x:48,y:112,width:352,height:96)
+        CanvasTheme.panel(window,in:context)
+        let style = CanvasTheme.attributes(CanvasTheme.font(14,.medium),CanvasTheme.text)
+        for line in page.lines { (line.text as NSString).draw(at:CGPoint(x:104,y:CGFloat(line.y)-2),withAttributes:style) }
+        for gauge in page.gauges { drawCombatGauge(context,x:144,y:gauge.y,width:160,value:gauge.value,maximum:gauge.maximum,text:"\(gauge.value)") }
+    }
+    private func shownIndex(_ player:OriginalCombatPlayer) -> Int {
+        guard let shown = player.picture else { return -1 }
+        return shown.layers.hashValue^shown.scroll
+    }
+    /// MAIN28806: the bar turns at seven and three tenths of the maximum.
+    private func drawCombatGauge(_ context:CGContext,x:Int,y:Int,width:Int,value:Int,maximum:Int,text:String) {
+        let box = CGRect(x:x,y:y-1,width:width,height:10)
+        context.setFillColor(CGColor(gray:0,alpha:0.85));context.fill(box)
+        if maximum > 0 {
+            let share = value*10/maximum
+            context.setFillColor(share >= 7 ? CGColor(red:0.46,green:0.76,blue:0.54,alpha:1) : share >= 3 ? CanvasTheme.accentFill : CGColor(red:0.9,green:0.42,blue:0.36,alpha:1))
+            context.fill(CGRect(x:x,y:y-1,width:min(value*width/maximum,width),height:10))
+        }
+        (text as NSString).draw(at:CGPoint(x:CGFloat(x)+CGFloat(width)/2-12,y:CGFloat(y)-4),
+            withAttributes:CanvasTheme.attributes(CanvasTheme.number(11,.semibold),CanvasTheme.text))
+    }
+    private func drawCombatPanel(_ context:CGContext,side:Int,art:OriginalCombatArt,person:Int,classID:Int,level:Int,value:Int,valueLabel:String,
+                                 troops:Int,maximum:Int,morale:Int,last:(label:String,value:Int?,maximum:Int)?) {
+        let window = CGRect(x:side == 0 ? 16 : 224,y:240,width:208,height:144)
+        CanvasTheme.panel(window,in:context)
+        let portraitX = side == 0 ? 24 : 360
+        if let image = portraitImage?(person) { Renderer.image(image,in:CGRect(x:portraitX,y:248,width:64,height:80),context:context) }
+        let name = (try? session.people.person(person).name) ?? ""
+        let plain = CanvasTheme.attributes(CanvasTheme.font(12),CanvasTheme.text),faint = CanvasTheme.attributes(CanvasTheme.font(12),CanvasTheme.muted)
+        let width = (name as NSString).size(withAttributes:plain).width
+        (name as NSString).draw(at:CGPoint(x:CGFloat(portraitX)+32-width/2,y:346),withAttributes:plain)
+        let textX = side == 0 ? 104 : 240,gaugeX = textX+40,texts = art.catalog.texts
+        let className = art.catalog.classNames.indices.contains(classID) ? art.catalog.classNames[classID] : ""
+        (originalFormat(texts.level,[String(level),className]) as NSString).draw(at:CGPoint(x:CGFloat(textX),y:254),withAttributes:plain)
+        (valueLabel as NSString).draw(at:CGPoint(x:CGFloat(textX),y:278),withAttributes:faint)
+        drawCombatGauge(context,x:gaugeX,y:284,width:64,value:value,maximum:2000,text:"\(value)")
+        (texts.troops as NSString).draw(at:CGPoint(x:CGFloat(textX),y:302),withAttributes:faint)
+        drawCombatGauge(context,x:gaugeX,y:308,width:64,value:troops,maximum:maximum,text:"\(troops)")
+        (texts.morale as NSString).draw(at:CGPoint(x:CGFloat(textX),y:326),withAttributes:faint)
+        drawCombatGauge(context,x:gaugeX,y:332,width:64,value:morale,maximum:100,text:"\(morale)")
+        guard let last = last else { return }
+        (last.label as NSString).draw(at:CGPoint(x:CGFloat(textX),y:350),withAttributes:faint)
+        if let shown = last.value { drawCombatGauge(context,x:gaugeX,y:356,width:64,value:shown,maximum:last.maximum,text:"\(shown)") }
+        else { (originalFormat(texts.percent,[String(last.maximum)]) as NSString).draw(at:CGPoint(x:CGFloat(gaugeX),y:350),withAttributes:plain) }
     }
     private func clickPanel(_ point:CGPoint) -> Bool {
         let facts = layoutFacts
@@ -888,6 +997,7 @@ final class OriginalBattleView:NSView {
     }
     override func mouseDown(with event:NSEvent) {
         window?.makeFirstResponder(self)
+        if combatPlayer != nil { combatPlayer?.skip();return }
         let p = canvasPoint(event)
         if clickPanel(p) { needsDisplay = true;return }
         guard let point = camera.cell(at:p,in:layoutFacts.viewportRect,size:layoutFacts.cell) else { return }
@@ -995,7 +1105,11 @@ final class OriginalBattleView:NSView {
         }
         needsDisplay = true
     }
-    override func rightMouseDown(with event:NSEvent) { stepBack() }
+    /// The source has no such shortcut; a scene has no effect on results.
+    override func rightMouseDown(with event:NSEvent) {
+        if combatPlayer != nil { combatPlayer?.finish();return }
+        stepBack()
+    }
     override func scrollWheel(with event:NSEvent) {
         let facts = layoutFacts
         wheelRemainder.x += event.scrollingDeltaX;wheelRemainder.y += event.scrollingDeltaY
@@ -1008,6 +1122,10 @@ final class OriginalBattleView:NSView {
         needsDisplay = true
     }
     override func keyDown(with event:NSEvent) {
+        if combatPlayer != nil {
+            if event.keyCode == 53 { combatPlayer?.finish() } else { combatPlayer?.skip() }
+            return
+        }
         if strategySelection == nil,let step = [123:(-1,0),124:(1,0),125:(0,1),126:(0,-1)][Int(event.keyCode)] {
             camera.move(columns:step.0,rows:step.1);needsDisplay = true;return
         }

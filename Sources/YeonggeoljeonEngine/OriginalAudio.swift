@@ -39,6 +39,8 @@ final class OriginalAudio {
         start()
         lock.lock();driver.playEffect(id);lock.unlock()
     }
+    func stopEffect() { lock.lock();driver.stopEffect();lock.unlock() }
+    var effectPlaying:Bool { lock.lock();defer { lock.unlock() };return driver.effect != 0 }
     /// Same selection keeps playing, as CF5:600A does. Nil stops the music.
     func select(_ value:Int?) {
         let wanted = audition ?? (OriginalAudio.musicEnabled ? value.flatMap { catalog.songs.indices.contains($0) ? $0 : nil } : nil)

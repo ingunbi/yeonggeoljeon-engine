@@ -213,10 +213,14 @@ extension OriginalBattleSession {
             morale = try OriginalCombat.setMorale(stats:d,unitStatus:target.status,conditionFlags:Int(target.scriptFlags),requestedMorale:value.remainingMorale,rng:&rng)
             units[targetSlot]!.morale = morale!.remainingMorale;units[targetSlot]!.scriptFlags = UInt8(morale!.remainingFlags)
         }
+        let before = try people.person(source.person).experience
         let experience = try people.applyExperience(person:source.person,gain:gain.total)
+        let combat = try combatSnapshot(kind:kind,subtype:subtype,attackerSlot:casterSlot,targetSlot:targetSlot,attacker:a,defender:d,
+            attackValue:try OriginalCombat.attackStat(a,tables:self.combat),defenseValue:try OriginalCombat.defenseStat(d,tables:self.combat),
+            damage:value.damage,moraleLoss:value.moraleLoss,experience:before,gain:gain.total)
         let retirement = try strategyRetirement(targetSlot)
         return OriginalStrategyTargetEffect(runtimeSlot:targetSlot,person:target.person,kind:"damage",damage:value,morale:morale,
-            experience:experience,retiredPerson:retirement.person,retirement:retirement.notice)
+            experience:experience,retiredPerson:retirement.person,retirement:retirement.notice,combat:combat)
     }
     func strategyConditionEffect(casterSlot:Int,targetSlot:Int) throws -> OriginalStrategyTargetEffect {
         guard let source = units[casterSlot],let target = units[targetSlot] else {throw BattleError.unsupported("Original status strategy slot changed before its producer")}

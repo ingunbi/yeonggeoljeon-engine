@@ -8,6 +8,8 @@ enum OriginalBattleCue:Equatable {
     case shot(from:GridPoint,to:GridPoint,stone:Bool)
     /// Half cells, so a clash can sit between two units (MAIN3213A).
     case effect(Int,halfX:Int,halfY:Int)
+    /// The enlarged view, held after the context has committed its result.
+    case combat(OriginalCombatSnapshot)
 }
 
 extension OriginalBattleSession {
@@ -56,6 +58,7 @@ struct OriginalBattleAnimator {
         case .walk(_,let path,_):return Double(max(0,path.count-1))*cellSeconds
         case .shot(let from,let to,_):return Double(max(abs(to.x-from.x),abs(to.y-from.y))*32)/4*Self.tick
         case .effect(let index,_,_):return (index == 8 ? 2 : 4)*Self.frameTicks*Self.tick
+        case .combat:return 0
         }
     }
     private func sound(_ cue:OriginalBattleCue) -> Int? {
@@ -66,6 +69,7 @@ struct OriginalBattleAnimator {
             if index == 8 { return 41 }
             if index == 9 { return 37 }
             return index < effectSounds.count ? effectSounds[index] : nil
+        case .combat:return nil
         }
     }
     /// Returns the sounds that start in this interval.

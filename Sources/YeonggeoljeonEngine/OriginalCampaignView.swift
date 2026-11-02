@@ -11,6 +11,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     /// In-game selectors and waiting lines drawn above the stage and battle.
     private let overlay = CanvasOverlayView()
     private var settings = OriginalSettings.current
+    private lazy var combatArt:OriginalCombatArt? = (try? OriginalCombatCatalog.load(from:host.data.root.appendingPathComponent("combat-view.json"))).flatMap { try? OriginalCombatArt(catalog:$0) }
     private var imageCache:[String:CGImage] = [:]
     private var presentationObserver:NSObjectProtocol?
     private lazy var audio:OriginalAudio? = (try? OriginalMusicCatalog.load(from:host.data.root.appendingPathComponent("music.json"))).map { OriginalAudio(catalog:$0) }
@@ -148,6 +149,10 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             board.announcesPhases = true
             board.animatesActions = true
             board.settingsTexts = host.framework?.settings
+            board.combatArt = combatArt
+            board.portraitImage = { [weak self] person in self?.portrait(person,palette:3) }
+            board.soundBusy = { [weak self] in self?.audio?.effectPlaying ?? false }
+            board.stopSound = { [weak self] in self?.audio?.stopEffect() }
             session.sourceOptionsWord = settings.battleWord
             board.onSound = { [weak self] id in self?.audio?.playEffect(id) }
             board.presentation = CanvasPresentation.current

@@ -14,6 +14,7 @@ struct OriginalStrategyTargetEffect: Codable {
     var quantity: Int?
     var retiredPerson: Int?
     var retirement:OriginalRetirementNotice?
+    var combat: OriginalCombatSnapshot? = nil
 }
 
 struct OriginalStrategyExecution: Codable {

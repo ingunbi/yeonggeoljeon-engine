@@ -89,8 +89,8 @@ with the original.
 The sound test table DS:`3364` names all 43 ids. Played so far: left and right
 click, purchase and sale, level, class change, retirement, not selectable, the
 walking sounds 14 to 16 and move end, arrow, clash and bomb, and the table
-DS:`3F7E` for strategies. The running and hit sounds of duels and of the enlarged
-combat view are not played yet.
+DS:`3F7E` for strategies, and the sounds of the enlarged combat view. Duels play
+only their approach sound so far.
 
 ## Opening and ending programs
 

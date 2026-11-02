@@ -143,7 +143,6 @@ def prepare(game: Path, output: Path) -> dict:
                          "originalHashesPreserved": True, "originalExecution": False},
               "limitations": ["Static pixel reconstruction; no original DOS framebuffer comparison was performed.",
                               "Native movement frame and facing selectors are recovered; timing comes from the driver tick and was not compared with a running original.",
-                              "HEXBCHR enlarged combat-animation producer is outside this map/duel sprite catalog.",
                               "Duel graphics load mode is explicit; native stage composition and timing remain renderer responsibilities.",
                               "Dynamic palette transformations, fog/hidden-unit gates and native special draw effects remain separate renderer responsibilities."]}
     pending = output / ".battle-sprites.json.tmp"

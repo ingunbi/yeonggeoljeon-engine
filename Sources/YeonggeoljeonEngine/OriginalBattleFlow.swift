@@ -28,6 +28,12 @@ final class OriginalBattleFlow {
     var presentsNativeActions = false
     private var heldCues:[OriginalBattleCue] = []
     func takeCues() -> [OriginalBattleCue] { defer { heldCues = [] };return heldCues }
+    var peekCues:[OriginalBattleCue] { heldCues }
+    /// MAIN3145E: the view runs while the option word's high nibble is clear.
+    private func holdCombat(_ snapshot:OriginalCombatSnapshot?) -> Bool {
+        guard let snapshot = snapshot,session.sourceOptionsWord&0xF0 == 0 else { return false }
+        return hold([.combat(snapshot)])
+    }
     private func hold(_ cues:[OriginalBattleCue]) -> Bool {
         guard presentsNativeActions,!cues.isEmpty else { return false }
         heldCues = cues;suspended = true;return true
@@ -126,7 +132,8 @@ final class OriginalBattleFlow {
             }
             let step = try operation.advance(in:session);strategyOperation = operation
             switch step {
-            case .target:continue
+            case .target(let effect):
+                if holdCombat(effect.combat) { return false }
             case .retirement(let notice):
                 strategyRetirementAcknowledgement = notice
                 guard try objectives() else { return false }
@@ -149,7 +156,8 @@ final class OriginalBattleFlow {
             }
             let step = try operation.advance(in:session);itemOperation = operation
             switch step {
-            case .target:continue
+            case .target(let effect):
+                if holdCombat(effect.combat) { return false }
             case .retirement(let notice):
                 itemRetirementAcknowledgement = notice
                 guard try objectives() else { return false }
@@ -169,7 +177,8 @@ final class OriginalBattleFlow {
             }
             let step = try operation.advance(in:session);attackOperation = operation
             switch step {
-            case .context:continue
+            case .context(let effect):
+                if holdCombat(effect.combat) { return false }
             case .retirement(let notice):
                 attackRetirementAcknowledgement = notice
                 guard try objectives() else { return false }

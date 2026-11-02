@@ -64,7 +64,7 @@ person identities, or generic participant side. Special-person table bytes stay
 in the local converted catalog; public tests supply different synthetic values.
 `OriginalDuelSprites.select(person:loadMode:frame:)` requires that load mode
 explicitly, since the same pose index refers to different pixels after a reload.
-The separate HEXBCHR enlarged-combat producer remains outside this catalog.
+The HEXBCHR enlarged combat art has its own catalog, `combat-view.json`.
 
 `OriginalScriptDuel` owns the current load modes alongside poses and positions.
 New duel setup initializes modes0/1; source motion3 reloads participant1 with
@@ -113,5 +113,5 @@ campaign window the flow holds before an action commits, so its dialogue and
 results wait for the picture. Verification and `--battle` skip the cues, and both
 paths run the same game steps in the same order.
 
-Not restored: the small result window of `31DCD`, random offsets on shots, and the
-enlarged combat view selected by the 부대전투 option.
+Not restored: random offsets on shots. The close-up that follows these effects is
+in [original-combat-view.md](original-combat-view.md).

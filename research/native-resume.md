@@ -86,6 +86,6 @@ always run the source defaults.
 | BGM, 효과음 | `228C6`, word `+A` bits 2 and 1 | The audio switches. |
 | 음량 | `22BCE` | Handler index 8 opens the DS:`343C` list of music and sound tests, under a label that says volume. The engine maps by meaning: this row sets one output level, an engine addition. |
 | 음악시간 | handler index 9 | The DS:`343C` list. Songs from DS:`312E` and effects from DS:`3364`, whose names also document every sound id. |
-| 부대전투 | `27DC4`, word `+4` high nibble | Stored. Zero asks for the enlarged combat view, which is not restored. Nonzero doubles the map effects and the prelude draws, as in the source. |
+| 부대전투 | `27DC4`, word `+4` high nibble | Zero plays the enlarged view ([original-combat-view.md](original-combat-view.md)). Nonzero skips it and doubles the map effects and the prelude draws, as in the source. |
 | 이동속도 | `27E2C`, low nibble | The walk step of the battle animator. |
 | 적의 이동 | `27774`, bit `1000` | The camera follows enemy walks (`2C4D6`). With it off the engine skips a walk that has no visible cell, where the source still takes the time. |

@@ -67,5 +67,60 @@ func originalBattleAnimationSelfTests() throws {
     try check(slots.entries()[2]?.title == "둘째","a slot can be overwritten")
     do { try slots.write(["a":1],title:"",slot:5);throw EngineError.invalid("Slot five was accepted") }
     catch EngineError.invalid(let text) where text.hasPrefix("Save slot") { checks += 1 }
+    // The enlarged view: a synthetic catalog with identity-sized tables.
+    func entry(_ value:Int) -> [Int] { Array(repeating:value,count:19) }
+    var classes = OriginalCombatCatalog.Classes(prep:entry(255),run:entry(1),swing:entry(4),attack:entry(6),total:entry(8),shot:entry(255))
+    classes.prep[3] = 1;classes.run[3] = 255;classes.swing[3] = 255;classes.shot[3] = 0;classes.attack[3] = 4;classes.total[3] = 6
+    let blank = Data(repeating:0,count:256).base64EncodedString()
+    let catalog = OriginalCombatCatalog(format:1,palette:Array(repeating:[0,0,0],count:16),background:blank,tiles:"",
+        frameTiles:Array(repeating:16,count:169)+Array(repeating:9,count:12),backs:[],grounds:[],classes:classes,classNames:Array(repeating:"",count:19),
+        slots:[[[10,4],[8,8],[6,6],[4,4],[2,8]],[[14,4],[12,8],[16,6],[20,4],[18,8]]],
+        terrainBack:Array(repeating:4,count:20),terrainGround:Array(repeating:7,count:20),strategySounds:[28,27,29],
+        texts:.init(failed:"%s failed",noLoss:"%s none",loss:"%s(%4u)",moraleLoss:"m%2u",experience:"%s e%2u",counterFriendly:"c",counterEnemy:"C",
+                    level:"Lv%2u %s",attack:"a",defense:"d",troops:"t",morale:"m",exp:"e",terrain:"g",percent:"+%2u%%"),source:nil,limitations:nil)
+    func combat(attacker:Int = 0,target:Int = 20,attackerClass:Int = 0,targetClass:Int = 0,kind:Int = 1,subtype:Int = 0,troops:Int = 700,damage:Int = 250) -> OriginalCombatSnapshot {
+        OriginalCombatSnapshot(kind:kind,subtype:subtype,attackerSlot:attacker,targetSlot:target,attackerPerson:0,targetPerson:1,attackerClass:attackerClass,
+            targetClass:targetClass,attackerLevel:3,targetLevel:4,attackerTroops:1300,targetTroops:troops,attackerMaxTroops:1500,targetMaxTroops:1000,
+            attackerMorale:90,targetMorale:80,attackValue:300,defenseValue:200,terrain:0,terrainPercent:20,damage:damage,moraleLoss:7,experience:12,
+            experienceGain:9,counter:false)
+    }
+    var melee = try OriginalCombatScene(catalog:catalog,snapshot:combat())
+    melee.addResults(attackerName:"가",targetName:"나")
+    let holds = melee.frames.filter { !$0.layers.isEmpty }
+    try check(holds.first?.ticks == 60 && holds.first?.skippable == true,"a scene opens on a second of stillness that a click ends")
+    try check(melee.frames.flatMap(\.sounds).first == 18 && melee.frames.contains { $0.stopsSound },"infantry runs on sound eighteen until the run ends")
+    let picturedTicks = melee.frames.filter { $0.page == nil }.map(\.ticks).reduce(0,+)
+    try check(picturedTicks == 60+41+0+24+2,"begin, run, swing and a shove of two hundred troops")
+    try check(melee.frames.filter { $0.page != nil }.map(\.ticks).reduce(0,+) == 240,"a friendly hit holds four result pages")
+    try check(melee.frames.first { $0.page != nil }?.page?.lines.first?.text == "나( 250)","the loss line fills the source format")
+    try check(melee.frames.last?.page?.gauges == [.init(y:164,value:21,maximum:100)],"experience ends on the raised value")
+    // Soldier counts follow the snapshot: 1300 troops is three, 700 is two.
+    let first = holds[0].layers
+    func stamped(_ x:Int,_ y:Int) -> Bool { first[3*13*26+y*26+x] >= 0 }
+    try check(stamped(10,4) && stamped(8,8) && stamped(6,6) && !stamped(4,4),"the attacker stands three soldiers")
+    let lethal = try OriginalCombatScene(catalog:catalog,snapshot:combat(troops:400,damage:400))
+    let shoved = lethal.frames.filter { $0.ticks == 1 }.count-41
+    try check(shoved == 13,"a kill shoves thirteen cells")
+    var archers = try OriginalCombatScene(catalog:catalog,snapshot:combat(attackerClass:3,damage:0))
+    archers.addResults(attackerName:"가",targetName:"나")
+    try check(archers.frames.flatMap(\.sounds) == [19,21],"archers shoot and hit, with no run")
+    try check(archers.frames.contains { $0.waitsForSound } && !archers.frames.contains { $0.stopsSound },"the bow waits for its sound")
+    try check(archers.frames.filter { $0.page != nil }.count == 3,"a miss has one page, then experience")
+    var fire = try OriginalCombatScene(catalog:catalog,snapshot:combat(attacker:20,target:0,kind:2,subtype:0x01,damage:0))
+    fire.addResults(attackerName:"가",targetName:"나")
+    try check(fire.frames.flatMap(\.sounds) == [28,20],"a strategy pans under its family sound and the default hit")
+    try check(fire.frames.first { $0.page != nil }?.page?.lines.first?.text == "가 failed","a failed strategy names its caster")
+    try check(fire.frames.filter { $0.page != nil }.count == 2,"an enemy attacker has no experience pages")
+    do { _ = try OriginalCombatScene(catalog:catalog,snapshot:{ var s = combat();s.terrain = 20;return s }())
+         throw EngineError.invalid("A terrain past the tables opened a scene") }
+    catch EngineError.invalid(let text) where text.hasPrefix("Original combat view has no") { checks += 1 }
+    try check(originalFormat("%s(%4u) +%2u%%",["가","7","5"]) == "가(   7) + 5%","the printf subset pads and escapes")
+    var player = OriginalCombatPlayer(scene:melee)
+    try check(player.advance(0,soundBusy:false).isEmpty && player.index == 0,"a scene starts on its first frame")
+    player.skip()
+    _ = player.advance(0.001,soundBusy:false)
+    try check(player.index == 1,"a click ends a skippable hold")
+    player.finish()
+    try check(player.finished && player.frame == nil,"a scene can be cut short")
     print("Original battle animation self-tests passed: \(checks)")
 }

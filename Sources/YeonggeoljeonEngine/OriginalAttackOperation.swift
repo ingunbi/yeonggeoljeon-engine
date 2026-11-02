@@ -11,6 +11,7 @@ struct OriginalAttackContextEffect:Codable {
     var strike:OriginalPhysicalResult
     var morale:OriginalMoraleMutation?
     var experience:OriginalExperienceMutation
+    var combat:OriginalCombatSnapshot? = nil
 }
 struct OriginalAttackRetirementCheck:Codable {
     var runtimeSlot:Int

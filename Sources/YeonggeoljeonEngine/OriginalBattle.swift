@@ -250,9 +250,29 @@ final class OriginalBattleSession {
             morale = try OriginalCombat.setMorale(stats:d,unitStatus:target.status,conditionFlags:Int(target.scriptFlags),requestedMorale:strike.remainingMorale,rng:&rng)
             units[targetSlot]!.morale = morale!.remainingMorale;units[targetSlot]!.scriptFlags = UInt8(morale!.remainingFlags)
         }
+        let before = try people.person(attacker.person).experience
         let experience = try people.applyExperience(person:attacker.person,gain:gain.total)
+        let combat = try combatSnapshot(kind:1,subtype:subtype,attackerSlot:attackerSlot,targetSlot:targetSlot,attacker:a,defender:d,
+            attackValue:strike.attack,defenseValue:strike.defense,damage:strike.damage,moraleLoss:strike.moraleLoss,
+            experience:before,gain:gain.total)
         return OriginalAttackContextEffect(attackerSlot:attackerSlot,targetSlot:targetSlot,attackerPerson:attacker.person,
-            targetPerson:target.person,subtype:subtype,preludeDraws:prelude,strike:strike,morale:morale,experience:experience)
+            targetPerson:target.person,subtype:subtype,preludeDraws:prelude,strike:strike,morale:morale,experience:experience,combat:combat)
+    }
+    /// MAIN31EA7..31F92: what the scene shows, read before the blow lands.
+    func combatSnapshot(kind:Int,subtype:Int,attackerSlot:Int,targetSlot:Int,attacker a:OriginalPersonStats,defender d:OriginalPersonStats,
+                        attackValue:Int,defenseValue:Int,damage:Int,moraleLoss:Int,experience:Int,gain:Int) throws -> OriginalCombatSnapshot {
+        guard let attacker = units[attackerSlot],let target = units[targetSlot] else {
+            throw BattleError.unsupported("Original combat context lost a live slot")
+        }
+        let cell = Int(terrain[target.position.y*width+target.position.x])
+        return OriginalCombatSnapshot(kind:kind,subtype:subtype,attackerSlot:attackerSlot,targetSlot:targetSlot,
+            attackerPerson:attacker.person,targetPerson:target.person,attackerClass:a.classID,targetClass:d.classID,
+            attackerLevel:a.level,targetLevel:d.level,attackerTroops:a.troops,targetTroops:d.troops,
+            attackerMaxTroops:try OriginalCombat.maxTroops(classID:a.classID,level:a.level,tables:combat),
+            targetMaxTroops:try OriginalCombat.maxTroops(classID:d.classID,level:d.level,tables:combat),
+            attackerMorale:a.morale,targetMorale:d.morale,attackValue:attackValue,defenseValue:defenseValue,terrain:cell,
+            terrainPercent:combat.terrainDefensePercent[cell],damage:damage,moraleLoss:moraleLoss,experience:experience,
+            experienceGain:gain,counter:subtype == 7)
     }
     @discardableResult
     func retireContextTarget(_ slot:Int) throws -> Int? {

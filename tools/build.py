@@ -154,7 +154,7 @@ def main() -> None:
         run(sys.executable, "tools/prepare_scene.py", "--game-dir", str(game), "--output", str(data))
         run(sys.executable, "tools/prepare_campaign.py", "--game-dir", str(game), "--output", str(data))
         run(sys.executable, "tools/prepare_battles.py", "--game-dir", str(game), "--output", str(data))
-        for exporter in ("prepare_people.py", "prepare_combat.py", "prepare_movement.py", "prepare_rosters.py", "prepare_world.py", "prepare_story.py", "prepare_shop.py", "prepare_music.py", "prepare_citizens.py", "prepare_party.py", "prepare_ending.py", "prepare_battle_sprites.py", "prepare_retirement.py"):
+        for exporter in ("prepare_people.py", "prepare_combat.py", "prepare_combat_view.py", "prepare_movement.py", "prepare_rosters.py", "prepare_world.py", "prepare_story.py", "prepare_shop.py", "prepare_music.py", "prepare_citizens.py", "prepare_party.py", "prepare_ending.py", "prepare_battle_sprites.py", "prepare_retirement.py"):
             run(sys.executable, "tools/" + exporter, "--game-dir", str(game), "--output", str(data))
         run(sys.executable, "tools/link_resources.py", "--data", str(data))
         sources = sorted((ROOT / "Sources" / "YeonggeoljeonEngine").glob("*.swift"))
