@@ -21,8 +21,8 @@ func originalFrameworkSelfTests() throws {
               "the latest producer agreeing with context+0A owns the entry")
     try check(OriginalBattleExit.decide(result:5,contextMap:0x2004,selectionMaps:[0x2004]) == .enterMap(selectionIndex:0),
               "other nonzero results also call C86C")
-    if case .unsupported = OriginalBattleExit.decide(result:2,contextMap:0x3001,selectionMaps:[0x3001]) { checks += 1 }
-    else { throw EngineError.invalid("Original framework regression: battle re-entry through C86C was accepted") }
+    try check(OriginalBattleExit.decide(result:2,contextMap:0x3001,selectionMaps:[0x3001]) == .enterMap(selectionIndex:0),
+              "a chained battle enters through C86C like any other map")
     if case .unsupported = OriginalBattleExit.decide(result:2,contextMap:0x1000,selectionMaps:[0x2004]) { checks += 1 }
     else { throw EngineError.invalid("Original framework regression: context+0A without a restored producer was accepted") }
     if case .unsupported = OriginalBattleExit.decide(result:0,contextMap:0x1000,selectionMaps:[0x1000]) { checks += 1 }

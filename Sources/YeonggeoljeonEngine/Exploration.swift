@@ -38,6 +38,8 @@ struct OriginalExplorationCatalog:Codable {
     /// the SSCCHR1 member the source allocator loads (MAIN1FC24..18448).
     var worldBankKey:String?
     var cityEntry:OriginalCityEntry? = nil
+    /// Sheet paths by SSCCHR2 member, which people and citizens share.
+    var townSprites:[String]? = nil
     var source:JSONValue?; var limitations:[String]?
     static func load(from url:URL) throws -> Self {
         let value = try JSONDecoder().decode(Self.self,from:Data(contentsOf:url))

@@ -113,7 +113,8 @@ A matched marker7D script followed by the built-in exit is not restored.
 
 Actor approach (`25D9E..25E67`) builds the route to the actor's target tile and
 removes its final step through the shared route producer. The producer seeds its
-flood at the goal without testing it, so a blocked target tile is reachable. It does not find a
+flood at the goal without testing it, so a blocked target tile is reachable. The world producer
+does the same (`21513..2152F`): one chapter-four messenger walks to a blocked cell beside a city. It does not find a
 new path to a separately chosen adjacent cell. The planner preserves that
 prefix. At arrival, `25B60..25C04` requires adjacency (or the same tile), and
 `26A48..26A85` faces both participants toward one another before kind3's

@@ -348,6 +348,7 @@ def compile_instructions(script: bytes, frames: list, text: bytes, bounds: tuple
         elif opcode == 0x11:
             mode = int(frame.end < len(script) and script[frame.end] == 0x29)
             effect["kind"], effect["arguments"] = "resume-map", [u16(data), mode]
+            effect["battleID"] = battle_ids.get(frame.offset)
         elif opcode == 0x12:
             effect["kind"] = "next-chapter"
         elif opcode == 0x13:

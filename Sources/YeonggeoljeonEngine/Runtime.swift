@@ -295,7 +295,9 @@ final class Runtime {
         updateActors();if duration == 0 { settleBatch() }
     }
     var currentMap: MapResource? { mapID.flatMap { hostMaps[$0] ?? data.resources.maps[String($0)] } }
-    func actorResource(_ person:Int) -> ActorResource? { (hostActors ?? data.resources.actors)[String(person)] }
+    /// Actors outside the people catalog, such as citizens.
+    var extraActors:[String:ActorResource] = [:]
+    func actorResource(_ person:Int) -> ActorResource? { (hostActors ?? data.resources.actors)[String(person)] ?? extraActors[String(person)] }
     func configureMap(_ id:Int,resource:MapResource,actors:[String:ActorResource]?) throws {
         guard hostDriven,(1...4096).contains(resource.width),(1...4096).contains(resource.height),
               let w = resource.walkWidth,let h = resource.walkHeight,w > 0,h > 0,w*h <= 65536,
@@ -633,7 +635,8 @@ final class Runtime {
         }
         let grid = rows.map(Array.init),start = GridPoint(x:actor.position.x/2,y:actor.position.y/2),goal = GridPoint(x:target.x/2,y:target.y/2)
         func passable(_ p:GridPoint) -> Bool { p.x >= 0 && p.y >= 0 && p.x < w && p.y < h && grid[p.y][p.x] == "." }
-        guard passable(goal) else { throw EngineError.invalid("Original world destination is blocked") }
+        // MAIN21513..2152F seeds this flood at the goal too, untested: one script
+        // sends a messenger to a blocked cell beside a city.
         var queue = [goal],distances = [goal:0],cursor = 0
         while cursor < queue.count {
             let p = queue[cursor]; cursor += 1

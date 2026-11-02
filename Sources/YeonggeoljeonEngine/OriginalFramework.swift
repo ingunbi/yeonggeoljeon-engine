@@ -39,7 +39,8 @@ struct OriginalFrameworkReturn:Codable,Equatable {
 /// MAIN1E31C..1E344 interprets the raw battle-loop result. One restores the
 /// battle checkpoint (MAIN1E347..1E368), three and four add masks20/40, and
 /// every other value calls CF5:C86C (MAIN201BC..2022E), which enters the map
-/// held in script context+0A. Source09 and source11 both write that field.
+/// held in script context+0A. Source09 and source11 both write that field;
+/// a battle map there is the next battle of a chain (MAIN20172).
 enum OriginalBattleExit:Equatable {
     case restoreCheckpoint
     case framework(mask:Int)
@@ -55,10 +56,7 @@ enum OriginalBattleExit:Equatable {
         case 3: return .framework(mask:0x20)
         case 4: return .framework(mask:0x40)
         default:
-            guard (0...0xFFFF).contains(contextMap),contextMap>>12 != 3 else {
-                return .unsupported("Original battle exit would re-enter a battle map through C86C; battle re-entry is not restored")
-            }
-            guard let index = selectionMaps.lastIndex(of:contextMap) else {
+            guard (0...0xFFFF).contains(contextMap),let index = selectionMaps.lastIndex(of:contextMap) else {
                 return .unsupported("Original battle exit has no restored producer for script context+0A")
             }
             return .enterMap(selectionIndex:index)

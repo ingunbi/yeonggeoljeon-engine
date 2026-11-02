@@ -261,7 +261,7 @@ def prepare(game: Path, output: Path) -> dict:
         raise ResourceError("original file hashes changed during exploration export")
     city_entry = city_entry_facts(main)
     result = {"format": 2, "worldBankKey": "person-field-2B", "maps": maps, "chapterMappings": chapters, "cities": cities,
-              "cityEntry": city_entry,
+              "cityEntry": city_entry, "townSprites": [image for image, _ in town_images],
               "actorBanks": actors, "peopleBanks": people_banks,
               "worldNeighbors": [{"dx": x, "dy": y, "direction": index} for index, (x, y) in enumerate(zip(dx, dy))],
               "worldDirectionFrames": frames,
@@ -276,7 +276,7 @@ def prepare(game: Path, output: Path) -> dict:
                               "Default town/world palettes are exported; grayscale and dynamic palette changes remain unsupported.",
                               "World bank keys are SSCCHR1 members selected by person field2B; peopleBanks keep raw BAKDATA state byte one separately.",
                               "Non-person world actors use SSCCHR1 member three in the source allocator; script placement here covers person actors only.",
-                              "City scripts, citizens and interactive destinations require their own source execution models."]}
+                              "City scripts and interactive destinations require their own source execution models."]}
     temporary = output / ".exploration.json.tmp"
     temporary.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(output / "exploration.json")

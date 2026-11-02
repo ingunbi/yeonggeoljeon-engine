@@ -156,3 +156,12 @@ cities. Those slots are not selectable cities, and each chapter constructor
 rewrites its constructed flags (`0x1B04D`). The VM accepts identities below
 `0x20` and changes only constructed entries. Identities at or above `0x20`
 would use a null object and stay unsupported.
+
+## Cell and region predicates
+
+Kinds six and eleven compare a unit's cell with packed words. Units hold x at
+`+3` and y at `+4` (`1CB6:8422`, `2B982..2BA25`, bounded by DS:`E194`/`E195`),
+and the callers `2C0E2` and `2C126` push person, x, y. So the kind-six word is
+`x<<8|y` (`1DAC1`), and kind eleven reads its high bytes as the x bounds and its
+low bytes as the y bounds (`1DB50..1DBB4`). All 148 such records with a known
+battle size fit their maps this way; only 100 fit the opposite reading.

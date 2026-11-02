@@ -68,6 +68,7 @@ final class OriginalCampaignHost {
     let story:OriginalStoryCatalog
     let retirementCatalog:OriginalRetirementCatalog
     let shopCatalog:OriginalShopCatalog
+    let citizens:OriginalCitizenCatalog
     let people:OriginalPeople
     private(set) var roster = OriginalRoster()
     private(set) var rng:OriginalRNG
@@ -164,9 +165,11 @@ final class OriginalCampaignHost {
         story = try OriginalStoryCatalog.load(from:data.root.appendingPathComponent("story.json"))
         retirementCatalog = try OriginalRetirementCatalog.load(from:data.root.appendingPathComponent("retirement.json"))
         shopCatalog = try OriginalShopCatalog.load(from:data.root.appendingPathComponent("shop.json"))
+        citizens = try OriginalCitizenCatalog.load(from:data.root.appendingPathComponent("citizens.json"))
         let program = try OriginalCampaignProgram.load(from:data.root.appendingPathComponent("campaign.json"))
-        vm = try CampaignVM(program:program,state:vmState ?? OriginalCampaignState(),supportedHostOpcodes:[2,3,7,0x10,0x11,0x1B,0x1C,0x20,0x22,0x23,0x24,0x26,0x27,0x28,0x29,0x2A,0x2D,0x2F,0x33,0x34,0x35,0x37,0x39,0x3A,0x2B,0x36,0x38,0x3B,0x3C,0x3D])
+        vm = try CampaignVM(program:program,state:vmState ?? OriginalCampaignState(),supportedHostOpcodes:[2,3,7,0x10,0x11,0x1B,0x1C,0x1F,0x20,0x22,0x23,0x24,0x26,0x27,0x28,0x29,0x2A,0x2D,0x2F,0x33,0x34,0x35,0x37,0x39,0x3A,0x2B,0x36,0x38,0x3B,0x3C,0x3D])
         stage = Runtime(data,hostDriven:true)
+        stage.extraActors = citizens.actors(sprites:exploration.townSprites ?? [])
     }
     func acknowledge() throws {
         guard failure == nil,choice == nil,saveRequest == nil else { return }
@@ -240,6 +243,10 @@ final class OriginalCampaignHost {
         if plan.kind == .worldCity { event = try vm.commitWorldArrival(city:arrival.currentCity) }
         explorationInput = nil
         if arrival.opensShop { try openShop(facings:arrival.afterInvocationFacings);return }
+        if let citizen = arrival.citizen {
+            if let line = citizens.say(group:cityGroup,citizen:citizen) { try stage.enqueue([line]) }
+            return
+        }
         if let event = event {
             controllerAfterInvocationFacings = arrival.afterInvocationFacings
             let matched = try dispatch(event,currentPerson:plan.targetPerson)
@@ -268,6 +275,15 @@ final class OriginalCampaignHost {
     func exchangeItem(from giver:Int,to receiver:Int,item:Int) throws -> Bool {
         guard fieldMenuReady else { throw EngineError.invalid("Item exchange is available only at an idle field") }
         return try people.giveItem(from:giver,to:receiver,item:item)
+    }
+    private var cityGroup:Int { exploration.chapterMappings.first{$0.chapter == vm.state.chapter}?.cityGroup ?? 0 }
+    /// MAIN26298 places the city's citizens once per map: 18E8 finds any class
+    /// 0x400 actor already there. The key is the room, or 7D for the town.
+    private func placeCitizens() throws {
+        guard !stage.actors.keys.contains(where:{$0 >= OriginalCitizenCatalog.firstActor}),let city = vm.state.gameCity,
+              let map = stage.currentMap,let width = map.walkWidth,let walk = map.walkBytes else { return }
+        let packed = vm.state.packedMap
+        try stage.enqueue(citizens.placements(group:cityGroup,city:city,key:packed>>12 == 2 ? packed&0xFF : 0x7D,width:width,walk:walk,rng:&rng))
     }
     /// MAIN23F96..23FE9: an unmatched arrival at a town asks before entering.
     /// The source also skips the question while the cursor is disabled (player
@@ -378,6 +394,7 @@ final class OriginalCampaignHost {
                     try stage.enqueue([Command("place",person:merchant.person,x:merchant.x,y:merchant.y,sourcePlacementFacing:merchant.sourceFacing)])
                 }
             }
+            try placeCitizens()
             let facts = try vm.replaySettlementCache()
             let replay = try OriginalExplorationInput.settlementCacheReplay(replay:facts,packedMap:packedMap,rng:rng)
             try stage.enqueue(replay.commands);rng = replay.rngAfter
@@ -500,7 +517,7 @@ final class OriginalCampaignHost {
                 guard let slot = hook.runtimeSlot,let probe = try battle.sourceUnitProbe(slot,kind:index == 0 ? 6 : index == 1 ? 11 : 4,
                     direction:index < 2 ? nil : index-2,sourcePerson:hook.sourcePerson) else { hookAutomatic = true;continue }
                 primary = probe.primary;fallback = probe.friendlyFallback
-            } else { primary = try hook.campaignEvent();fallback = hook.kind == .numberedRound ? .automatic : nil }
+            } else { primary = try hook.campaignEvent();fallback = [.numberedRound,.enemiesDefeated].contains(hook.kind) ? .automatic : nil }
             if let person = hook.sourcePerson { currentEventPerson = person }
             var matched = try vm.queryInvocation(event:primary)
             if !matched,let fallback = fallback { matched = try vm.queryInvocation(event:fallback) }
@@ -674,6 +691,8 @@ final class OriginalCampaignHost {
             if battle.turns.result == 2 { carryover = try battle.finishBattleForCarryover() }
             guard completeSelectedMap(selections[index]) else { return }
             pendingBattleMap = nil;battleReturnSelection = nil;controllerIdle = false;waiting = vm.waitingState()
+            // The next battle of a chain runs its opening records like a source09 entry.
+            if selections[index].packedMap>>12 == 3 { waiting = nil;try pump() }
         }
     }
     /// MAIN1E347..1E368: result one restores the source36 script context,
@@ -765,7 +784,7 @@ final class OriginalCampaignHost {
     private func apply(_ instruction:OriginalCampaignInstruction) throws {
         let args = instruction.arguments
         let scriptActions:Set<Int> = [2,0x10,0x26,0x27,0x28,0x2D,0x33,0x34,0x35]
-        let expected:[Int:Int] = [3:0,7:2,0x11:2,0x1B:1,0x22:0,0x24:2,0x29:1,0x2A:1,0x2F:2,0x37:2,0x39:2,0x3A:2,0x2B:2,0x36:0,0x38:1,0x3B:2,0x3C:1]
+        let expected:[Int:Int] = [3:0,7:2,0x11:2,0x1B:1,0x1F:0,0x22:0,0x24:2,0x29:1,0x2A:1,0x2F:2,0x37:2,0x39:2,0x3A:2,0x2B:2,0x36:0,0x38:1,0x3B:2,0x3C:1]
         guard scriptActions.contains(instruction.opcode) || instruction.opcode == 0x1C || instruction.opcode == 0x20 || expected[instruction.opcode] == args.count else { throw EngineError.invalid("Original host operands do not match their registered contract") }
         if scriptActions.contains(instruction.opcode) {
             guard let battle = battle else { throw BattleError.unsupported("Original battle action has no native battle context") }
@@ -781,7 +800,8 @@ final class OriginalCampaignHost {
             try roster.apply(source.rosters.program(chapter:vm.state.chapter,member:vm.state.member,offset:instruction.offset),flags:vm.state)
         case 7:
             try stage.beginStory(image:story.picture(args[0],mode:args[1],palette:stage.palette),mode:args[1],source:instruction.source)
-        case 0x38: break // VM owns the source music selection; audio output remains unimplemented.
+        case 0x38: break // VM owns the source music selection; OriginalAudio follows it.
+        case 0x1F:try placeCitizens()
         case 0x36: break // Full native snapshot is captured after host acknowledgement below.
         case 0x2A:
             let catalog = try OriginalEndingCatalog.load(from:data.root.appendingPathComponent("ending.json"))
@@ -794,7 +814,7 @@ final class OriginalCampaignHost {
                 try battle.acceptSourceResult(mode == 0 ? 2 : 3)
                 if mode == 3 { try vm.setSourceMusic(selection:4) }
                 if instruction.opcode == 0x11 {
-                    battleReturnSelection = CampaignVMMapRequest(packedMap:args[0],battleID:nil,
+                    battleReturnSelection = CampaignVMMapRequest(packedMap:args[0],battleID:instruction.battleID,
                         recordID:vm.activeRecord?.id ?? "",sourceOffset:instruction.offset)
                 }
             }

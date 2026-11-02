@@ -88,3 +88,10 @@ order0 followers. Native person lookup remains the first matching slot, includin
 inactive aliases. The VM owns its actor cache and typed operand interpretation;
 these battle adapters own live-unit mutations. Party activation and spawn search
 have one owner in `OriginalParty`.
+
+## Cleared enemy roster
+
+`1CB6:4ABC` (`2801C`) runs after the acting unit's own events, from the manual
+path (`27EFE`) and the AI path (`30638`, flags `80`/`40`). It counts status-two
+enemies in slots 15..44. With none left it probes kind seven, then the automatic
+record. Objective scripts that end a battle by elimination depend on this.

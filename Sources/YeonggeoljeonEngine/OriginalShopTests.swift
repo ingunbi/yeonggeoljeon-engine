@@ -162,5 +162,22 @@ func originalShopSelfTests() throws {
     try shop.answer(0,people:seller,money:&money)
     try check(shop.phase == .top,"no returns to the top menu")
 
+    // Citizens: the table row, even plain cells, and the source's draw order.
+    let citizens = OriginalCitizenCatalog(format:1,people:(0..<256).map{.init(name:"c\($0)",sprite:$0%2)},
+        groups:[.init(cityCount:1,cities:["0":[.init(key:125,ids:[3,4]),.init(key:8,ids:[5])]],lines:["3":"hello"])],source:nil,limitations:nil)
+    var walk = Array(repeating:255,count:31*20)
+    for y in stride(from:0,to:20,by:2) { for x in stride(from:0,to:31,by:2) { walk[y*31+x] = 127 } }
+    var rng = OriginalRNG(state:7),twin = OriginalRNG(state:7)
+    let placed = try citizens.placements(group:0,city:0,key:125,width:31,walk:walk,rng:&rng)
+    try check(placed.map(\.person) == [1027,1028],"citizens keep their table order above the people ids")
+    try check(placed.allSatisfy{($0.x ?? 1)&1 == 0 && ($0.y ?? 1)&1 == 0 && walk[($0.y ?? 0)*31+($0.x ?? 0)] == 127},"they stand on even plain cells")
+    let x = try twin.next(bound:0x1F),y = try twin.next(bound:0x13)
+    try check(placed[0].x == x+x&1 && placed[0].y == y+y&1,"the first draws choose the cell")
+    var empty = OriginalRNG(state:7)
+    try check(try citizens.placements(group:0,city:1,key:125,width:31,walk:walk,rng:&empty).isEmpty && empty == OriginalRNG(state:7),"a city without a row draws nothing")
+    try check(citizens.say(group:0,citizen:3)?.text == "hello" && citizens.say(group:0,citizen:3)?.speaker == "c3","a citizen speaks its line under its own name")
+    try check(citizens.say(group:0,citizen:4) == nil,"a citizen without a line stays silent")
+    let sheets = citizens.actors(sprites:["a.png","b.png"])
+    try check(sheets["1025"]?.image == "b.png" && sheets.count == 256,"each citizen takes its sprite sheet")
     print("Original shop self-tests passed: \(checks)")
 }

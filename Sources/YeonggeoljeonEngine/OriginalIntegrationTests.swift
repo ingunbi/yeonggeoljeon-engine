@@ -72,7 +72,9 @@ func originalIntegrationSelfTests() throws {
     let afterAttackRNG = resumed.rng.state
     try check(flow.suspended && objectiveCalls == 1 && resumed.units[15]?.status == 4,"objective script suspends after its committed strike")
     try flow.resumeSourceFlow()
-    try check(flow.acceptsManualInput && objectiveCalls == 1 && resumed.rng.state == afterAttackRNG && hookCalls == 3,"objective continuation does not repeat combat, RNG or delivery")
+    try check(flow.acceptsManualInput && objectiveCalls == 1 && resumed.rng.state == afterAttackRNG && hookCalls == 4,"objective continuation does not repeat combat, RNG or delivery")
+    try check(flow.hooks.suffix(2).map(\.kind) == [.unitConditions,.enemiesDefeated] && (try flow.hooks.last!.campaignEvent()) == OriginalCampaignEvent(kind:7,arguments:[]),
+        "a cleared enemy roster probes source kind seven after the acting unit's own events")
     print("Original integration self-tests: \(checks) assertions passed")
 }
 

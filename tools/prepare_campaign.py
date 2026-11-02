@@ -45,8 +45,13 @@ def transition(instruction, chapter: int, member: int, block: int,
         return {"kind": "enter-current-map", "reason": "source dispatcher is map-context dependent; no map is inferred",
                 "source": location}
     if opcode == 0x11:
-        return {"kind": "map-resume", "target": f"map:{struct.unpack('<H', data)[0]}",
-                "reason": "source context resume; not treated as an independent battle-start opcode", "source": location}
+        packed = struct.unpack("<H", data)[0]
+        result = {"kind": "map-resume", "target": f"map:{packed}",
+                  "reason": "source context resume; a battle map here chains into the next battle after the loop ends",
+                  "source": location}
+        if battle_ids is not None and packed & 0xF000 == 0x3000:
+            result["battleID"] = battle_ids.get(instruction.offset)
+        return result
     if opcode in (0x0F, 0x15, 0x21, 0x25):
         return {"kind": "source-control-flow", "reason": "condition/choice routing is retained but not automatically evaluated",
                 "source": location, "operands": data.hex()}
@@ -135,7 +140,7 @@ def prepare_campaign(game: Path) -> dict:
                         framing_error = str(error)
                     framed_records.append((descriptor, frames, framing_error))
                 selection_offsets = [instruction.offset for _, frames, _ in framed_records
-                                     for instruction in frames if instruction.opcode == 0x09
+                                     for instruction in frames if instruction.opcode in (0x09, 0x11)
                                      and struct.unpack("<H", instruction.operands)[0] & 0xF000 == 0x3000]
                 battle_ids = battle_identity_map(chapter, member.index, block, selection_offsets)
                 for descriptor, frames, framing_error in framed_records:

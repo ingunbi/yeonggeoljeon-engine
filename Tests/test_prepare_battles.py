@@ -129,7 +129,7 @@ class OriginalBattleExtractionTests(unittest.TestCase):
             output = Path(directory)
             result = prepare(Path(os.environ["ORIGINAL_GAME_DIR"]), output)
             self.assertEqual(len(result["maps"]), 58)
-            self.assertEqual(len(result["battles"]), 60)
+            self.assertEqual(len(result["battles"]), 64)
             self.assertEqual(result["provenance"]["framingFailures"], [])
             self.assertTrue(result["provenance"]["originalHashesPreserved"])
             battle = next(b for b in result["battles"] if b["id"] == "0:0:5")

@@ -11,7 +11,7 @@ struct OriginalTurnState:Codable,Equatable {
     var result:UInt8 = 0
     var pendingAI:[Int] = []
 }
-enum OriginalTurnHookKind:String,Codable { case numberedRound, globalConditions, unitConditions }
+enum OriginalTurnHookKind:String,Codable { case numberedRound, globalConditions, unitConditions, enemiesDefeated }
 struct OriginalTurnHook:Codable,Equatable {
     var kind:OriginalTurnHookKind
     var round:Int
@@ -89,6 +89,12 @@ extension OriginalBattleSession {
         units[slot]!.scriptFlags |= 0x80
         commitMove(slot)
         return sourceUnitHook(slot)
+    }
+    /// MAIN2801C runs after a unit's own events (MAIN27EFE, 30638): with no
+    /// live enemy slot it probes kind seven, then the automatic record.
+    func enemiesDefeatedHook() -> OriginalTurnHook? {
+        guard turns.result == 0,!units.values.contains(where:{$0.slot >= 15 && $0.status == 2}) else { return nil }
+        return OriginalTurnHook(kind:.enemiesDefeated,round:turns.roundIndex+1,runtimeSlot:nil)
     }
     func sourceUnitHook(_ slot:Int) -> OriginalTurnHook {
         OriginalTurnHook(kind:.unitConditions,round:turns.roundIndex+1,runtimeSlot:slot,sourcePerson:units[slot]?.person)
@@ -195,6 +201,7 @@ extension OriginalTurnHook {
     func campaignEvent() throws -> OriginalCampaignEvent {
         switch kind {
         case .numberedRound:return OriginalCampaignEvent(kind:9,arguments:[round])
+        case .enemiesDefeated:return OriginalCampaignEvent(kind:7,arguments:[])
         case .globalConditions:return OriginalCampaignEvent(kind:0,arguments:[])
         case .unitConditions:throw BattleError.invalid("Original unit hooks require ordered coordinate/region/adjacency probes")
         }

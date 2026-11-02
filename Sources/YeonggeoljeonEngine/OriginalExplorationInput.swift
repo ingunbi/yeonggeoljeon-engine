@@ -40,6 +40,8 @@ struct OriginalExplorationArrival:Codable {
     var afterInvocationFacings:[OriginalExplorationFacing] = []
     /// MAIN26A66..26A77 runs the shop instead of a kind3 source event.
     var opensShop = false
+    /// MAIN26AB9..26B24: a class 0x400 actor speaks its table line.
+    var citizen:Int? = nil
     var builtin:OriginalSettlementBuiltin?
 }
 enum OriginalWorldEntryMode {case script,nativeCityDefault}
@@ -199,6 +201,9 @@ enum OriginalExplorationInput {
                     throw EngineError.invalid("Original talk target moved outside the source adjacent arrival gate")
                 }
                 facings = [.init(person:player.person,nativeDirection:forward.direction),.init(person:person,nativeDirection:reverse.direction)]
+            }
+            if person >= OriginalCitizenCatalog.firstActor {
+                return OriginalExplorationArrival(event:nil,currentCity:plan.currentCity,facings:facings,citizen:person-OriginalCitizenCatalog.firstActor)
             }
             let restore = [OriginalExplorationFacing(person:person,nativeDirection:target.facing)]
             if person == shopMerchant {

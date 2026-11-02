@@ -261,7 +261,8 @@ def prepare(game: Path, output: Path) -> dict:
                             previous_enemies = None
                         else:
                             previous_enemies = value
-                    elif instruction.opcode == 9:
+                    elif instruction.opcode in (9, 0x11):
+                        # Source11 selects the next battle of a chain (CF5:C86C).
                         packed = struct.unpack("<H", instruction.operands)[0]
                         if packed >> 12 == 3:
                             battle_maps.append((packed & 0xFFF, source, previous_setup, previous_enemies))

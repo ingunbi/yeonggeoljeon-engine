@@ -695,12 +695,13 @@ final class CampaignVM {
         case (2, 5): matched = state.packedMap & 0xF000 == 0x1000 && args.count >= 2 && words[0] == args[1]
         case (3, 3), (9, 9), (12, 12): matched = args.count >= 1 && words[0] == args[0]
         case (6, 6):
-            matched = args.count >= 3 && words[0] == args[0] && words[1] == ((args[2] & 255) << 8 | args[1] & 255)
+            // MAIN0x1DAC1 packs the record cell as x<<8|y; units hold x at +3, y at +4.
+            matched = args.count >= 3 && words[0] == args[0] && words[1] == ((args[1] & 255) << 8 | args[2] & 255)
         case (7, 7), (8, 8): matched = true
         case (11, 11):
             matched = args.count >= 3 && words[0] == args[0] &&
-                args[1] >= words[1] & 255 && args[1] <= words[2] & 255 &&
-                args[2] >= words[1] >> 8 && args[2] <= words[2] >> 8
+                args[1] >= words[1] >> 8 && args[1] <= words[2] >> 8 &&
+                args[2] >= words[1] & 255 && args[2] <= words[2] & 255
         default: matched = false
         }
         return record.inverted ? !matched : matched

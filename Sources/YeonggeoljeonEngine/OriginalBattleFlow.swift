@@ -83,6 +83,7 @@ final class OriginalBattleFlow {
         if let onHook = onHook,try !onHook(value) { suspended = true;return false }
         return true
     }
+    private var pendingDefeatCheck = false
     private func objectives() throws -> Bool {
         while retirementsDelivered < session.retirements.count {
             let notice = session.retirements[retirementsDelivered]
@@ -157,6 +158,14 @@ final class OriginalBattleFlow {
         }
         return true
     }
+    /// True when the source flow may continue. The check survives a unit hook
+    /// that suspended for its script.
+    private func checkDefeatedEnemies() throws -> Bool {
+        guard pendingDefeatCheck else { return true }
+        pendingDefeatCheck = false
+        guard let value = session.enemiesDefeatedHook() else { return true }
+        return try hook(value)
+    }
     private func finishManualAction(_ slot:Int) throws {
         pendingManualSlot = slot
         try drivePhases()
@@ -169,8 +178,10 @@ final class OriginalBattleFlow {
         if pendingManualSlot != nil {
             guard try objectives() else { return }
             let slot = pendingManualSlot!;pendingManualSlot = nil
+            pendingDefeatCheck = true
             if session.turns.result == 0,try !hook(session.sourceUnitHook(slot)) { return }
         }
+        guard try checkDefeatedEnemies() else { return }
         if session.turns.result != 0 { pendingNativeSlot = nil;return }
         while !suspended,session.turns.result == 0 {
             switch session.turns.stage {
@@ -214,7 +225,12 @@ final class OriginalBattleFlow {
                 guard try objectives() else { return }
                 pendingNativeSlot = nil
                 if session.turns.result != 0 { return }
-                if let value = try session.completeNativeUnit(slot),try !hook(value) { return }
+                if let value = try session.completeNativeUnit(slot) {
+                    pendingDefeatCheck = true
+                    if try !hook(value) { return }
+                }
+                guard try checkDefeatedEnemies() else { return }
+                if session.turns.result != 0 { return }
                 continue
             }
             guard let slot = session.turns.pendingAI.first else { return }

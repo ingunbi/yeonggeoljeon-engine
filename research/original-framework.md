@@ -33,8 +33,9 @@ battle sets the raw result through `336FA` and selects the next map without
 an interpreter return. The native host therefore records both producers and
 enters the map only after the battle loop ends. The latest producer that
 agrees with the VM's context map supplies provenance. A context map of kind
-three would re-enter a battle through C86C; that path is not restored and
-stops explicitly.
+three is the next battle of a chain: C86C reaches `20172` and the new battle
+inherits the carryover exactly as a source `09` entry would. Four source `11`
+sites select a battle this way, so the battle catalog lists them as load sites.
 
 The native host records continuation owners when source `36` runs inside a
 battle. On result one it restores the script context (keeping game field 4,

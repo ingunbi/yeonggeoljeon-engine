@@ -113,7 +113,12 @@ func campaignVMSelfTests() throws {
 
     let rect = record(0, once, kind: 11, words: [4, 0x0201, 0x0503], [end])
     let rectVM = try CampaignVM(program: program([rect]))
-    try check(try rectVM.dispatch(event: OriginalCampaignEvent(kind: 11, arguments: [4, 3, 5])), "source rectangle event includes boundary coordinates")
+    try check(!(try rectVM.dispatch(event: OriginalCampaignEvent(kind: 11, arguments: [4, 3, 5]))), "source rectangle high bytes bound x, low bytes bound y")
+    try check(try rectVM.dispatch(event: OriginalCampaignEvent(kind: 11, arguments: [4, 5, 1])), "source rectangle event includes boundary coordinates")
+    let cell = record(0, once, kind: 6, words: [4, 0x0201, 0], [end])
+    let cellVM = try CampaignVM(program: program([cell]))
+    try check(!(try cellVM.dispatch(event: OriginalCampaignEvent(kind: 6, arguments: [4, 1, 2]))), "source cell word is not y<<8|x")
+    try check(try cellVM.dispatch(event: OriginalCampaignEvent(kind: 6, arguments: [4, 2, 1])), "source cell word is x<<8|y")
     let storyRecord = record(0, once, [instruction(7, 0, "story-layout", [3, 0]),
         instruction(8, 1, "commands", commands: [Command("say", text: "A")]),
         instruction(20, 2, "flag", [14, 0]),
