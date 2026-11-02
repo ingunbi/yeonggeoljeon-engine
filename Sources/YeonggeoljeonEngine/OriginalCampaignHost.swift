@@ -100,6 +100,7 @@ final class OriginalCampaignHost {
     private var invocationReturn:OriginalCampaignInterpreterReturn?
     private var turnInvocationPending = false
     private var controllerInvocationPending = false
+    private var controllerEvent:Int?
     private var controllerIdle = false
     private var controllerAfterInvocationFacings:[OriginalExplorationFacing] = []
     private(set) var shop:OriginalShopOperation?
@@ -575,7 +576,7 @@ final class OriginalCampaignHost {
         if let currentPerson = currentPerson { currentEventPerson = currentPerson }
         guard !controllerInvocationPending,retirement == nil,pendingTurnHook == nil else { throw EngineError.invalid("Original input invocation has another source caller") }
         let matched = try vm.queryInvocation(event:event)
-        if matched { controllerIdle = false;controllerInvocationPending = true;waiting = nil;try pump() }
+        if matched { controllerEvent = event.kind;controllerIdle = false;controllerInvocationPending = true;waiting = nil;try pump() }
         return matched
     }
     private func cacheCompletedCommands() throws {
@@ -677,6 +678,8 @@ final class OriginalCampaignHost {
                 let returned = try vm.takeInvocationReturn();waiting = vm.waitingState()
                 if controllerInvocationPending {
                     controllerInvocationPending = false;controllerIdle = false;try restoreInputFacings()
+                    // MAIN264A6: a destination script ending normally peoples its map.
+                    if returned.status == 1,controllerEvent == 2,[0,2].contains(vm.state.packedMap>>12) { try placeCitizens() }
                     if let request = controllerMap {
                         // MAIN264B2..264B7: a settlement invocation returning
                         // status2 saves game map and player position (1924)

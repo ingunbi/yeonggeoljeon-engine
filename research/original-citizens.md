@@ -47,7 +47,7 @@ a player stands in town. The engine draws from a generator of its own and only i
 the window, so verification and replays keep citizens still. Wandering pauses
 while a script or the player's own walk runs; the source does not pause.
 
-## Not restored
+## Late placement
 
-- Settlement status one with kind two (`264A6`), which places citizens after a
-  destination script on a map that has none.
+A destination script that ends with status one calls the same placement
+(`264A6`), for a map that a script entered without opcode `1F`.

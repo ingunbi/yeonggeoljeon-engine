@@ -89,6 +89,15 @@ inactive aliases. The VM owns its actor cache and typed operand interpretation;
 these battle adapters own live-unit mutations. Party activation and spawn search
 have one owner in `OriginalParty`.
 
+## Orders with no target
+
+Orders zero and four aim at the target slot, or at the coordinate bytes `+6`,`+7`
+when the slot is `FF` (`30510`). A script can set the order and name a person who
+is not on the map; the target setter then declines (`33F94`) and the bytes stay as
+they were. Neither unit constructor writes them, so they hold zero or a goal from
+an earlier battle in that slot. The engine uses zero and does not carry goals across
+battles. One chapter-three battle reaches this once the named person is absent.
+
 ## Cleared enemy roster
 
 `1CB6:4ABC` (`2801C`) runs after the acting unit's own events, from the manual

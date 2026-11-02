@@ -288,6 +288,10 @@ struct OriginalAIPhysicalChoice:Codable,Equatable {
 }
 
 enum OriginalAI {
+    /// MAIN30510 reads unit+6 when no target is set. Neither unit constructor
+    /// writes those bytes, so a script that orders an absent person leaves them
+    /// as the data segment's zero, or as a goal an earlier battle stored there.
+    static let unsetGoal = GridPoint(x:0,y:0)
     /// Source C018 range enumeration, including its non-Manhattan patterns.
     /// The returned order is meaningful to target-score tie handling.
     static func attackCells(profile:OriginalMovementProfile,board:OriginalMovementBoard,
@@ -458,9 +462,7 @@ extension OriginalAI {
         let scripted = actor.scriptFlags&4 != 0
         let workingBudget:UInt8 = scripted ? 100 : movementBudget
         if scripted && (effectiveMode == 0 || effectiveMode == 4) {
-            guard let target = preferred.flatMap({id in board.actors.first(where:{$0.runtimeSlot == id})?.position}) ?? goal else {
-                throw OriginalAIError.unsupported("source scripted goal point/target identity is unresolved")
-            }
+            let target = preferred.flatMap({id in board.actors.first(where:{$0.runtimeSlot == id})?.position}) ?? goal ?? Self.unsetGoal
             var destination = actor.position,path = [actor.position],changedGoal:GridPoint?
             if board.contains(target),target != actor.position {
                 if let occupant = board.occupant(target),occupant.sourceFaction == actor.sourceFaction {
@@ -508,9 +510,7 @@ extension OriginalAI {
         }
         switch effectiveMode {
         case 0,4:
-            guard let target = preferred.flatMap({id in board.actors.first(where:{$0.runtimeSlot == id})?.position}) ?? goal else {
-                throw OriginalAIError.unsupported("source order goal point/target identity is unresolved")
-            }
+            let target = preferred.flatMap({id in board.actors.first(where:{$0.runtimeSlot == id})?.position}) ?? goal ?? Self.unsetGoal
             if preferred != nil && trigger == preferred {
                 addGoalBonus(target,strength:50,baseline:&baseline,board:board,profile:profile,terrainDefensePercent:terrainDefensePercent)
             } else {

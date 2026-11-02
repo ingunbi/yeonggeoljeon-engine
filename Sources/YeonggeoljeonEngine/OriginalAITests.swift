@@ -169,9 +169,10 @@ func originalAISelfTests() throws {
         terrainDefensePercent:Array(repeating:0,count:256),preferredTarget:44)
     try check(expiredTarget.mode == 1 && expiredTarget.preferredTarget == nil,
         "an inactive source cache target clears the cache and changes to native order1")
-    try rejects {_ = try OriginalAI.decision(profile:controller,board:distantBoard,actor:defenderAI,
+    // MAIN30510: with no target and no goal the source walks to the zeroed unit+6.
+    _ = try OriginalAI.decision(profile:controller,board:distantBoard,actor:defenderAI,
         mode:0,movementBudget:2,level:2,mp:4,morale:100,maximumTroops:600,stats:defensiveStats,
-        terrainDefensePercent:Array(repeating:0,count:256),preferredTarget:nil)}
+        terrainDefensePercent:Array(repeating:0,count:256),preferredTarget:nil)
     board.actors = [actor,east,north]
     let fallback = try OriginalAI.executionTarget(profile:controller,board:board,actor:actor,selected:44)
     try check(fallback == 15,"source execution falls through to the last range candidate when selected target is absent")
