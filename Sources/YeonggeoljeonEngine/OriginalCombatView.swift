@@ -414,6 +414,7 @@ struct OriginalCombatPlayer {
     private(set) var index = 0
     private var elapsed = 0.0
     private var started = false
+    init(scene:OriginalCombatScene) { self.scene = scene }
     /// Frames shown in this interval carry these actions.
     enum Action:Equatable { case sound(Int),stopSound }
     var finished:Bool { index >= scene.frames.count }
