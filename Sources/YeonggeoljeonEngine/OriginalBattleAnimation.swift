@@ -4,13 +4,19 @@ import Foundation
 /// What the screen shows around a battle action. Cues never touch game state:
 /// the session decides the outcome and a view only decides when to show it.
 enum OriginalBattleCue:Equatable {
-    case walk(slot:Int,path:[GridPoint])
+    case walk(slot:Int,path:[GridPoint],sound:Int? = nil)
     case shot(from:GridPoint,to:GridPoint,stone:Bool)
     /// Half cells, so a clash can sit between two units (MAIN3213A).
     case effect(Int,halfX:Int,halfY:Int)
 }
 
 extension OriginalBattleSession {
+    /// MAIN2C847..2C87D: infantry 14, classes two and five 15, six to eight 16.
+    func walkSound(_ slot:Int) throws -> Int? {
+        guard let unit = units[slot] else { return nil }
+        let classID = try people.person(unit.person).classID
+        return (6...8).contains(classID) ? 16 : [2,5].contains(classID) ? 15 : 14
+    }
     /// MAIN31FEB..3216D. Classes three to five shoot two arrows or stones; the
     /// others clash once at the midpoint. A set option high nibble doubles both.
     func attackCues(_ attacker:Int,target:Int) throws -> [OriginalBattleCue] {
@@ -47,14 +53,14 @@ struct OriginalBattleAnimator {
     var cellSeconds:Double { 16/Double(Self.walkSteps[speed])*Self.tick }
     private func duration(_ cue:OriginalBattleCue) -> Double {
         switch cue {
-        case .walk(_,let path):return Double(max(0,path.count-1))*cellSeconds
+        case .walk(_,let path,_):return Double(max(0,path.count-1))*cellSeconds
         case .shot(let from,let to,_):return Double(max(abs(to.x-from.x),abs(to.y-from.y))*32)/4*Self.tick
         case .effect(let index,_,_):return (index == 8 ? 2 : 4)*Self.frameTicks*Self.tick
         }
     }
     private func sound(_ cue:OriginalBattleCue) -> Int? {
         switch cue {
-        case .walk:return nil
+        case .walk(_,_,let id):return id
         case .shot:return 19
         case .effect(let index,_,_):
             if index == 8 { return 41 }
@@ -75,7 +81,7 @@ struct OriginalBattleAnimator {
     }
     /// The current walker's place in cells and how far into its cell it is.
     var walker:(slot:Int,x:Double,y:Double,direction:Int,stepPixels:Int)? {
-        guard case .walk(let slot,let path)? = cues.first,path.count > 1 else { return nil }
+        guard case .walk(let slot,let path,_)? = cues.first,path.count > 1 else { return nil }
         let position = elapsed/cellSeconds,index = min(path.count-2,Int(position))
         let fraction = position-Double(index),from = path[index],to = path[index+1]
         let dx = to.x-from.x,dy = to.y-from.y

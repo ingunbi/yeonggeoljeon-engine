@@ -88,10 +88,23 @@ struct OriginalFieldMenuTexts: Codable, Equatable {
     static let actions = ["quit", "scroll", "speed", "load", "save", "monitor", "bgm", "sound", "volume", "music-time"]
 }
 
+/// Option labels of the field and battle menus (MAIN22832.., 27DC4..).
+struct OriginalSettingsTexts: Codable, Equatable {
+    var speed: [String]
+    var monitor: [String]
+    var onOff: [String]
+    var show: [String]
+    var moveSpeed: [String]
+    var listen: [String]
+    var songs: [String]
+    var effects: [String]
+}
+
 struct OriginalFrameworkPrompts: Codable, Equatable {
     var retryPrompt: OriginalFrameworkText?
     var battleMenu: OriginalBattleMenuTexts?
     var fieldMenu: OriginalFieldMenuTexts?
+    var settings: OriginalSettingsTexts?
     var savePrompt: OriginalFrameworkText?
     var saveDeclinePrompt: OriginalFrameworkText?
     var titleMenu: [OriginalTitleMenuItem]?

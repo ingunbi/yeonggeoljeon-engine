@@ -32,19 +32,20 @@ speed, monitor, music and sound.
 The producer exports the four menu texts and both save questions into local
 GameData after checking their push/call sequences. The campaign window shows
 the menu after the title picture. New game starts the source program,
-resume asks for a native file, settings stays an explicit unrestored notice,
-and opening returns to the title.
+resume opens the slot list, settings opens the option list, and opening
+returns to the title.
 
 A secondary click on an idle town, palace or world map opens the field menu
 with the exported labels. Quit reaches the retry selector through mask
-`40`, load opens a native resume file, save writes one, and the remaining
-items stay disabled as unrestored. The original physical binding of input
-code `23` is not established.
+`40`. Load and save open a list of five native slots. A list row can still
+load a resume file from anywhere. Options are described below. The original
+physical binding of input code `23` is not established.
 
 At a source `3D` prompt the window asks the original question and writes an
-`OriginalCampaignResume` JSON file, by default under the user's Application
+`OriginalCampaignResume` JSON file into a slot under the user's Application
 Support folder. It is native engine state, not an MSAVE slot; original slots
-are neither read nor written. A resume point is produced only when the stage
+are neither read nor written. An MSAVE file starts with four bytes of date and
+then a scenario title, and the native slot keeps its own title and date. A resume point is produced only when the stage
 is idle outside the battle palette and no other source operation owns the
 host: either at a pending `3D`, or at an idle field controller with no
 running script (the field-menu save, recorded without a save offset). It retains the VM state with its pending `3D`, shared person objects,
@@ -70,3 +71,21 @@ uninterrupted frame at the same point. Synthetic tests cover idle stage
 restore, rejected non-idle or inconsistent snapshots, all-or-nothing person
 replacement and typed file reading. The AppKit menu and panels were not driven
 with real macOS input.
+
+## Options
+
+Object DS:`7A80` holds the player's options, built at `1A406` (speed 2, scroll 1,
+word `+4` zero). `OriginalSettings` keeps them per user, so replays and tests
+always run the source defaults.
+
+| Item | Source | Native effect |
+| --- | --- | --- |
+| 스크롤 단위 | `22832`, byte `+11` | Disabled. It sets the mouse's edge-scroll step (`24212`), and the engine's maps do not scroll that way. |
+| 속도설정 | `22BFE`, byte `+13` | The field loop waits speed x 3 ticks (`24818`), so normal is the known six ticks. Field time scales by 2/speed. 노웨이트 has no wait, and the engine uses six times normal. |
+| 모니터 | `229AE`, word `+A` bit 8 | A grey filter on the whole canvas. A captured view does not show this filter, so it has not been looked at. |
+| BGM, 효과음 | `228C6`, word `+A` bits 2 and 1 | The audio switches. |
+| 음량 | `22BCE` | Handler index 8 opens the DS:`343C` list of music and sound tests, under a label that says volume. The engine maps by meaning: this row sets one output level, an engine addition. |
+| 음악시간 | handler index 9 | The DS:`343C` list. Songs from DS:`312E` and effects from DS:`3364`, whose names also document every sound id. |
+| 부대전투 | `27DC4`, word `+4` high nibble | Stored. Zero asks for the enlarged combat view, which is not restored. Nonzero doubles the map effects and the prelude draws, as in the source. |
+| 이동속도 | `27E2C`, low nibble | The walk step of the battle animator. |
+| 적의 이동 | `27774`, bit `1000` | The camera follows enemy walks (`2C4D6`). With it off the engine skips a walk that has no visible cell, where the source still takes the time. |

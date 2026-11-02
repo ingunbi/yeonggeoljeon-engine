@@ -262,7 +262,7 @@ final class OriginalBattleFlow {
                 try session.skipNativeUnit(slot);continue
             }
             let decision = try session.aiDecision(slot)
-            let walk:[OriginalBattleCue] = decision.path.count > 1 ? [.walk(slot:slot,path:decision.path)] : []
+            let walk:[OriginalBattleCue] = decision.path.count > 1 ? [.walk(slot:slot,path:decision.path,sound:try session.walkSound(slot))] : []
             try session.applyAIMovement(slot,decision)
             if let strategy = decision.strategyID {
                 strategyOperation = try OriginalStrategyOperation.begin(in:session,casterSlot:slot,abilityID:strategy,target:decision.targetSlot)

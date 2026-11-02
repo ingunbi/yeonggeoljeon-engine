@@ -86,10 +86,11 @@ the two never share a channel.
 All 43 effects render to 0.1 to 3 seconds of sound. Nobody has compared them by ear
 with the original.
 
-Heard ids: 0 accept, 1 cancel, 2 refusal, 3 purchase, 4 sale, 7 level, 8 item,
-9 retirement, 10 cursor, 19 arrow, 37 thrown item, 41 clash. Battle effects read
-DS:`3F7E`. The ids 17, 21, 38 and 40 belong to duel motions, and 11, 13, 22 and
-others to the enlarged combat view; those are not played yet.
+The sound test table DS:`3364` names all 43 ids. Played so far: left and right
+click, purchase and sale, level, class change, retirement, not selectable, the
+walking sounds 14 to 16 and move end, arrow, clash and bomb, and the table
+DS:`3F7E` for strategies. The running and hit sounds of duels and of the enlarged
+combat view are not played yet.
 
 ## Opening and ending programs
 

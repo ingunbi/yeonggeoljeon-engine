@@ -25,6 +25,8 @@ final class OriginalAudio {
     /// Frames the output has asked for, for checks on the live path.
     private(set) var renderedFrames = 0
     var volume:Float = 1 { didSet { engine.mainMixerNode.outputVolume = volume } }
+    /// A song chosen in the music room plays over the source's selection.
+    var audition:Int?
     private static let samplesPerInterrupt = OPL2Chip.sampleRate/OriginalMusicDriver.interruptRate
     init(catalog:OriginalMusicCatalog) {
         self.catalog = catalog
@@ -39,7 +41,7 @@ final class OriginalAudio {
     }
     /// Same selection keeps playing, as CF5:600A does. Nil stops the music.
     func select(_ value:Int?) {
-        let wanted = OriginalAudio.musicEnabled ? value.flatMap { catalog.songs.indices.contains($0) ? $0 : nil } : nil
+        let wanted = audition ?? (OriginalAudio.musicEnabled ? value.flatMap { catalog.songs.indices.contains($0) ? $0 : nil } : nil)
         guard wanted != selection else { return }
         selection = wanted
         guard let wanted = wanted,let song = catalog.song(wanted) else {

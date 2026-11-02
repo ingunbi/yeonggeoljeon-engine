@@ -15,6 +15,7 @@ from campaign_vm_format import (MAIN_DATA_PARAGRAPH, MAIN_DATA_SEGMENT, RETRY_PR
                                 RETREAT_REFUSED_CALL, RETREAT_REFUSED_POINTER, QUIT_CONFIRM_CALL, QUIT_CONFIRM_POINTER,
                                 RETREAT_RESULT_AT, QUIT_RESULT_AT, FIELD_MENU_TABLE_AT, FIELD_MENU_TABLE,
                                 FIELD_MENU_HANDLERS_AT, FIELD_MENU_HANDLERS, FIELD_QUIT_CALL, FIELD_QUIT_POINTER,
+                                SETTINGS_TABLES, settings_menus,
                                 battle_menu, compile_instructions, field_menu,
                                 framework_prompts, phase_groups, selector_text, source_skip_target, stock_caption_index,
                                 title_menu)
@@ -73,6 +74,10 @@ def synthetic_main(text: bytes, pointer: int = RETRY_PROMPT_POINTER, mode: int =
     put_selector(data, QUIT_CONFIRM_CALL, QUIT_CONFIRM_POINTER, b"quit?")
     for at, value in ((RETREAT_RESULT_AT, 1), (QUIT_RESULT_AT, 4)):
         data[at:at + 7] = bytes([0x8B, 0x5E, 0x06, 0xC6, 0x47, 0x01, value])
+    data[MAIN_DATA_SEGMENT + 0x2F00:MAIN_DATA_SEGMENT + 0x2F02] = b"s\0"
+    for table, count in SETTINGS_TABLES.values():
+        for index in range(count):
+            struct.pack_into("<HH", data, MAIN_DATA_SEGMENT + table + index * 4, 0x2F00, MAIN_DATA_PARAGRAPH)
     data[FIELD_MENU_TABLE_AT:FIELD_MENU_TABLE_AT + 4] = bytes([0x8D, 0x1E]) + struct.pack("<H", FIELD_MENU_TABLE)
     data[FIELD_MENU_HANDLERS_AT:FIELD_MENU_HANDLERS_AT + 4] = bytes([0xFF, 0x9F]) + struct.pack("<H", FIELD_MENU_HANDLERS)
     for index in range(10):
@@ -114,6 +119,16 @@ class CampaignVMFormatTests(unittest.TestCase):
         bad[RETREAT_REFUSED_CALL + 5] = 2
         with self.assertRaisesRegex(SceneError, "refusal call"):
             battle_menu(bytes(bad))
+
+    def test_settings_labels_come_from_far_pointer_tables(self):
+        main = synthetic_main(b"x")
+        labels = settings_menus(main)
+        self.assertEqual({key: len(value) for key, value in labels.items()},
+                         {key: count for key, (_, count) in SETTINGS_TABLES.items()})
+        bad = bytearray(main)
+        struct.pack_into("<HH", bad, MAIN_DATA_SEGMENT + SETTINGS_TABLES["speed"][0], 0x2F00, MAIN_DATA_PARAGRAPH + 1)
+        with self.assertRaises(SceneError):
+            settings_menus(bytes(bad))
 
     def test_field_menu_labels_and_quit_question_are_checked(self):
         menu = framework_prompts(synthetic_main(b"x"))["fieldMenu"]

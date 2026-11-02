@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: GPL-3.0-only
+import Foundation
+
+/// The player's options, from the object at DS:7A80: word +4 holds the battle
+/// settings, byte +13 the field speed, and word +A the monitor and sound bits.
+/// They stay per user, so replays and tests always run the source defaults.
+struct OriginalSettings:Codable,Equatable {
+    /// 노웨이트 to 느리다: three ticks a step per level (MAIN24818).
+    var speed = 2
+    /// 1속 to 5속 (word +4 low nibble).
+    var moveSpeed = 0
+    /// 본다 or 안 본다 (high nibble). Zero asks for the enlarged combat view.
+    var unitCombat = 0
+    /// Bit 0x1000: the camera follows enemy moves (MAIN2C4D6).
+    var enemyMove = false
+    /// Bit 8 of word +A: the grey palette.
+    var monochrome = false
+    /// Engine addition: one output level for the single chip.
+    var volume:Float = 1
+
+    private static let key = "originalSettings"
+    static var current:OriginalSettings {
+        get {
+            UserDefaults.standard.data(forKey:key).flatMap { try? JSONDecoder().decode(Self.self,from:$0) } ?? OriginalSettings()
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            UserDefaults.standard.set(data,forKey:key)
+            NotificationCenter.default.post(name:changed,object:nil)
+        }
+    }
+    static let changed = Notification.Name("OriginalSettingsChanged")
+    var battleWord:Int { moveSpeed|unitCombat<<4|(enemyMove ? 0x1000 : 0) }
+    /// Field time runs at the source's step over the chosen one. 노웨이트
+    /// has no wait at all, so it takes a short frame of the window's own.
+    var timeScale:Double { speed == 0 ? 6 : 2/Double(speed) }
+}
+
+/// Five native slots, as the original has five MSAVE files. They hold
+/// `OriginalCampaignResume` JSON; original slots are never read or written.
+struct OriginalSaveSlots {
+    static let count = 5
+    struct Entry:Codable,Equatable { var title:String;var date:Date }
+    let directory:URL
+    private func file(_ slot:Int) -> URL { directory.appendingPathComponent("slot-\(slot).json") }
+    private func label(_ slot:Int) -> URL { directory.appendingPathComponent("slot-\(slot).label.json") }
+    func entries() -> [Entry?] {
+        (0..<Self.count).map { slot in
+            guard FileManager.default.fileExists(atPath:file(slot).path),let data = try? Data(contentsOf:label(slot)) else { return nil }
+            return try? JSONDecoder().decode(Entry.self,from:data)
+        }
+    }
+    func write<Snapshot:Encodable>(_ snapshot:Snapshot,title:String,slot:Int,date:Date = Date()) throws {
+        guard (0..<Self.count).contains(slot) else { throw EngineError.invalid("Save slot is outside the five slots") }
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+        try JSONEncoder().encode(snapshot).write(to:file(slot),options:.atomic)
+        try JSONEncoder().encode(Entry(title:title,date:date)).write(to:label(slot),options:.atomic)
+    }
+    func read(slot:Int) throws -> OriginalCampaignResume { try OriginalCampaignResume.read(from:file(slot)) }
+}

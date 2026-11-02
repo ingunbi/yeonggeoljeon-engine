@@ -32,6 +32,7 @@ final class OriginalBattleView:NSView {
     private var animator = OriginalBattleAnimator()
     var isAnimating:Bool { !animator.isIdle }
     private var afterCues:(()->Void)?
+    var settingsTexts:OriginalSettingsTexts?
     var inputReady:(()->Bool)?
     /// Replaces the status line while the owner has something to report.
     var externalStatus:String? { didSet { if externalStatus != oldValue { needsDisplay = true } } }
@@ -94,17 +95,25 @@ final class OriginalBattleView:NSView {
         guard animatesActions,!cues.isEmpty else { done();return }
         afterCues = done;perform(cues)
     }
-    /// MAIN1A919: a level gained sounds seven; items end on eight (2E7B5).
+    /// MAIN1A919: a level gained sounds seven.
     private func soundLevels(_ gained:Int) { if gained > 0 { onSound?(7) } }
     private func perform(_ cues:[OriginalBattleCue]) {
         animator.effectSounds = sprites?.catalog.effects?.sounds ?? []
         animator.play(cues,options:session.sourceOptionsWord)
         followCue();needsDisplay = true
     }
+    private var followsEnemies:Bool { session.sourceOptionsWord&0x1000 != 0 }
+    /// With the setting off the camera stays put (MAIN2C4D6). The source still
+    /// walks an unseen unit; here a walk with no visible cell is skipped.
+    private func visible(_ cue:OriginalBattleCue) -> Bool {
+        guard case .walk(let slot,let path,_) = cue,slot >= 15,!followsEnemies else { return true }
+        return path.contains { layoutFacts.viewportRect.intersects(camera.rect(of:$0,in:layoutFacts.viewportRect,size:layoutFacts.cell)) }
+    }
     /// MAIN2997E keeps the action in view; the source calls it before each one.
     private func followCue() {
         switch animator.cues.first {
-        case .walk(_,let path)?:
+        case .walk(let slot,let path,_)?:
+            if slot >= 15,!followsEnemies { return }
             if let walker = animator.walker {
                 camera.follow(GridPoint(x:Int(walker.x.rounded()),y:Int(walker.y.rounded())),margin:layoutFacts.followMargin)
             } else if let first = path.first { camera.follow(first,margin:layoutFacts.followMargin) }
@@ -121,7 +130,7 @@ final class OriginalBattleView:NSView {
     }
     func resumeSourceFlow() throws {
         guard animator.isIdle else { return }
-        let held = flow.takeCues()
+        let held = flow.takeCues().filter(visible)
         if !held.isEmpty { perform(held);return }
         try flow.resumeSourceFlow()
         if waitingForStrategy,let result = flow.lastStrategy {showStrategyResult(result);waitingForStrategy = false}
@@ -201,7 +210,8 @@ final class OriginalBattleView:NSView {
     /// handler stay visible and disabled.
     private func openFunctionMenu() {
         guard canInput,phase == .idle,strategySelection == nil else { return }
-        var restored:Set<String> = menuTexts == nil ? ["end-turn"] : ["end-turn","retreat","quit","bgm"]
+        var restored:Set<String> = menuTexts == nil ? ["end-turn"] : ["end-turn","retreat","quit"]
+        if settingsTexts != nil { restored.formUnion(["unit-combat","move-speed","enemy-move","bgm","sound"]) }
         if objective != nil,style.commands != nil { restored.insert("conditions") }
         let items = menuTexts?.items ?? [OriginalTitleMenuItem(index:0,action:"end-turn",text:"End turn")]
         functionOpen = true;needsDisplay = true
@@ -211,12 +221,30 @@ final class OriginalBattleView:NSView {
             guard let index = index else { return }
             switch items[index].action {
             case "end-turn": do { try self.endTurn() } catch { self.message = "\(error)" }
-            case "bgm": OriginalAudio.musicEnabled.toggle()
+            case "unit-combat","move-speed","enemy-move","bgm","sound": self.openSetting(items[index].action)
             case "retreat": self.requestRetreat()
             case "conditions": self.showConditions(opening:false)
             case "quit": self.requestQuit()
             default: break
             }
+        })
+    }
+    /// MAIN27DC4..27E7B and 27774. A pick takes effect at once.
+    private func openSetting(_ action:String) {
+        guard let texts = settingsTexts else { return }
+        var settings = OriginalSettings.current
+        let labels:[String],current:Int,apply:(Int) -> Void
+        switch action {
+        case "unit-combat":labels = texts.show;current = settings.unitCombat;apply = { settings.unitCombat = $0 }
+        case "move-speed":labels = texts.moveSpeed;current = settings.moveSpeed;apply = { settings.moveSpeed = $0 }
+        case "enemy-move":labels = texts.show;current = settings.enemyMove ? 0 : 1;apply = { settings.enemyMove = $0 == 0 }
+        case "bgm":labels = texts.onOff;current = OriginalAudio.musicEnabled ? 0 : 1;apply = { OriginalAudio.musicEnabled = $0 == 0 }
+        default:labels = texts.onOff;current = OriginalAudio.effectsEnabled ? 0 : 1;apply = { OriginalAudio.effectsEnabled = $0 == 0 }
+        }
+        overlay.show(CanvasMenu(title:"",options:labels.enumerated().map { .init(label:$0.element,checked:$0.offset == current) },selected:current,cancellable:true) { [weak self] index in
+            guard let self = self,let index = index else { return }
+            apply(index);OriginalSettings.current = settings
+            self.session.sourceOptionsWord = settings.battleWord;self.needsDisplay = true
         })
     }
     private func refusal(_ key:String) -> String { style.commands?.messages[key] ?? key }
@@ -470,7 +498,7 @@ final class OriginalBattleView:NSView {
             say(rejectionText(result.rejection ?? "unusable",use)) { [weak self] in self?.openItemList(result.userSlot,action:0) }
             return
         }
-        onSound?(8)
+        if case .classChange = OriginalItemUse.of(result.item) { onSound?(8) }  // MAIN2E7B5
         resetCommand()
         let user = session.units[result.userSlot].flatMap { try? session.people.person($0.person).name } ?? ""
         let name:(OriginalStrategyTargetEffect) -> String = { [session] in (try? session.people.person($0.person).name) ?? "" }
@@ -913,7 +941,9 @@ final class OriginalBattleView:NSView {
                 return
             }
             let path = try session.move(slot,to:point)
-            play([.walk(slot:slot,path:path)]) { [weak self] in self?.openCommand(slot) }
+            play([.walk(slot:slot,path:path,sound:try session.walkSound(slot))]) { [weak self] in
+                self?.onSound?(42);self?.openCommand(slot)       // MAIN2D565
+            }
         case .attackTarget(let slot):
             guard try attackCells(slot).contains(point) else {
                 say(refusal("outOfAttackRange"));return

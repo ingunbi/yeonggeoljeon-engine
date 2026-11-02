@@ -177,9 +177,9 @@ final class CanvasOverlayView:NSView {
         clear();needsDisplay = true
         restoreFocus?()
     }
-    /// Source sound numbers: 0 accept, 1 cancel, 2 refuse, 10 cursor.
+    /// Source sound numbers: 0 left click, 1 right click, 10 not selectable.
     var onSound:((Int)->Void)?
-    private func refuse() { if let play = onSound { play(2) } else { NSSound.beep() } }
+    private func refuse() { if let play = onSound { play(10) } else { NSSound.beep() } }
     private func choose(_ index:Int?) {
         guard let value = selector else { return }
         if let index = index,!(value.options.indices.contains(index) && value.options[index].enabled) { refuse();return }
@@ -527,7 +527,6 @@ final class CanvasOverlayView:NSView {
                 index = (index+delta+value.options.count)%value.options.count
                 if value.options[index].enabled { break }
             }
-            if index != value.selected { onSound?(10) }
             value.selected = index;selector = value;revealSelection();needsDisplay = true
         }
         switch event.keyCode {
@@ -547,7 +546,6 @@ final class CanvasOverlayView:NSView {
             case 125,126:
                 guard !value.rows.isEmpty else { return }
                 value.selected = (value.selected+(event.keyCode == 125 ? 1 : value.rows.count-1))%value.rows.count
-                onSound?(10)
                 sheet = value;revealSheetRow();needsDisplay = true
             case 36,49,76:chooseSheetRow(value.selected)
             case 53:finishSheet(nil)
@@ -555,7 +553,7 @@ final class CanvasOverlayView:NSView {
             }
         case .buttons:
             switch event.keyCode {
-            case 123,124,125,126,48:onSound?(10);sheetButton = (sheetButton+1)%max(1,value.buttons.count);needsDisplay = true
+            case 123,124,125,126,48:sheetButton = (sheetButton+1)%max(1,value.buttons.count);needsDisplay = true
             case 36,49,76:finishSheet(sheetButton)
             case 53:finishSheet(value.buttons.count-1)      // the last button declines
             default:break

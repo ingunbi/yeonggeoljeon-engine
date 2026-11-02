@@ -10,6 +10,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private var battleView:OriginalBattleView?
     /// In-game selectors and waiting lines drawn above the stage and battle.
     private let overlay = CanvasOverlayView()
+    private var settings = OriginalSettings.current
     private var imageCache:[String:CGImage] = [:]
     private var presentationObserver:NSObjectProtocol?
     private lazy var audio:OriginalAudio? = (try? OriginalMusicCatalog.load(from:host.data.root.appendingPathComponent("music.json"))).map { OriginalAudio(catalog:$0) }
@@ -28,6 +29,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         super.init(frame:CGRect(x:0,y:0,width:1024,height:640))
         overlay.frame = bounds;overlay.autoresizingMask = [.width,.height];addSubview(overlay)
         overlay.onSound = { [weak self] id in self?.audio?.playEffect(id) }
+        NotificationCenter.default.addObserver(forName:OriginalSettings.changed,object:nil,queue:.main) { [weak self] _ in self?.applySettings() }
+        applySettings()
         overlay.restoreFocus = { [weak self] in
             guard let self = self else { return }
             if let board = self.battleView,!board.isHidden { self.window?.makeFirstResponder(board) }
@@ -77,6 +80,13 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     }
     required init?(coder:NSCoder) { fatalError("init(coder:) is not supported") }
     func stop() { timer?.invalidate();timer = nil;audio?.shutDown() }
+    /// Word +A bit 8 greys the palette; the filter sits over the whole canvas.
+    private func applySettings() {
+        settings = OriginalSettings.current
+        wantsLayer = true;layerUsesCoreImageFilters = true
+        contentFilters = settings.monochrome ? [CIFilter(name:"CIPhotoEffectMono")].compactMap { $0 } : []
+        audio?.volume = settings.volume
+    }
     private func tick() {
         audio?.select(host.ending == nil ? host.vm.state.currentMusic : nil)
         battleView?.externalStatus = errorText ?? inputNotice ?? host.notice ?? host.playerStatus
@@ -84,7 +94,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         do {
             battleView?.advanceAnimation(1.0/60)
             for id in host.takeSounds() { audio?.playEffect(id) }
-            try host.advance(microseconds:16_667)
+            try host.advance(microseconds:Int64(16_667*settings.timeScale))
             needsDisplay = true
             try synchronizeBattle()
             if host.frameworkReturn?.outcome == .restart { restartMain();return }
@@ -136,6 +146,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             board.objective = { [weak self] in (self?.host.vm.state.chapter ?? 0,self?.host.vm.state.objectiveText) }
             board.announcesPhases = true
             board.animatesActions = true
+            board.settingsTexts = host.framework?.settings
+            session.sourceOptionsWord = settings.battleWord
             board.onSound = { [weak self] id in self?.audio?.playEffect(id) }
             board.presentation = CanvasPresentation.current
             board.frame = bounds
@@ -389,21 +401,6 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         })
     }
     /// Writes one native resume file; returns false when cancelled or failed.
-    private func writeNativeSave() -> Bool {
-        do {
-            let snapshot = try host.resumeSnapshot()
-            let panel = NSSavePanel();panel.allowedContentTypes = [.json];panel.directoryURL = try Self.savesDirectory()
-            let state = host.vm.state
-            panel.nameFieldStringValue = "chapter\(state.chapter)-\(state.member)-\(state.block)-\(Int(Date().timeIntervalSince1970)).json"
-            guard panel.runModal() == .OK,let url = panel.url else { return false }
-            let encoder = JSONEncoder();encoder.outputFormatting = [.prettyPrinted,.sortedKeys,.withoutEscapingSlashes]
-            try encoder.encode(snapshot).write(to:url,options:.atomic)
-            return true
-        } catch {
-            let alert = NSAlert();alert.messageText = "저장하지 못했습니다.";alert.informativeText = "\(error)";alert.runModal()
-            return false
-        }
-    }
     /// Source3D (MAIN22A62..22AA1): Yes opens the save destination; a
     /// cancelled or failed save asks the decline check, whose No retries.
     /// The written file is native engine state, not an original MSAVE slot.
@@ -414,13 +411,15 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             self.act { try self.host.completeSaveRequest() }
         }
         func attempt() {
-            if writeNativeSave() { complete();return }
-            yesNo(framework?.saveDeclinePrompt?.text ?? "저장하지 않고 진행할까요?") { yes in yes ? complete() : attempt() }
+            presentSlots(saving:true) { [weak self] written in
+                if written { complete();return }
+                self?.yesNo(framework?.saveDeclinePrompt?.text ?? "저장하지 않고 진행할까요?") { yes in yes ? complete() : attempt() }
+            }
         }
         yesNo(framework?.savePrompt?.text ?? "여기서 저장할까요?") { yes in yes ? attempt() : complete() }
     }
     /// MAIN CF5:C050 menu after the title. Item0 starts, item1 resumes a
-    /// native save, item2 (CF5:BFDE settings) is not restored, and item3
+    /// native slot, item2 opens the options, and item3
     /// returns to the opening, as exit code0 runs OPEN before MAIN again.
     private func presentTitleMenu() {
         let items = host.framework?.titleMenu?.map(\.text) ?? ["새로 시작","이어하기","기능설정","오프닝"]
@@ -430,12 +429,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
                 switch chosen {
                 case 0: try self.host.acknowledge()
                 case 1:
-                    guard let resumed = try Self.chooseResume(data:self.host.data) else { return }
-                    self.replace(with:try OriginalCampaignView(host:resumed))
-                case 2:
-                    self.overlay.show(CanvasNotice(speaker:"",text:"기능설정(CF5:BFDE)은 아직 복원하지 않았습니다.",portrait:nil) { [weak self] in
-                        self?.presentTitleMenu()
-                    })
+                    self.presentSlots(saving:false) { [weak self] _ in self?.presentTitleMenu() }
+                case 2:self.presentTitleSettings()
                 case 3: self.replace(with:try OriginalCampaignView(data:self.host.data))
                 default: return
                 }
@@ -445,17 +440,16 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     }
     /// MAIN's field menu (input code23, DS:3636/36E2 -> CF5:F382). The
     /// engine opens it with a secondary click or the modern menu button; the
-    /// original key binding is not established. Quit, load and save have
-    /// native counterparts.
+    /// original key binding is not established.
     override func rightMouseDown(with event:NSEvent) {
         guard host.fieldMenuReady,!overlay.active else { super.rightMouseDown(with:event);return }
         openFieldMenu(at:CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil)))
     }
     private func openFieldMenu(at point:CGPoint) {
         let labels = host.framework?.fieldMenu?.items.map(\.text) ?? OriginalFieldMenuTexts.actions
+        // Scroll sets the mouse's edge-scroll step, which the engine's maps do not use.
         let options = labels.enumerated().map { CanvasMenu.Option(label:$0.element,
-            enabled:["quit","load","save","bgm"].contains(OriginalFieldMenuTexts.actions[$0.offset]),
-            value:OriginalFieldMenuTexts.actions[$0.offset] == "bgm" ? (OriginalAudio.musicEnabled ? "켜짐" : "꺼짐") : "") }
+            enabled:OriginalFieldMenuTexts.actions[$0.offset] != "scroll" && (host.framework?.settings != nil || ["quit","load","save"].contains(OriginalFieldMenuTexts.actions[$0.offset]))) }
         overlay.show(CanvasMenu(title:"",options:options,cancellable:true,anchor:point) { [weak self] index in
             guard let self = self,let index = index else { return }
             self.fieldMenuChosen(OriginalFieldMenuTexts.actions[index])
@@ -464,21 +458,111 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private func fieldMenuChosen(_ action:String) {
         guard host.fieldMenuReady else { return }
         switch action {
-        case "bgm":OriginalAudio.musicEnabled.toggle()
+        case "speed","monitor","bgm","sound","volume","music-time":openSetting(action) { }
         case "quit":
             yesNo(host.framework?.fieldMenu?.quitConfirm.text ?? "게임을 종료할까요?") { [weak self] yes in
                 guard yes,let self = self else { return }
                 do { try self.host.fieldQuit() } catch { self.recordInputError(error) }
             }
-        case "save": _ = writeNativeSave()
-        case "load":
-            do {
-                guard let resumed = try Self.chooseResume(data:host.data) else { return }
-                replace(with:try OriginalCampaignView(host:resumed))
-            } catch { recordInputError(error) }
+        case "save":presentSlots(saving:true) { _ in }
+        case "load":presentSlots(saving:false) { _ in }
         default: return
         }
         needsDisplay = true
+    }
+    /// MAIN22BFE, 229AE, 228C6 and 22BCE: one selector per option. `done`
+    /// continues whatever opened it, such as the title menu.
+    private func openSetting(_ action:String,_ done:@escaping () -> Void) {
+        guard let texts = host.framework?.settings else { done();return }
+        var value = OriginalSettings.current
+        let labels:[String],current:Int,apply:(Int) -> Void
+        switch action {
+        case "speed":labels = texts.speed;current = value.speed;apply = { value.speed = $0 }
+        case "monitor":labels = texts.monitor;current = value.monochrome ? 1 : 0;apply = { value.monochrome = $0 == 1 }
+        case "bgm":labels = texts.onOff;current = OriginalAudio.musicEnabled ? 0 : 1;apply = { OriginalAudio.musicEnabled = $0 == 0 }
+        case "sound":labels = texts.onOff;current = OriginalAudio.effectsEnabled ? 0 : 1;apply = { OriginalAudio.effectsEnabled = $0 == 0 }
+        case "volume":
+            let levels:[Float] = [1,0.75,0.5,0.25]
+            labels = levels.map { "\(Int($0*100))%" };current = levels.firstIndex(of:value.volume) ?? 0;apply = { value.volume = levels[$0] }
+        default:
+            overlay.show(CanvasMenu(title:"",options:texts.listen.map { .init(label:$0) },cancellable:true) { [weak self] index in
+                guard let self = self,let index = index else { done();return }
+                self.presentListening(songs:index == 0,selected:0,done)
+            })
+            return
+        }
+        overlay.show(CanvasMenu(title:"",options:labels.enumerated().map { .init(label:$0.element,checked:$0.offset == current) },selected:current,cancellable:true) { index in
+            if let index = index { apply(index);OriginalSettings.current = value }
+            done()
+        })
+    }
+    /// MAIN22AF6 and 22B7A: each pick plays at once until the list closes.
+    private func presentListening(songs:Bool,selected:Int,_ done:@escaping () -> Void) {
+        guard let texts = host.framework?.settings else { done();return }
+        let rows = (songs ? texts.songs : texts.effects).map { CanvasSheet.Row(label:$0) }
+        overlay.show(fieldSheet(title:texts.listen[songs ? 0 : 1],line:"",rows:rows,selected:selected,hint:"↑↓ 이동 · ↩ 재생 · esc 닫기") { [weak self] index in
+            guard let self = self else { return }
+            guard let index = index else { self.audio?.audition = nil;done();return }
+            if songs { self.audio?.audition = index } else { self.audio?.playEffect(index) }
+            self.presentListening(songs:songs,selected:index,done)
+        })
+    }
+    /// MAIN CF5:BFDE. The engine's title menu shares the field options.
+    private func presentTitleSettings() {
+        let actions = ["speed","monitor","bgm","sound","volume","music-time"]
+        let labels = actions.map { action in
+            host.framework?.fieldMenu?.items.first(where:{ $0.action == action })?.text ?? action
+        }
+        overlay.show(CanvasMenu(title:"",options:labels.map { .init(label:$0) },cancellable:true) { [weak self] index in
+            guard let self = self else { return }
+            guard let index = index else { self.presentTitleMenu();return }
+            self.openSetting(actions[index]) { [weak self] in self?.presentTitleSettings() }
+        })
+    }
+    private func saveSlots() throws -> OriginalSaveSlots {
+        OriginalSaveSlots(directory:try Self.savesDirectory().appendingPathComponent("slots",isDirectory:true))
+    }
+    /// The name a slot shows, as MSAVE keeps a title beside its data.
+    private var slotTitle:String {
+        let state = host.vm.state
+        let place = host.fieldScreenState()?.territory ?? host.battle?.definition.name ?? ""
+        return "\(state.chapter)장 \(place)"
+    }
+    /// The slot dialog CF5:B58C serves saving (0x100) and loading alike. The
+    /// callback says whether a slot was written; a load replaces this view.
+    private func presentSlots(saving:Bool,_ done:@escaping (Bool) -> Void) {
+        guard let slots = try? saveSlots() else { done(false);return }
+        let dates = DateFormatter();dates.dateStyle = .short;dates.timeStyle = .short
+        let entries = slots.entries()
+        var rows = entries.enumerated().map { index,entry in
+            CanvasSheet.Row(label:"슬롯 \(index+1)",value:entry.map { dates.string(from:$0.date) } ?? "비어 있음",
+                            detail:entry.map { .init(heading:$0.title) },enabled:saving || entry != nil)
+        }
+        if !saving { rows.append(.init(label:"파일에서 불러오기")) }
+        let items = host.framework?.fieldMenu?.items
+        let title = items?.first(where:{ $0.action == (saving ? "save" : "load") })?.text ?? ""
+        overlay.show(fieldSheet(title:title,line:"",rows:rows) { [weak self] index in
+            guard let self = self else { return }
+            guard let index = index else { done(false);return }
+            do {
+                if saving {
+                    let write = { [weak self] in
+                        guard let self = self else { return }
+                        do { try slots.write(try self.host.resumeSnapshot(),title:self.slotTitle,slot:index);done(true) }
+                        catch { self.recordInputError(error);done(false) }
+                    }
+                    if entries[index] == nil { write() } else {
+                        self.yesNo("이 슬롯을 덮어쓸까요?") { [weak self] yes in
+                            if yes { write() } else { self?.presentSlots(saving:true,done) }
+                        }
+                    }
+                } else if index < OriginalSaveSlots.count {
+                    self.replace(with:try OriginalCampaignView(host:try OriginalCampaignHost.resume(data:self.host.data,from:slots.read(slot:index))))
+                } else if let resumed = try Self.chooseResume(data:self.host.data) {
+                    self.replace(with:try OriginalCampaignView(host:resumed))
+                } else { done(false) }
+            } catch { self.recordInputError(error);done(false) }
+        })
     }
     private func replace(with next:OriginalCampaignView) {
         guard let window = window else { return }

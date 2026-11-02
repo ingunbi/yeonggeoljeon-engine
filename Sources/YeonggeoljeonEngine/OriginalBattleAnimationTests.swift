@@ -50,5 +50,22 @@ func originalBattleAnimationSelfTests() throws {
     try check(shot.shot?.frame == 2,"a south arrow")
     _ = shot.advance(24*tick)
     try check(shot.shot?.frame == 4,"the catapult throws the stone frame")
+    var settings = OriginalSettings()
+    try check(settings.speed == 2 && settings.timeScale == 1 && settings.battleWord == 0,"source defaults change nothing")
+    settings.speed = 1;settings.moveSpeed = 4;settings.unitCombat = 1;settings.enemyMove = true
+    try check(settings.timeScale == 2 && settings.battleWord == 0x1014,"options pack as the source word")
+    settings.speed = 3
+    try check(abs(settings.timeScale-2.0/3) < 0.001,"the slowest step takes nine ticks instead of six")
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString,isDirectory:true)
+    defer { try? FileManager.default.removeItem(at:folder) }
+    let slots = OriginalSaveSlots(directory:folder)
+    try check(slots.entries().allSatisfy { $0 == nil } && slots.entries().count == 5,"five empty slots")
+    let when = Date(timeIntervalSince1970:1000)
+    try slots.write(["a":1],title:"첫째",slot:2,date:when)
+    try check(slots.entries()[2] == OriginalSaveSlots.Entry(title:"첫째",date:when) && slots.entries()[1] == nil,"a slot keeps its title and date")
+    try slots.write(["a":2],title:"둘째",slot:2,date:when)
+    try check(slots.entries()[2]?.title == "둘째","a slot can be overwritten")
+    do { try slots.write(["a":1],title:"",slot:5);throw EngineError.invalid("Slot five was accepted") }
+    catch EngineError.invalid(let text) where text.hasPrefix("Save slot") { checks += 1 }
     print("Original battle animation self-tests passed: \(checks)")
 }

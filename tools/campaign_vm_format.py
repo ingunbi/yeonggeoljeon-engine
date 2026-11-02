@@ -168,6 +168,25 @@ def field_menu(main: bytes) -> dict:
     return {"items": items, "quitConfirm": selector_text(main, FIELD_QUIT_CALL, FIELD_QUIT_POINTER), "quitMask": 0x40}
 
 
+# Selector tables of far pointers, in DS (MAIN22832..22C54, 27DC4..27E7B).
+SETTINGS_TABLES = {"speed": (0x3464, 4), "monitor": (0x303A, 2), "onOff": (0x3008, 2), "show": (0x3B44, 2),
+                   "moveSpeed": (0x3B64, 5), "listen": (0x343C, 2), "songs": (0x312E, 20), "effects": (0x3364, 43)}
+
+
+def settings_menus(main: bytes) -> dict:
+    """Option labels of the field and battle menus and the sound test."""
+    result = {}
+    for key, (table, count) in SETTINGS_TABLES.items():
+        labels = []
+        for index in range(count):
+            offset, paragraph = struct.unpack_from("<HH", span(main, MAIN_DATA_SEGMENT + table + index * 4, 4, "MAIN.EXE"))
+            if paragraph != MAIN_DATA_PARAGRAPH:
+                raise SceneError("MAIN.EXE settings label is outside the data segment")
+            labels.append(checked_text(main, offset, "settings label")[0])
+        result[key] = labels
+    return result
+
+
 def framework_prompts(main: bytes) -> dict:
     """Text owned by MAIN's outer framework rather than a scenario member.
 
@@ -182,7 +201,8 @@ def framework_prompts(main: bytes) -> dict:
             "saveDeclinePrompt": selector_text(main, SAVE_DECLINE_CALL, SAVE_DECLINE_POINTER),
             "titleMenu": title_menu(main),
             "battleMenu": battle_menu(main),
-            "fieldMenu": field_menu(main)}
+            "fieldMenu": field_menu(main),
+            "settings": settings_menus(main)}
 
 
 def stock_caption_index(text: str) -> int:
