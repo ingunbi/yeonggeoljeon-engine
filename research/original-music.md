@@ -69,3 +69,30 @@ audio. The BGM entries of the field and battle menus switch it on and off.
   table it reads was not found.
 - Volume, the opening and the ending music.
 - The 20-to-1 fade the source uses when it leaves a scene (`CF5:5F56`).
+
+## Sound effects
+
+`CF5:5EC2` (`19812`) installs a bank at `3021:0004` through interrupt 66h function
+10. That address is inside `MAIN.EXE`, at file offset `0x36C14`, up to the data
+segment: 4492 bytes. The bank holds 43 entries of two words. Each word is a track
+offset from its own entry, and a track reads instruments and notes as a song does.
+
+Function 11 (`0x4FE`) stops any effect and starts the two tracks on OPL channels 7
+and 8, with volume 15. The caller passes the source id plus one (`19AEA`), and ids
+stop at `2B` (`19B66`). The tracks advance on the same 61 Hz clock as modulation
+(`0xE13`), not on the tempo clock, and they never loop. Music uses seven tracks, so
+the two never share a channel.
+
+All 43 effects render to 0.1 to 3 seconds of sound. Nobody has compared them by ear
+with the original.
+
+Heard ids: 0 accept, 1 cancel, 2 refusal, 3 purchase, 4 sale, 7 level, 8 item,
+9 retirement, 10 cursor, 19 arrow, 37 thrown item, 41 clash. Battle effects read
+DS:`3F7E`. The ids 17, 21, 38 and 40 belong to duel motions, and 11, 13, 22 and
+others to the enlarged combat view; those are not played yet.
+
+## Opening and ending programs
+
+`OPEN.EXE` and `END.EXE` carry the same library and load their own files. Their
+play routine takes a member number: `OPEN.EXE` asks for 0 at `0x468A` and 1 at
+`0x64BE`, and `END.EXE` for 0, 1 and 2 at `0x48F3`, `0x7895` and `0x9641`.

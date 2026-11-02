@@ -28,7 +28,7 @@ final class OriginalBattleView:NSView {
     /// The campaign window plays actions; verification and `--battle` do not.
     var animatesActions = false { didSet { flow.presentsNativeActions = animatesActions } }
     /// A battle effect starts. The id is the source sound number.
-    var onSound:((Int)->Void)?
+    var onSound:((Int)->Void)? { didSet { overlay.onSound = onSound } }
     private var animator = OriginalBattleAnimator()
     var isAnimating:Bool { !animator.isIdle }
     private var afterCues:(()->Void)?
@@ -94,6 +94,8 @@ final class OriginalBattleView:NSView {
         guard animatesActions,!cues.isEmpty else { done();return }
         afterCues = done;perform(cues)
     }
+    /// MAIN1A919: a level gained sounds seven; items end on eight (2E7B5).
+    private func soundLevels(_ gained:Int) { if gained > 0 { onSound?(7) } }
     private func perform(_ cues:[OriginalBattleCue]) {
         animator.effectSounds = sprites?.catalog.effects?.sounds ?? []
         animator.play(cues,options:session.sourceOptionsWord)
@@ -468,6 +470,7 @@ final class OriginalBattleView:NSView {
             say(rejectionText(result.rejection ?? "unusable",use)) { [weak self] in self?.openItemList(result.userSlot,action:0) }
             return
         }
+        onSound?(8)
         resetCommand()
         let user = session.units[result.userSlot].flatMap { try? session.people.person($0.person).name } ?? ""
         let name:(OriginalStrategyTargetEffect) -> String = { [session] in (try? session.people.person($0.person).name) ?? "" }
@@ -553,10 +556,12 @@ final class OriginalBattleView:NSView {
         }
     }
     private func showStrategyResult(_ result:OriginalStrategyExecution) {
+        soundLevels(result.completionExperience?.levelsGained ?? 0)
         if result.completed {message = "\(strategyTitle(result.abilityID)) 실행 · \(result.targets.count)개 대상 처리"}
         else {message = "책략을 실행하지 않았습니다: \(result.rejectionReason ?? "선택 취소")"}
     }
     private func showAttackResult(_ result:OriginalStrikeExchange) {
+        soundLevels(result.experience.levelsGained)
         message = "피해 \(result.strike.damage) · 반격 \(result.counter?.damage ?? 0) · EXP \(result.experience.experience)"
     }
     private func cycleStrategyTarget(_ step:Int) throws {

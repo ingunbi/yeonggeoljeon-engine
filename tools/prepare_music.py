@@ -11,7 +11,7 @@ from pathlib import Path
 import struct
 import sys
 
-from prepare_resources import inventory
+from prepare_resources import EXAMINED_MAIN, inventory
 from prepare_scene import read_resource
 from resource_formats import ResourceError
 
@@ -24,6 +24,9 @@ DEPTHS, DEPTH_COUNT = 0x74A, 16
 RANDOM_SEED = 0x71C
 TRACKS = 7
 SONG_FILES = {"songs": "MUSIC.R3", "opening": "OPMUSIC.R3", "ending": "EDMUSIC.R3"}
+# CF5:5EC2 installs the bank at 3021:0004 inside MAIN (0x19830); the data segment follows.
+EFFECT_BANK, EFFECT_END = 0x36C14, 0x37DA0
+EFFECT_COUNT, EFFECT_CHANNELS = 43, 2
 
 
 def directory(data: bytes, name: str) -> list[dict]:
@@ -62,14 +65,29 @@ def driver_tables(driver: bytes) -> dict:
             "depths": words(driver, DEPTHS, DEPTH_COUNT), "randomSeed": words(driver, RANDOM_SEED, 1)[0]}
 
 
+def effect_bank(main: bytes) -> dict:
+    """Two track words per id, each relative to its own table entry (driver 0x491)."""
+    if hashlib.sha256(main).hexdigest() != EXAMINED_MAIN:
+        raise ResourceError("MAIN does not match the examined effect bank")
+    bank = main[EFFECT_BANK:EFFECT_END]
+    tracks = struct.unpack_from(f"<{EFFECT_COUNT * EFFECT_CHANNELS}H", bank, 0)
+    for index, word in enumerate(tracks):
+        if word and word + index // EFFECT_CHANNELS * 4 >= len(bank):
+            raise ResourceError("sound effect track lies outside the bank")
+    return {"count": EFFECT_COUNT, "size": len(bank), "sha256": hashlib.sha256(bank).hexdigest(),
+            "data": base64.b64encode(bank).decode("ascii"),
+            "source": {"resource": "MAIN.EXE", "offset": EFFECT_BANK, "bytes": len(bank), "install": "MAIN.EXE:0x19812..0x19845"}}
+
+
 def prepare(game: Path, output: Path) -> dict:
     game, output = game.resolve(), output.resolve()
     if output == game or game in output.parents:
         raise ResourceError("music output must be outside the original directory")
     before = inventory(game)
     driver, driver_source = read_resource(game, "SBOPL2.COM")
-    result = {"format": 1, "tables": driver_tables(driver)}
-    inputs = [driver_source]
+    main, main_source = read_resource(game, "MAIN.EXE")
+    result = {"format": 1, "tables": driver_tables(driver), "effects": effect_bank(main)}
+    inputs = [driver_source, main_source]
     for key, name in SONG_FILES.items():
         data, source = read_resource(game, name)
         result[key] = directory(data, name)
@@ -79,8 +97,7 @@ def prepare(game: Path, output: Path) -> dict:
     result["source"] = {"inputs": inputs, "driver": "SBOPL2.COM:0x30E..0x113F", "originalFilesPreserved": True,
                         "originalProgramsExecuted": False,
                         "method": "static original byte interpretation; DOS program not executed"}
-    result["limitations"] = ["Sound effects use a separate table that is not exported here.",
-                             "The native synthesizer is written from chip documentation and was not compared with real OPL2 output."]
+    result["limitations"] = ["The native synthesizer is written from chip documentation and was not compared with real OPL2 output."]
     output.mkdir(parents=True, exist_ok=True)
     temporary = output / ".music.json.tmp"
     temporary.write_text(json.dumps(result, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -99,6 +116,7 @@ def main() -> int:
         print(f"music extraction failed: {error}", file=sys.stderr)
         return 1
     print(json.dumps({"songs": len(result["songs"]), "opening": len(result["opening"]), "ending": len(result["ending"]),
+                      "effects": result["effects"]["count"],
                       "originalFilesPreserved": result["source"]["originalFilesPreserved"]}))
     return 0
 

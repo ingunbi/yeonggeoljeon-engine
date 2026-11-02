@@ -26,6 +26,28 @@ func originalMusicSelfTests() throws {
         recorder.writes.removeAll();value.play(data)
         return (value,recorder)
     }
+    // An effect bank: one table entry, then an instrument and a two-byte note track.
+    do {
+        let instrument:[UInt8] = [0x21,0x22,0x06,0x01,0x02,0x13,0x14,0xA1,0xB2,0x72,0x83,0x00,0,0,0,0,0,0,0,0,0,0]
+        let start = 8+instrument.count
+        var bank:[UInt8] = [UInt8(start&255),UInt8(start>>8),0,0,0,0,0,0]+instrument
+        let relative = UInt16(truncatingIfNeeded:8-start)
+        bank += [0xF4,UInt8(relative&255),UInt8(relative>>8),0x24,0x04,0x03,0xFF]
+        let recorder = Recorder()
+        let effects = OriginalMusicDriver(tables:tables,bank:bank) { recorder.writes.append(($0,$1)) }
+        recorder.writes.removeAll();effects.playEffect(0)
+        try check(effects.effect == 1,"the driver's effect id is the source id plus one")
+        var interrupts = 0
+        while effects.effect != 0,interrupts < 4000 { effects.interrupt();interrupts += 1 }
+        try check(effects.effect == 0,"an effect ends with its tracks")
+        try check(recorder.writes.contains{$0.0 == 0xB7 && $0.1&0x20 != 0},"effect notes key on channel seven")
+        try check(!recorder.writes.contains{$0.0 == 0xB0 && $0.1&0x20 != 0},"an effect never keys a music channel")
+        // Four effect ticks at 54/256 per interrupt.
+        try check(interrupts <= 8*256/54,"effect tracks run on the slower clock: \(interrupts)")
+        let quiet = OriginalMusicDriver(tables:tables,bank:bank) { _,_ in }
+        quiet.playEffect(40)
+        try check(quiet.effect == 0,"an id past the bank plays nothing")
+    }
     /// Runs interrupts until `count` music ticks have passed.
     func run(_ value:OriginalMusicDriver,ticks count:Int) {
         let target = value.ticks+count

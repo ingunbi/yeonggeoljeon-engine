@@ -118,6 +118,9 @@ final class OriginalCampaignHost {
     private var started = false
     private var explorationInput:OriginalExplorationInputPlan?
     private var pendingBattleMap:CampaignVMMapRequest?
+    /// Source sound numbers the window has yet to play.
+    private var sounds:[Int] = []
+    func takeSounds() -> [Int] { defer { sounds = [] };return sounds }
     /// Source11 writes script context+0A without an interpreter return. Its
     /// selection is entered only when the enclosing battle loop finishes.
     private var battleReturnSelection:CampaignVMMapRequest?
@@ -320,7 +323,10 @@ final class OriginalCampaignHost {
     /// merchant's facing (MAIN26AA1..26AAD).
     func answerShop(_ value:Int?) throws {
         guard var operation = shop,var current = money else { throw EngineError.invalid("No original shop is open") }
+        let before = current
         try operation.answer(value,people:people,money:&current)
+        // MAIN3677D and 36AEA: a purchase sounds three, a sale four.
+        if current != before { sounds.append(current < before ? 3 : 4) }
         money = current;shop = operation.finished ? nil : operation
         if operation.finished { try restoreInputFacings() }
     }

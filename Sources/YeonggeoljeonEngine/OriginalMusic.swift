@@ -10,6 +10,10 @@ struct OriginalMusicCatalog:Codable {
     var songs:[Song]
     var opening:[Song]
     var ending:[Song]
+    /// The driver's effect bank, loaded from MAIN (0x19812).
+    var effects:Effects? = nil
+    struct Effects:Codable { var count:Int;var data:String;var source:JSONValue? }
+    var effectBank:[UInt8] { effects.flatMap { Data(base64Encoded:$0.data) }.map { [UInt8]($0) } ?? [] }
     var source:JSONValue?
     var limitations:[String]?
     static func load(from url:URL) throws -> Self {
@@ -51,7 +55,13 @@ final class OriginalMusicDriver {
     private static let operators = [0,1,2,8,9,10,16,17,18]
     private let tables:OriginalMusicCatalog.Tables
     private let write:(Int,Int) -> Void
-    private var song:[UInt8] = []
+    private var music:[UInt8] = []
+    private let bank:[UInt8]
+    /// Each track reads its own segment: 0x560 for music, 0x564 for effects.
+    private var active = 0
+    private var song:[UInt8] { active >= Self.tracks ? bank : music }
+    /// The effect playing, as the driver's id, or zero (0x72C).
+    private(set) var effect = 0
     private var slots = [Slot](repeating:Slot(),count:OriginalMusicDriver.channels)
     private(set) var playing = false
     var loops = true
@@ -63,8 +73,8 @@ final class OriginalMusicDriver {
     /// IRQ0 rate after the driver sets the PIT divisor to 0x1000.
     static let interruptRate = 1_193_182.0/4096
 
-    init(tables:OriginalMusicCatalog.Tables,write:@escaping (Int,Int) -> Void) {
-        self.tables = tables;self.write = write;random = UInt16(truncatingIfNeeded:tables.randomSeed)
+    init(tables:OriginalMusicCatalog.Tables,bank:[UInt8] = [],write:@escaping (Int,Int) -> Void) {
+        self.tables = tables;self.write = write;self.bank = bank;random = UInt16(truncatingIfNeeded:tables.randomSeed)
         // 0x115A enables waveform select and note select.
         write(0x01,0x20);write(0x08,0x40);write(0xBD,0)
         for channel in 0..<Self.channels { silence(channel) }
@@ -89,7 +99,7 @@ final class OriginalMusicDriver {
     func play(_ data:[UInt8]) {
         stop()
         guard data.count >= Self.tracks*2 else { return }
-        song = data;ticks = 0;fadeLength = 0;fadePhase = 0;fadeStep = 0;fadeLevel = 0
+        music = data;ticks = 0;fadeLength = 0;fadePhase = 0;fadeStep = 0;fadeLevel = 0
         for track in 0..<Self.tracks {
             reset(track)
             let start = Int(data[track*2])|Int(data[track*2+1])<<8
@@ -102,6 +112,25 @@ final class OriginalMusicDriver {
         playing = false;fadeLength = 0;fadeLevel = 0
         for track in 0..<Self.tracks { silence(track);slots[track].position = 0 }
         tempoStep = 0;tempo = 0
+    }
+    /// API 11: the driver's id is the source's plus one (0x19AF9, 0x491).
+    func playEffect(_ source:Int) {
+        stopEffect()
+        let entry = source*4
+        guard source >= 0,bank.count >= entry+4 else { return }
+        effect = source+1
+        for index in 0..<2 {
+            let channel = Self.tracks+index
+            reset(channel);slots[channel].volume = 0x0F
+            let at = entry+index*2,word = Int(bank[at])|Int(bank[at+1])<<8
+            let start = word == 0 ? 0 : word+entry
+            slots[channel].position = start;slots[channel].loop = start
+        }
+    }
+    /// API 12 (0x512).
+    func stopEffect() {
+        effect = 0
+        for channel in Self.tracks..<Self.channels { active = channel;keyOff(channel);silence(channel);slots[channel].position = 0 }
     }
     /// API 02 with a length: 0x10A0 eases the volume out every fourth step.
     func fade(_ length:UInt8) { if length == 0 { stop() } else { fadeLength = length } }
@@ -130,6 +159,7 @@ final class OriginalMusicDriver {
         if !alive { playing = false;tempoStep = 0;tempo = 0 }
     }
     private func advance(_ channel:Int) {
+        active = channel
         guard slots[channel].position != 0 else { return }
         slots[channel].stepCount &-= 1
         if slots[channel].stepCount == 0 {
@@ -490,11 +520,21 @@ final class OriginalMusicDriver {
                 let level = min(UInt32(fadeStep)*UInt32(fadeStep)*0xFF/(UInt32(fadeLength)*UInt32(fadeLength)),0xFF)
                 if UInt8(level) != fadeLevel {
                     fadeLevel = UInt8(level)
-                    for track in 0..<Self.tracks { applyVolume(track,slots[track].volume) }
+                    for track in 0..<Self.tracks { active = track;applyVolume(track,slots[track].volume) }
                 }
             }
         }
+        // 0xE13: effect tracks run on this slower clock.
+        if effect != 0 {
+            var alive = false
+            for channel in Self.tracks..<Self.channels {
+                advance(channel)
+                if slots[channel].position != 0 { alive = true }
+            }
+            if !alive { effect = 0 }
+        }
         for channel in 0..<Self.channels {
+            active = channel
             if slots[channel].mode&0x40 != 0 {
                 var value = oneShot(channel)
                 if slots[channel].mode&4 != 0 { value = 0&-value }

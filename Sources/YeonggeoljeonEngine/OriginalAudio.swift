@@ -9,6 +9,11 @@ final class OriginalAudio {
         get { !UserDefaults.standard.bool(forKey:key) }
         set { UserDefaults.standard.set(!newValue,forKey:key) }
     }
+    private static let effectsKey = "effectsMuted"
+    static var effectsEnabled:Bool {
+        get { !UserDefaults.standard.bool(forKey:effectsKey) }
+        set { UserDefaults.standard.set(!newValue,forKey:effectsKey) }
+    }
     private let catalog:OriginalMusicCatalog
     private let engine = AVAudioEngine()
     private let lock = NSLock()
@@ -24,7 +29,13 @@ final class OriginalAudio {
     init(catalog:OriginalMusicCatalog) {
         self.catalog = catalog
         let chip = self.chip
-        driver = OriginalMusicDriver(tables:catalog.tables) { chip.write($0,$1) }
+        driver = OriginalMusicDriver(tables:catalog.tables,bank:catalog.effectBank) { chip.write($0,$1) }
+    }
+    /// CF5:61FE. A new effect replaces the one playing; ids stop at 0x2B.
+    func playEffect(_ id:Int) {
+        guard OriginalAudio.effectsEnabled,(0..<0x2B).contains(id) else { return }
+        start()
+        lock.lock();driver.playEffect(id);lock.unlock()
     }
     /// Same selection keeps playing, as CF5:600A does. Nil stops the music.
     func select(_ value:Int?) {
@@ -61,10 +72,11 @@ final class OriginalAudio {
         }
     }
     /// Offline render of one song, for checks that must not touch audio hardware.
-    static func render(song:[UInt8],tables:OriginalMusicCatalog.Tables,seconds:Double) -> [Float] {
+    static func render(song:[UInt8],tables:OriginalMusicCatalog.Tables,seconds:Double,bank:[UInt8] = [],effect:Int? = nil) -> [Float] {
         let chip = OPL2Chip()
-        let driver = OriginalMusicDriver(tables:tables) { chip.write($0,$1) }
+        let driver = OriginalMusicDriver(tables:tables,bank:bank) { chip.write($0,$1) }
         driver.play(song)
+        if let effect = effect { driver.playEffect(effect) }
         var samples = [Float](repeating:0,count:Int(seconds*OPL2Chip.sampleRate))
         var done = 0,until = 0.0
         samples.withUnsafeMutableBufferPointer { buffer in

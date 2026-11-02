@@ -260,6 +260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 struct EngineOptions {
     var data:URL?, output:URL?, inputs:URL?, resume:URL?, battleID:String?, campaignRecord:String?
     var renderMusic:Int?
+    var renderEffect:Int?
     var verify = false, tests = false, verifyBattle = false, verifyCampaign = false,verifyVM = false,verifyPlay = false
     var listBattles = false, listCampaign = false, experimental = false
 }
@@ -279,7 +280,7 @@ func arguments() throws -> EngineOptions {
         case "--list-battles": options.listBattles = true
         case "--list-campaign": options.listCampaign = true
         case "--experimental-rules": options.experimental = true
-        case "--data", "--output", "--inputs", "--resume", "--battle", "--campaign-record", "--render-music":
+        case "--data", "--output", "--inputs", "--resume", "--battle", "--campaign-record", "--render-music", "--render-effect":
             let key = args[i]; i += 1
             guard i < args.count else { throw EngineError.invalid("Missing value for \(key)") }
             if key == "--data" { options.data = URL(fileURLWithPath:args[i],isDirectory:true) }
@@ -288,6 +289,7 @@ func arguments() throws -> EngineOptions {
             else if key == "--resume" { options.resume = URL(fileURLWithPath:args[i]) }
             else if key == "--battle" { options.battleID = args[i] }
             else if key == "--render-music" { options.renderMusic = Int(args[i]) }
+            else if key == "--render-effect" { options.renderEffect = Int(args[i]) }
             else { options.campaignRecord = args[i] }
         default: throw EngineError.invalid("Unknown argument: \(args[i])")
         }; i += 1
@@ -303,7 +305,7 @@ func arguments() throws -> EngineOptions {
           !(options.verify && options.battleID != nil),
           !((options.verifyCampaign || options.verifyVM || options.verifyPlay) && (options.battleID != nil || options.campaignRecord != nil)),
           !(options.experimental && options.battleID == nil),
-          !(options.output != nil && verificationModes == 0 && options.renderMusic == nil),
+          !(options.output != nil && verificationModes == 0 && options.renderMusic == nil && options.renderEffect == nil),
           !(options.tests && (options.data != nil || options.output != nil || options.experimental)) else {
         throw EngineError.invalid("Arguments select incompatible engine actions")
     }
@@ -336,6 +338,15 @@ do {
         let samples = OriginalAudio.render(song:bytes,tables:catalog.tables,seconds:20)
         try OriginalAudio.wave(samples).write(to:output)
         print("Rendered song \(song): peak \(samples.map(abs).max() ?? 0)")
+        exit(0)
+    }
+    if let effect = options.renderEffect {
+        // A local check of one sound effect: three seconds as a WAV at --output.
+        let catalog = try OriginalMusicCatalog.load(from:root.appendingPathComponent("music.json"))
+        guard let output = options.output else { throw EngineError.invalid("--render-effect needs --output") }
+        let samples = OriginalAudio.render(song:[],tables:catalog.tables,seconds:3,bank:catalog.effectBank,effect:effect)
+        try OriginalAudio.wave(samples).write(to:output)
+        print("Rendered effect \(effect): peak \(samples.map(abs).max() ?? 0)")
         exit(0)
     }
     if options.listBattles {

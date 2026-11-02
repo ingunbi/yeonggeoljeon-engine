@@ -27,6 +27,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         renderer = try Renderer(host.data)
         super.init(frame:CGRect(x:0,y:0,width:1024,height:640))
         overlay.frame = bounds;overlay.autoresizingMask = [.width,.height];addSubview(overlay)
+        overlay.onSound = { [weak self] id in self?.audio?.playEffect(id) }
         overlay.restoreFocus = { [weak self] in
             guard let self = self else { return }
             if let board = self.battleView,!board.isHidden { self.window?.makeFirstResponder(board) }
@@ -82,6 +83,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         guard !overlay.active,errorText == nil else { return }
         do {
             battleView?.advanceAnimation(1.0/60)
+            for id in host.takeSounds() { audio?.playEffect(id) }
             try host.advance(microseconds:16_667)
             needsDisplay = true
             try synchronizeBattle()
@@ -134,6 +136,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             board.objective = { [weak self] in (self?.host.vm.state.chapter ?? 0,self?.host.vm.state.objectiveText) }
             board.announcesPhases = true
             board.animatesActions = true
+            board.onSound = { [weak self] id in self?.audio?.playEffect(id) }
             board.presentation = CanvasPresentation.current
             board.frame = bounds
             addSubview(board,positioned:.below,relativeTo:overlay);battleView = board
@@ -344,6 +347,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     }
     private func presentRetirement() {
         guard let text = host.retirementText else { return }
+        audio?.playEffect(9)                                // MAIN2BAA7
         overlay.show(CanvasNotice(speaker:"",text:text,portrait:nil) { [weak self] in
             guard let self = self else { return }
             self.act { try self.host.acknowledgeRetirement() }

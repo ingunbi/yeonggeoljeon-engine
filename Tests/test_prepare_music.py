@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from prepare_music import TRACKS, directory, driver_tables, prepare
+from prepare_music import EFFECT_COUNT, TRACKS, directory, driver_tables, effect_bank, prepare
 from resource_formats import ResourceError
 
 
@@ -65,6 +65,11 @@ class OriginalMusicConformanceTests(unittest.TestCase):
                 for track in struct.unpack_from(f"<{TRACKS}H", data, 0):
                     if track:
                         self.assertEqual(walk(data, track), 0xFF)
+            bank = base64.b64decode(result["effects"]["data"])
+            self.assertEqual(result["effects"]["count"], EFFECT_COUNT)
+            for index, track in enumerate(struct.unpack_from(f"<{EFFECT_COUNT * 2}H", bank, 0)):
+                if track:
+                    self.assertEqual(walk(bank, track + index // 2 * 4), 0xFF)
 
 
 def walk(data: bytes, position: int) -> int:
@@ -80,6 +85,12 @@ def walk(data: bytes, position: int) -> int:
         else:
             position += 2
     return -1
+
+
+class EffectBankTests(unittest.TestCase):
+    def test_tracks_must_stay_inside_the_bank(self):
+        with self.assertRaises(ResourceError):
+            effect_bank(b"not main")
 
 
 if __name__ == "__main__":
