@@ -51,6 +51,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             self.battleView?.presentation = CanvasPresentation.current
             if self.battleView?.isHidden != false { self.overlay.viewport = self.fieldOverlay }
             else { self.overlay.viewport = self.battleView?.layoutFacts.viewportRect ?? self.overlay.viewport }
+            // The title menu changes between the engine rows and MAIN's window.
+            if !self.host.hasStarted,self.screenPlayer == nil,!self.fading,self.overlay.active { self.presentTitleMenu() }
             self.needsDisplay = true
         }
     }
@@ -176,14 +178,42 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private var endingMusicStarted = false
     private var endingFade = 0.0
     private static let endingFadeSeconds = 15*OriginalScreenPlayer.tick*4/100
+    /// C456 fades to black (4A22) before it draws a new screen and 4A10 fades
+    /// back in: GRPDRV function 16h, sixteen steps of two retraces, about
+    /// 0.53 s each at 59.94 Hz. The source does nothing else meanwhile.
+    static let screenFadeSeconds = 32/59.94
+    private var fadeLevel = 0.0
+    private var fadeRising = false
+    private var fadeMidpoint:(() -> Void)?
+    private var fading:Bool { fadeRising || fadeLevel > 0 }
+    /// Fades to black, runs `action` (which may replace this view), then fades in.
+    private func fadeThrough(_ action:@escaping () -> Void) {
+        fadeRising = true;fadeMidpoint = action;needsDisplay = true
+    }
+    /// A screen that a load or a new game opens starts black and fades in.
+    func fadeIn() { fadeLevel = 1;fadeRising = false;needsDisplay = true }
+    private func advanceFade() {
+        let step = 1.0/60/Self.screenFadeSeconds
+        if fadeRising {
+            fadeLevel = min(1,fadeLevel+step)
+            if fadeLevel >= 1 {
+                fadeRising = false
+                let action = fadeMidpoint;fadeMidpoint = nil;action?()
+            }
+        } else { fadeLevel = max(0,fadeLevel-step) }
+        needsDisplay = true
+    }
     private func makeScreen(_ name:String) -> OriginalScreenPlayer? {
         guard let loaded = try? OriginalScreenCatalog.load(from:host.data.root),let ops = loaded.catalog.programs[name] else { return nil }
         let player = OriginalScreenPlayer(ops:ops,assets:loaded.catalog.assets,data:loaded.data)
         player.musicBusy = { [weak self] in self?.audio?.programPlaying ?? false }
         return player
     }
+    /// HERO.COM runs OPEN, then MAIN, which opens its menu at once. Without
+    /// an intact opening the window starts at that menu.
     func playOpening() {
         screenPlayer = makeScreen("opening");screenIsOpening = screenPlayer != nil
+        if screenPlayer == nil { presentTitleMenu() }
     }
     private func advanceScreen(_ player:OriginalScreenPlayer) {
         for action in player.advance(centiseconds:100.0/60) {
@@ -200,7 +230,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         audio?.stopProgram()
         let opening = screenIsOpening,quit = screenIsQuit
         screenPlayer = nil;screenIsOpening = false;screenIsQuit = false;needsDisplay = true
-        if quit { window?.performClose(nil) } else if !opening { restartMain() }
+        if quit { window?.performClose(nil) } else if opening { presentTitleMenu() } else { restartMain() }
     }
     /// MAIN1E3A8 runs once before main exits with code 3.
     private func startQuitScreen() {
@@ -231,6 +261,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     }
     private func tick() {
         if let player = screenPlayer { advanceScreen(player);return }
+        if fading { advanceFade();return }
         if host.frameworkReturn?.outcome == .quit { startQuitScreen() }
         if let session = host.ending,advanceEnding(session) { return }
         // 2CB4:125E plays song 18 for the duel and 1824 restores the one before.
@@ -632,16 +663,39 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         }
         yesNo(framework?.savePrompt?.text ?? "여기서 저장할까요?") { yes in yes ? attempt() : complete() }
     }
+    /// MAIN's own window for a menu at the title, in the original frames.
+    private func originalMenu(_ name:String) -> CanvasMenu.Style? {
+        guard CanvasPresentation.current == .original,!host.hasStarted,let menus = host.story.screens?.menus,
+              let window = menus.windows[name],window.window.count == 4,window.buttons.allSatisfy({ $0.count == 4 }),
+              menus.text.count == 3,menus.disabled.count == 3,let picture = image(window.image) else { return nil }
+        func color(_ value:[Int]) -> NSColor { NSColor(red:CGFloat(value[0])/255,green:CGFloat(value[1])/255,blue:CGFloat(value[2])/255,alpha:1) }
+        return .window(.init(image:picture,frame:OriginalBattleLayout.rect(window.window),buttons:window.buttons.map(OriginalBattleLayout.rect),
+                             text:color(menus.text),disabled:color(menus.disabled)))
+    }
+    /// The engine layout sets the rows between the logo and the copyright line
+    /// of the opening's title picture; the original frames use MAIN's window.
+    private static let titleAnchor = CGPoint(x:320,y:262)
+    private func titleMenu(_ choose:@escaping (Int?) -> Void = { _ in }) -> CanvasMenu {
+        let items = host.framework?.titleMenu?.map(\.text) ?? ["새로 시작","이어하기","기능설정","오프닝"]
+        return CanvasMenu(title:"",options:items.map { .init(label:$0) },cancellable:true,anchor:Self.titleAnchor,
+                          style:originalMenu("title") ?? .title,onChoose:choose)
+    }
     /// MAIN CF5:C050 menu after the title. Item0 starts, item1 resumes a
     /// native slot, item2 opens the options, and item3
     /// returns to the opening, as exit code0 runs OPEN before MAIN again.
+    /// A cancel ends the game through the exit screen (main 0x1E605, 1E3A8).
     private func presentTitleMenu() {
-        let items = host.framework?.titleMenu?.map(\.text) ?? ["새로 시작","이어하기","기능설정","오프닝"]
-        overlay.show(CanvasMenu(title:"",options:items.map { .init(label:$0) },cancellable:true) { [weak self] chosen in
-            guard let self = self,let chosen = chosen else { return }
+        overlay.viewport = CGRect(x:0,y:0,width:640,height:400)
+        overlay.show(titleMenu { [weak self] chosen in
+            guard let self = self else { return }
+            guard let chosen = chosen else {
+                self.startQuitScreen()
+                if self.screenPlayer == nil { self.window?.performClose(nil) }
+                return
+            }
             do {
                 switch chosen {
-                case 0: try self.host.acknowledge()
+                case 0:self.fadeThrough { [weak self] in self?.act { try self?.host.acknowledge() } }
                 case 1:
                     self.presentSlots(saving:false) { [weak self] _ in self?.presentTitleMenu() }
                 case 2:self.presentTitleSettings()
@@ -688,7 +742,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     }
     /// MAIN22BFE, 229AE, 228C6 and 22BCE: one selector per option. `done`
     /// continues whatever opened it, such as the title menu.
-    private func openSetting(_ action:String,_ done:@escaping () -> Void) {
+    private func openSetting(_ action:String,behind parents:[CanvasMenu] = [],_ done:@escaping () -> Void) {
         guard let texts = host.framework?.settings else { done();return }
         var value = OriginalSettings.current
         let labels:[String],current:Int,apply:(Int) -> Void
@@ -707,7 +761,19 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             })
             return
         }
-        overlay.show(CanvasMenu(title:"",options:labels.enumerated().map { .init(label:$0.element,checked:$0.offset == current) },selected:current,cancellable:true) { index in
+        // MAIN229DA, 22908: the original window shows the current choice disabled.
+        if !parents.isEmpty,labels.count == 2,let style = originalMenu(action == "monitor" ? "monitor" : "switch") {
+            overlay.show(CanvasMenu(title:"",options:labels.enumerated().map { .init(label:$0.element,enabled:$0.offset != current) },
+                                    selected:1-current,cancellable:true,style:style) { index in
+                if let index = index { apply(index);OriginalSettings.current = value }
+                done()
+            },behind:parents)
+            return
+        }
+        // At the title the engine layout keeps its rows under the logo.
+        let atTitle = !host.hasStarted
+        overlay.show(CanvasMenu(title:"",options:labels.enumerated().map { .init(label:$0.element,checked:$0.offset == current) },selected:current,cancellable:true,
+                                anchor:atTitle ? Self.titleAnchor : nil,style:atTitle ? .title : .panel) { index in
             if let index = index { apply(index);OriginalSettings.current = value }
             done()
         })
@@ -723,17 +789,25 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             self.presentListening(songs:songs,selected:index,done)
         })
     }
-    /// MAIN CF5:BFDE. The engine's title menu shares the field options.
-    private func presentTitleSettings() {
-        let actions = ["speed","monitor","bgm","sound","volume","music-time"]
-        let labels = actions.map { action in
+    /// MAIN CF5:BFDE: monitor, BGM and effects, the field list's items five to
+    /// seven (DS:34FC). In the original frames the window opens over the title's.
+    private static let titleSettings = ["monitor","bgm","sound"]
+    private func titleSettingsMenu(selected:Int,_ choose:@escaping (Int?) -> Void = { _ in }) -> CanvasMenu {
+        let labels = Self.titleSettings.map { action in
             host.framework?.fieldMenu?.items.first(where:{ $0.action == action })?.text ?? action
         }
-        overlay.show(CanvasMenu(title:"",options:labels.map { .init(label:$0) },cancellable:true) { [weak self] index in
+        return CanvasMenu(title:"",options:labels.map { .init(label:$0) },selected:selected,cancellable:true,anchor:Self.titleAnchor,
+                          style:originalMenu("settings") ?? .title,onChoose:choose)
+    }
+    private func presentTitleSettings(selected:Int = 0) {
+        let original = originalMenu("settings") != nil
+        overlay.show(titleSettingsMenu(selected:selected) { [weak self] index in
             guard let self = self else { return }
             guard let index = index else { self.presentTitleMenu();return }
-            self.openSetting(actions[index]) { [weak self] in self?.presentTitleSettings() }
-        })
+            self.openSetting(Self.titleSettings[index],behind:original ? [self.titleMenu(),self.titleSettingsMenu(selected:index)] : []) { [weak self] in
+                self?.presentTitleSettings(selected:index)
+            }
+        },behind:original ? [titleMenu()] : [])
     }
     private func saveSlots() throws -> OriginalSaveSlots {
         OriginalSaveSlots(directory:try Self.savesDirectory().appendingPathComponent("slots",isDirectory:true))
@@ -795,14 +869,15 @@ final class OriginalCampaignView:NSView,EngineTimedView {
                         }
                     }
                 } else {
+                    let data = self.host.data,rng = self.host.rng
                     switch targets[index] {
                     case .slot(let slot):
-                        self.replace(with:try OriginalCampaignView(host:try OriginalCampaignHost.resume(data:self.host.data,from:slots.read(slot:slot))))
+                        self.loadThroughFade(done) { try OriginalCampaignView(host:try OriginalCampaignHost.resume(data:data,from:slots.read(slot:slot))) }
                     case .named(let name):
-                        self.replace(with:try OriginalCampaignView(host:try OriginalCampaignHost.resume(data:self.host.data,from:slots.read(name))))
+                        self.loadThroughFade(done) { try OriginalCampaignView(host:try OriginalCampaignHost.resume(data:data,from:slots.read(name))) }
                     case .original(let slot):
                         // MAIN keeps its boot-seeded stream across a load; a slot stores none.
-                        self.replace(with:try OriginalCampaignView(host:try OriginalCampaignHost.importOriginal(data:self.host.data,slot:slot,rng:self.host.rng)))
+                        self.loadThroughFade(done) { try OriginalCampaignView(host:try OriginalCampaignHost.importOriginal(data:data,slot:slot,rng:rng)) }
                     case .file:
                         if let resumed = try Self.chooseResume(data:self.host.data) { self.replace(with:try OriginalCampaignView(host:resumed)) } else { done(false) }
                     case .none:done(false)
@@ -810,6 +885,14 @@ final class OriginalCampaignView:NSView,EngineTimedView {
                 }
             } catch { self.recordInputError(error);done(false) }
         })
+    }
+    /// A load reaches the map through C456 as well: black, then the new screen fades in.
+    private func loadThroughFade(_ done:@escaping (Bool) -> Void,_ make:@escaping () throws -> OriginalCampaignView) {
+        fadeThrough { [weak self] in
+            guard let self = self else { return }
+            do { let next = try make();self.replace(with:next);next.fadeIn() }
+            catch { self.recordInputError(error);done(false) }
+        }
     }
     private func replace(with next:OriginalCampaignView) {
         guard let window = window else { return }
@@ -858,10 +941,15 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         let shape = CanvasGeometry(bounds:bounds)
         if let player = screenPlayer,let image = player.image() { Renderer.image(image,in:shape.rect,context:context);return }
         let screen = host.fieldScreenState(),modern = CanvasPresentation.current == .modern && screen != nil
-        do {
-            let frame = try host.ending.map { try renderer.renderEnding($0) } ?? renderer.render(host.stage,screen:screen,dialogue:false)
-            Renderer.image(modern ? frame.image.cropping(to:CanvasFieldMap.viewport) ?? frame.image : frame.image,in:shape.rect,context:context)
-        } catch { errorText = "\(error)" }
+        // MAIN draws no picture behind its title menu (A7E8 clears to colour 0);
+        // the engine layout keeps the opening's title picture there.
+        let blankTitle = !host.hasStarted && host.ending == nil && CanvasPresentation.current == .original
+        if !blankTitle {
+            do {
+                let frame = try host.ending.map { try renderer.renderEnding($0) } ?? renderer.render(host.stage,screen:screen,dialogue:false)
+                Renderer.image(modern ? frame.image.cropping(to:CanvasFieldMap.viewport) ?? frame.image : frame.image,in:shape.rect,context:context)
+            } catch { errorText = "\(error)" }
+        }
         if endingFade > 0 {
             context.setFillColor(CGColor(gray:0,alpha:min(1,endingFade/Self.endingFadeSeconds)));context.fill(shape.rect)
         }
@@ -877,9 +965,11 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             CanvasTheme.chip("빨리 감기 ×\(OriginalBattleView.fastRate)",at:CGPoint(x:580,y:24),maximumWidth:120,in:context)
         }
         context.restoreGState()
+        if fadeLevel > 0 { context.setFillColor(CGColor(gray:0,alpha:fadeLevel));context.fill(bounds) }
     }
     override func keyDown(with event:NSEvent) {
         if screenPlayer != nil { screenInput(escape:event.keyCode == 53);return }
+        if fading { return }
         if event.keyCode == 53 || host.frameworkReturn?.outcome == .quit { window?.performClose(nil);return }
         if [36,49,76].contains(event.keyCode),!event.isARepeat {
             inputNotice = nil
@@ -898,6 +988,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     }
     override func mouseDown(with event:NSEvent) {
         if screenPlayer != nil { screenInput(escape:false);return }
+        if fading { return }
         // MAIN1E3A8 waits for one input before main exits with code3.
         if host.frameworkReturn?.outcome == .quit { window?.performClose(nil);return }
         inputNotice = nil

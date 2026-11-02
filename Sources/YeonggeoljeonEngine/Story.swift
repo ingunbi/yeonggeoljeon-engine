@@ -37,8 +37,20 @@ struct OriginalBattleScreen:Codable {
     var commands:OriginalBattleCommands; var source:JSONValue?
 }
 /// PACKGRP screen frames and the field HUD layout read from MAIN immediates.
+/// One CF5:2C92 button menu drawn from MARK art without its labels
+/// (tools/menu_windows.py): the window, its button rectangles and picture.
+struct OriginalMenuWindow:Codable {
+    var window:[Int]; var buttons:[[Int]]; var image:String
+    var backgroundSaved:Bool; var currentChoiceDisabled:Bool; var source:JSONValue?
+}
+/// The title menu, its options and their two-choice sub-menus, with the
+/// label colours 7 and 2 of palette slot 0.
+struct OriginalMenuWindows:Codable {
+    var windows:[String:OriginalMenuWindow]; var text:[Int]; var disabled:[Int]; var source:JSONValue?
+}
 struct OriginalScreenFacts:Codable {
     var field:OriginalFieldScreen; var battle:OriginalBattleScreen; var limitations:[String]?
+    var menus:OriginalMenuWindows? = nil
     static let hudNames:Set<String> = ["caption","money","level","territory","portrait"]
 }
 /// MARK member0 Yes/No button pattern for the two-button selector.

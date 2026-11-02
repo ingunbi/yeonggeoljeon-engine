@@ -11,6 +11,7 @@ import struct
 import sys
 
 from prepare_resources import EXAMINED_MAIN, inventory, palette_at
+from menu_windows import menu_windows
 from prepare_scene import read_resource
 from resource_formats import Archive, ResourceError, planar_image, png_bytes
 from tf_dce import dce_picture
@@ -425,6 +426,14 @@ def prepare(game: Path, output: Path) -> dict:
                                   "commands": battle_commands(main),
                                   "parts": battle_parts(selected, palettes[3], output)})
     screens["field"].update(field_facts(main))
+    menus = {}
+    for name, (facts, picture) in menu_windows(main, mark.data).items():
+        relative = f"images/story/menu-{name}.png"
+        (output / relative).write_bytes(png_bytes(picture, palettes[0]))
+        menus[name] = {**facts, "image": relative}
+    # CF5:1AC8 prints labels in colour 7, or colour 2 when the item is disabled.
+    screens["menus"] = {"windows": menus, "text": list(palettes[0][7]), "disabled": list(palettes[0][2]),
+                        "source": {**mark.provenance(), "palette": "DS:1050 slot 0"}}
     result = {"format": 1, "assets": assets, "portraitAssets": portraits, "choiceButtons": buttons, "layouts": layouts,
               "screens": screens,
               "source": {"inputs": [item[1] for item in selected.values()], "originalHashesPreserved": True,

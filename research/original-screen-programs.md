@@ -33,20 +33,20 @@ programs comes from tables and modulo arithmetic.
 MAIN `0x1E3A8` fades to black, clears, draws PACKGRP members 34 and 36 at (216,80)
 and (184,200), fades to palette 4 of DS:`1050` and waits for one input (`CF5:2556`),
 after which main exits with code 3. The compiled program is `quit`. MAIN's fade goes
-through the graphics driver with its own delay word, whose step time was not
-derived, so this program uses the four-tick step.
+through the graphics driver, two vertical retraces a step
+([title menu](original-title-menu.md)); this program still uses the four-tick step.
 
 ## Opening
 
 The demo has sixteen scenes and two songs. The title picture is the tenth scene,
 and the demo restarts from its first scene after a full run. Only a mouse button
-leaves it. The window plays one pass and then shows the title menu, and any click
-leaves. The source then fades its music out over about five seconds; here the music
-stops at once.
+leaves it. The window plays one pass, and any click leaves; MAIN's menu then opens at
+once ([title menu](original-title-menu.md)). The source then fades its music out over
+about five seconds; here the music stops at once.
 
 The GAME copy of `OPGRP.R3` has damaged members, so the demo is compiled only when
 the caller selects an intact copy with `--title-opgrp`. Without one, the window
-starts at the title.
+starts at the title menu.
 
 ## Ending
 

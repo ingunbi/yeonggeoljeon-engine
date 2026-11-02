@@ -22,8 +22,15 @@ struct CanvasMenu {
     /// A status line under the options (remaining capacity, a refusal).
     var footer = ""
     /// Top-left corner for a window that opens beside a map cell. The panel
-    /// keeps a compact width and stays inside the viewport.
+    /// keeps a compact width and stays inside the viewport. A title menu
+    /// hangs from this point by its top centre instead.
     var anchor:CGPoint? = nil
+    /// MAIN's own window picture and its button rectangles, in canvas pixels.
+    struct Art { var image:CGImage; var frame:CGRect; var buttons:[CGRect]; var text:NSColor; var disabled:NSColor }
+    enum Style { case panel,title,window(Art) }
+    /// `.title` sets larger rows straight over a picture, on a soft band;
+    /// `.window` labels the buttons of an original window picture.
+    var style = Style.panel
     var onChoose:(Int?) -> Void
 }
 
@@ -247,7 +254,41 @@ final class CanvasOverlayView:NSView {
         if value.selected >= firstVisible+shown { firstVisible = value.selected-shown+1 }
         firstVisible = min(max(0,firstVisible),max(0,value.options.count-shown))
     }
+    private static let titleRow:CGFloat = 26
+    private func titleLayout(_ value:CanvasMenu) -> Layout {
+        let style = attributes(size:16)
+        let labelWidth = value.options.map { ceil(($0.label as NSString).size(withAttributes:style).width) }.max() ?? 0
+        let width = max(200,labelWidth+72),height = CGFloat(value.options.count)*Self.titleRow+16
+        let top = value.anchor ?? CGPoint(x:viewport.midX,y:viewport.midY-height/2)
+        let panel = CGRect(x:top.x-width/2,y:min(top.y,viewport.maxY-height-4),width:width,height:height).integral
+        let options = value.options.indices.map { (index:$0,rect:CGRect(x:panel.minX+8,y:panel.minY+8+CGFloat($0)*Self.titleRow,width:width-16,height:Self.titleRow-2)) }
+        return Layout(panel:panel,title:.zero,options:options,footer:.zero,moreAbove:false,moreBelow:false)
+    }
+    private func drawTitleMenu(_ value:CanvasMenu,in context:CGContext) {
+        let shape = titleLayout(value)
+        CanvasTheme.fill(shape.panel,CGColor(red:0.05,green:0.05,blue:0.07,alpha:0.62),radius:12,in:context)
+        for (index,rect) in shape.options {
+            let option = value.options[index],selected = index == value.selected
+            if selected { CanvasTheme.fill(rect,CanvasTheme.accentFill,radius:6,in:context) }
+            let color = selected ? CanvasTheme.onAccent : option.enabled ? CanvasTheme.text : CanvasTheme.disabled
+            let font = CanvasTheme.font(16,selected ? .bold : .semibold)
+            (option.label as NSString).draw(in:CGRect(x:rect.minX,y:rect.midY-11,width:rect.width,height:22),
+                                            withAttributes:CanvasTheme.attributes(font,color,alignment:.center))
+            if option.checked == true {
+                // The current setting carries a dot at the row's left.
+                context.setFillColor(selected ? CanvasTheme.onAccent.cgColor : CanvasTheme.accentFill)
+                context.fillEllipse(in:CGRect(x:rect.minX+12,y:rect.midY-3.5,width:7,height:7))
+            }
+        }
+    }
     private func layout(_ value:CanvasMenu) -> Layout {
+        switch value.style {
+        case .title:return titleLayout(value)
+        case .window(let art):
+            let options = art.buttons.prefix(value.options.count).enumerated().map { (index:$0.offset,rect:$0.element) }
+            return Layout(panel:art.frame,title:.zero,options:options,footer:.zero,moreAbove:false,moreBelow:false)
+        case .panel:break
+        }
         let m = metrics(value),width = m.width
         let rows:CGFloat = value.horizontal ? 32 : CGFloat(m.shown)*Self.row
         let height = 24+(m.title > 0 ? m.title+12 : 0)+rows+(m.footer > 0 ? m.footer+10 : 0)
@@ -294,7 +335,26 @@ final class CanvasOverlayView:NSView {
         context.move(to:CGPoint(x:box.minX+3.5,y:box.midY));context.addLine(to:CGPoint(x:box.midX-1,y:box.maxY-4))
         context.addLine(to:CGPoint(x:box.maxX-3.5,y:box.minY+4));context.strokePath()
     }
+    /// The labels are centred on each button (CF5:1AC8) in the system font; the
+    /// outline marking the keyboard row is an engine addition.
+    private func drawWindowMenu(_ value:CanvasMenu,art:CanvasMenu.Art,in context:CGContext) {
+        Renderer.image(art.image,in:art.frame,context:context)
+        for (index,rect) in layout(value).options {
+            let option = value.options[index]
+            let style = CanvasTheme.attributes(CanvasTheme.font(13,.bold),option.enabled ? art.text : art.disabled,alignment:.center)
+            (option.label as NSString).draw(in:CGRect(x:rect.minX,y:rect.midY-9,width:rect.width,height:18),withAttributes:style)
+            if index == value.selected {
+                context.setStrokeColor(CanvasTheme.accentFill);context.setLineWidth(1.5)
+                context.stroke(rect.insetBy(dx:-3.5,dy:-3.5))
+            }
+        }
+    }
     private func drawMenu(_ value:CanvasMenu,in context:CGContext) {
+        switch value.style {
+        case .title:drawTitleMenu(value,in:context);return
+        case .window(let art):drawWindowMenu(value,art:art,in:context);return
+        case .panel:break
+        }
         let shape = layout(value)
         CanvasTheme.panel(shape.panel,in:context)
         (value.title as NSString).draw(with:shape.title,options:[.usesLineFragmentOrigin],attributes:attributes())

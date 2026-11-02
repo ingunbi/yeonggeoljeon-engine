@@ -31,9 +31,9 @@ speed, monitor, music and sound.
 
 The producer exports the four menu texts and both save questions into local
 GameData after checking their push/call sequences. The campaign window shows
-the menu after the title picture. New game starts the source program,
-resume opens the slot list, settings opens the option list, and opening
-returns to the title.
+the menu as soon as the opening ends ([title menu](original-title-menu.md)). New
+game starts the source program, resume opens the slot list, settings opens
+MAIN's three title options, and opening plays the opening again.
 
 A secondary click on an idle town, palace or world map opens the field menu
 with the exported labels. Quit reaches the retry selector through mask
