@@ -282,11 +282,11 @@ final class OriginalCampaignHost {
     /// the giver's first match. False means the receiver is full (MAIN23896).
     func exchangeItem(from giver:Int,to receiver:Int,item:Int) throws -> Bool {
         guard fieldMenuReady else { throw EngineError.invalid("Item exchange is available only at an idle field") }
-        return try people.giveItem(from:giver,to:receiver,item:item)
+        let given = try people.giveItem(from:giver,to:receiver,item:item)
+        if !given { sounds.append(2) }                     // MAIN2386F
+        return given
     }
     private var cityGroup:Int { exploration.chapterMappings.first{$0.chapter == vm.state.chapter}?.cityGroup ?? 0 }
-    /// MAIN26298 places the city's citizens once per map: 18E8 finds any class
-    /// 0x400 actor already there. The key is the room, or 7D for the town.
     /// The window turns this on. Verification keeps citizens where they stand.
     var citizensWander = false
     private var wanderers:[Int:OriginalCitizenWander] = [:]
@@ -314,6 +314,8 @@ final class OriginalCampaignHost {
             wanderers[person] = state
         }
     }
+    /// MAIN26298 places the city's citizens once per map: 18E8 finds any class
+    /// 0x400 actor already there. The key is the room, or 7D for the town.
     private func placeCitizens() throws {
         guard !stage.actors.keys.contains(where:{$0 >= OriginalCitizenCatalog.firstActor}),let city = vm.state.gameCity,
               let map = stage.currentMap,let width = map.walkWidth,let walk = map.walkBytes else { return }
@@ -360,6 +362,9 @@ final class OriginalCampaignHost {
         // MAIN3677D and 36AEA: a purchase sounds three, a sale four.
         if current != before { sounds.append(current < before ? 3 : 4) }
         money = current;shop = operation.finished ? nil : operation
+        // MAIN35787.. warn with sound two before a refusal line.
+        let texts = shopCatalog.texts
+        if let line = shopPrompt?.text,[texts.shortMoney,texts.receiverFull,texts.noItems,texts.sellEmpty].contains(line) { sounds.append(2) }
         if operation.finished { try restoreInputFacings() }
     }
     /// MAIN252C5..253B4 rewrites the game object, then the framework loop
