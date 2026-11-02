@@ -136,7 +136,8 @@ final class OriginalEndingSession {
 
     init(catalog: OriginalEndingCatalog, selection: Int, state restored: OriginalEndingState? = nil) throws {
         try catalog.validate()
-        guard let route = catalog.selections.first(where: { $0.value == selection }),
+        // END 0x46CA: three is END2, whose program runs from its start; 1 and 2 are alike.
+        guard (0...3).contains(selection), let route = catalog.selections.first(where: { $0.value == min(selection, 1) }),
               let program = catalog.programs.first(where: { $0.id == route.program }) else {
             throw EngineError.invalid("Original ending selection \(selection) is not restored")
         }
