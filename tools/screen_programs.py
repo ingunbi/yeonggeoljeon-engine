@@ -13,10 +13,16 @@ import re
 import struct
 
 from opening_script import OPENING
+from prepare_story import picture_directory
 from resource_formats import Archive, ResourceError, npk_picture
+from tf_dce import dce_picture
 
 END_DATA = 0xCE40
 OPEN_DATA = 0xBF00
+MAIN_DATA = 0x37DA0
+PACKGRP_MEMBERS = 38
+QUIT_PICTURES = ((34, 216, 80, 208, 112), (36, 184, 200, 272, 40))
+QUIT_PALETTE = 0x1050 + 4 * 48
 OPCODES = {name: index for index, name in enumerate(
     ("clear", "mode", "mono", "load", "copy", "fill", "put", "get", "stamp", "picture", "dissolve", "bufmask", "bufput", "cell",
      "palette", "fade", "fadestep", "wait", "tick", "clock", "music", "musicwait", "musicstop", "cycle", "inputwait"))}
@@ -1044,6 +1050,19 @@ def opening(v: Recorder, script: list[dict]) -> None:
     run(between(0x83FC, 0x8970))
 
 
+def quit_screen(v: Recorder, pictures: dict) -> None:
+    """MAIN 0x1E3A8..0x1E432. Two PACKGRP pictures on black until one input, then main exits."""
+    v.fade_to([0] * 48)
+    v.clear()
+    for member, x, y, w, h in QUIT_PICTURES:
+        picture = pictures[member]
+        if (picture.width, picture.height) != (w, h):
+            raise ResourceError("exit picture size differs from its source call")
+        v.emit("picture", x, y, w, h, v.asset(picture.pixels))
+    v.fade_to(v.palette(QUIT_PALETTE))
+    v.emit("inputwait")
+
+
 def compile_all(game: Path, opgrp: bytes | None) -> tuple[dict, list[bytes]]:
     read = lambda name: (game / name).read_bytes()
     end, font, ascii_font = read("END.EXE"), read("ALL_FONT.16P"), read("HANKAKU.FNT")
@@ -1061,4 +1080,11 @@ def compile_all(game: Path, opgrp: bytes | None) -> tuple[dict, list[bytes]]:
         v = Recorder(Archive(opgrp, "OPGRP.R3"), read("OPEN.EXE"), OPEN_DATA, font, ascii_font, assets, buffers)
         opening(v, OPENING)
         programs["opening"] = v.ops
+    pack = read("PACKGRP.R3")
+    directory = picture_directory(pack, PACKGRP_MEMBERS)
+    pictures = {member: dce_picture(pack[directory[member][0]:directory[member][1]], zero_base=True)[0]
+                for member, *_ in QUIT_PICTURES}
+    v = Recorder(None, read("MAIN.EXE"), MAIN_DATA, font, ascii_font, assets, {})
+    quit_screen(v, pictures)
+    programs["quit"] = v.ops
     return programs, list(assets)

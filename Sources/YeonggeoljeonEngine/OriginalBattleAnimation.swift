@@ -1,6 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
 
+/// CF5:3C5E over the map. Mode zero closes by itself, mode one waits for input.
+enum OriginalBattleNotice:Equatable {
+    case ambush(friendly:Bool)
+    case strategyFailed(person:Int)
+    case level(person:Int,level:Int)
+    case learned(abilities:[Int])
+    var waitsForInput:Bool { if case .learned = self { return true };return false }
+    /// MAIN1A919 and MAIN1A990.
+    var sound:Int? {
+        switch self {
+        case .level,.learned:return 7
+        case .ambush,.strategyFailed:return nil
+        }
+    }
+}
+
 /// What the screen shows around a battle action. Cues never touch game state:
 /// the session decides the outcome and a view only decides when to show it.
 enum OriginalBattleCue:Equatable {
@@ -10,6 +26,14 @@ enum OriginalBattleCue:Equatable {
     case effect(Int,halfX:Int,halfY:Int)
     /// The enlarged view, held after the context has committed its result.
     case combat(OriginalCombatSnapshot)
+    case notice(OriginalBattleNotice)
+    /// Takes the whole screen, so a view opens it before the next map step.
+    var isPresentation:Bool {
+        switch self {
+        case .combat,.notice:return true
+        case .walk,.shot,.effect:return false
+        }
+    }
 }
 
 extension OriginalBattleSession {
@@ -30,6 +54,19 @@ extension OriginalBattleSession {
         }
         return Array(repeating:.effect(8,halfX:from.x+to.x,halfY:from.y+to.y),count:passes)
     }
+    /// MAIN1A902..1A9B0: one notice per level gained, then what it taught.
+    /// The source compares only the first thirty strategy rows.
+    func levelNotices(person:Int,experience:OriginalExperienceMutation) throws -> [OriginalBattleNotice] {
+        guard experience.levelsGained > 0 else { return [] }
+        let classID = try people.person(person).classID
+        var notices:[OriginalBattleNotice] = []
+        for level in (experience.level-experience.levelsGained+1)...experience.level {
+            notices.append(.level(person:person,level:level))
+            let learned = (0..<30).filter { movement.strategyLevelRequirements?[$0][classID] == level }
+            if !learned.isEmpty { notices.append(.learned(abilities:learned)) }
+        }
+        return notices
+    }
 }
 
 /// Plays cues in order against source ticks. The driver adds 0x35 to a byte per
@@ -46,7 +83,16 @@ struct OriginalBattleAnimator {
     private var elapsed = 0.0
     private var speed = 0
     private var started = false
+    private var noticeDismissed = false
+    /// The native view's mode zero timeout; the source timer rate is unknown.
+    static let noticeSeconds = 2.0
     var isIdle:Bool { cues.isEmpty }
+    var notice:OriginalBattleNotice? {
+        if case .notice(let value)? = cues.first { return value }
+        return nil
+    }
+    /// Takes effect on the next advance, so a caller's completion still runs.
+    mutating func dismissNotice() { if notice != nil { noticeDismissed = true } }
     mutating func play(_ new:[OriginalBattleCue],options:Int = 0) {
         cues += new;speed = min(options&15,Self.walkSteps.count-1)
     }
@@ -59,6 +105,7 @@ struct OriginalBattleAnimator {
         case .shot(let from,let to,_):return Double(max(abs(to.x-from.x),abs(to.y-from.y))*32)/4*Self.tick
         case .effect(let index,_,_):return (index == 8 ? 2 : 4)*Self.frameTicks*Self.tick
         case .combat:return 0
+        case .notice(let value):return noticeDismissed ? elapsed : value.waitsForInput ? .infinity : Self.noticeSeconds
         }
     }
     private func sound(_ cue:OriginalBattleCue) -> Int? {
@@ -70,6 +117,7 @@ struct OriginalBattleAnimator {
             if index == 9 { return 37 }
             return index < effectSounds.count ? effectSounds[index] : nil
         case .combat:return nil
+        case .notice(let value):return value.sound
         }
     }
     /// Returns the sounds that start in this interval.
@@ -79,7 +127,7 @@ struct OriginalBattleAnimator {
             if !started { started = true;if let id = sound(cue) { sounds.append(id) } }
             let rest = duration(cue)-elapsed
             if left < rest { elapsed += left;break }
-            left -= rest;elapsed = 0;started = false;cues.removeFirst()
+            left -= rest;elapsed = 0;started = false;noticeDismissed = false;cues.removeFirst()
         }
         return sounds
     }

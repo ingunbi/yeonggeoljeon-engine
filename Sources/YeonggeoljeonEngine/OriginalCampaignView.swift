@@ -92,6 +92,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     /// The opening or ending program in front of everything else.
     private var screenPlayer:OriginalScreenPlayer?
     private var screenIsOpening = false
+    private var screenIsQuit = false
+    private var quitScreenStarted = false
     private var endingMusicStarted = false
     private var endingFade = 0.0
     private static let endingFadeSeconds = 15*OriginalScreenPlayer.tick*4/100
@@ -117,9 +119,17 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     /// HERO.COM runs MAIN after OPEN. END leaves for DOS; here it returns to the title.
     private func leaveScreen() {
         audio?.stopProgram()
-        let opening = screenIsOpening
-        screenPlayer = nil;screenIsOpening = false;needsDisplay = true
-        if !opening { restartMain() }
+        let opening = screenIsOpening,quit = screenIsQuit
+        screenPlayer = nil;screenIsOpening = false;screenIsQuit = false;needsDisplay = true
+        if quit { window?.performClose(nil) } else if !opening { restartMain() }
+    }
+    /// MAIN1E3A8 runs once before main exits with code 3.
+    private func startQuitScreen() {
+        guard !quitScreenStarted else { return }
+        quitScreenStarted = true
+        audio?.select(nil);hideBattle()
+        screenPlayer = makeScreen("quit");screenIsQuit = screenPlayer != nil
+        window?.makeFirstResponder(self)
     }
     /// END 0x46CA: three runs END2 from its start; the rest continue END1's first scene.
     private func startEndingProgram(_ selection:Int) {
@@ -142,6 +152,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     }
     private func tick() {
         if let player = screenPlayer { advanceScreen(player);return }
+        if host.frameworkReturn?.outcome == .quit { startQuitScreen() }
         if let session = host.ending,advanceEnding(session) { return }
         if host.ending == nil { audio?.select(host.vm.state.currentMusic) }
         battleView?.externalStatus = errorText ?? inputNotice ?? host.notice ?? host.playerStatus
@@ -152,6 +163,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             try host.advance(microseconds:Int64(16_667*settings.timeScale))
             needsDisplay = true
             try synchronizeBattle()
+            if let notice = host.takeClosingNotice() { presentClosing(notice);return }
             if host.frameworkReturn?.outcome == .restart { restartMain();return }
             if let value = host.frameworkReturn,value.outcome == .pending,value.asksRetry { presentRetry() }
             else if host.saveRequest != nil { presentSave() }
@@ -415,6 +427,15 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         case 2:presentWholeMap()
         default:openFieldMenu(at:point)
         }
+    }
+    /// MAIN27F90..28019: the closing bonus levels people up over the field.
+    private func presentClosing(_ notice:OriginalBattleNotice) {
+        guard let catalog = combatArt?.catalog else { return }
+        if let id = notice.sound { audio?.playEffect(id) }
+        let host = self.host
+        let text = catalog.text(notice,person:{ (try? host.people.person($0).name) ?? "" },
+                                strategy:{ host.story.screens?.battle.commands.strategyNames[$0] ?? "" })
+        overlay.show(CanvasNotice(speaker:"",text:text,portrait:nil) { })
     }
     private func presentRetirement() {
         guard let text = host.retirementText else { return }

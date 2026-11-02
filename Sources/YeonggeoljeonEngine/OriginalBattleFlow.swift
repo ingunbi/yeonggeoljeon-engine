@@ -30,9 +30,17 @@ final class OriginalBattleFlow {
     func takeCues() -> [OriginalBattleCue] { defer { heldCues = [] };return heldCues }
     var peekCues:[OriginalBattleCue] { heldCues }
     /// MAIN3145E: the view runs while the option word's high nibble is clear.
-    private func holdCombat(_ snapshot:OriginalCombatSnapshot?) -> Bool {
-        guard let snapshot = snapshot,session.sourceOptionsWord&0xF0 == 0 else { return false }
-        return hold([.combat(snapshot)])
+    /// Around it sit the ambush line (MAIN31926), the map's failure line when
+    /// the view is off (MAIN31E49..31E6B) and the level notices.
+    private func holdCombat(_ snapshot:OriginalCombatSnapshot?,ambush:Bool?,experience:OriginalExperienceMutation?) throws -> Bool {
+        guard let snapshot = snapshot else { return false }
+        var cues:[OriginalBattleCue] = ambush == true ? [.notice(.ambush(friendly:snapshot.attackerSlot < 15))] : []
+        if session.sourceOptionsWord&0xF0 == 0 { cues.append(.combat(snapshot)) }
+        else if snapshot.kind == 2,snapshot.damage == 0 { cues.append(.notice(.strategyFailed(person:snapshot.attackerPerson))) }
+        if let experience = experience {
+            cues += try session.levelNotices(person:snapshot.attackerPerson,experience:experience).map { .notice($0) }
+        }
+        return hold(cues)
     }
     private func hold(_ cues:[OriginalBattleCue]) -> Bool {
         guard presentsNativeActions,!cues.isEmpty else { return false }
@@ -133,7 +141,7 @@ final class OriginalBattleFlow {
             let step = try operation.advance(in:session);strategyOperation = operation
             switch step {
             case .target(let effect):
-                if holdCombat(effect.combat) { return false }
+                if try holdCombat(effect.combat,ambush:effect.ambush,experience:effect.experience) { return false }
             case .retirement(let notice):
                 strategyRetirementAcknowledgement = notice
                 guard try objectives() else { return false }
@@ -157,7 +165,7 @@ final class OriginalBattleFlow {
             let step = try operation.advance(in:session);itemOperation = operation
             switch step {
             case .target(let effect):
-                if holdCombat(effect.combat) { return false }
+                if try holdCombat(effect.combat,ambush:effect.ambush,experience:effect.experience) { return false }
             case .retirement(let notice):
                 itemRetirementAcknowledgement = notice
                 guard try objectives() else { return false }
@@ -178,7 +186,7 @@ final class OriginalBattleFlow {
             let step = try operation.advance(in:session);attackOperation = operation
             switch step {
             case .context(let effect):
-                if holdCombat(effect.combat) { return false }
+                if try holdCombat(effect.combat,ambush:effect.ambush,experience:effect.experience) { return false }
             case .retirement(let notice):
                 attackRetirementAcknowledgement = notice
                 guard try objectives() else { return false }

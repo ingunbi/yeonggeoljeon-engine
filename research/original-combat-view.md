@@ -62,5 +62,7 @@ and the hit sound follows the attacker's class even for a strategy.
   Run and Pan were likely slower than 41 and 21 ticks.
 - A right click or Escape ends the scene at once, which the source cannot do. It
   has no effect on results.
-- The ambush notice and the level notices over the scene are not restored.
+- The ambush, failed-strategy and level notices are native chips over the map. The
+  source draws them in its message window, and a counter's ambush line over the old
+  scene shows over the map here.
 - A terrain byte past the source's twenty entries opens no scene.

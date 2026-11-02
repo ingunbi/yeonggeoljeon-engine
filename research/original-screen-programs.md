@@ -28,6 +28,14 @@ Text becomes bitmaps in the producer, with the source font mapping, so the playe
 never sees a string. Random numbers do not appear: every sprite path in both
 programs comes from tables and modulo arithmetic.
 
+## Exit screen
+
+MAIN `0x1E3A8` fades to black, clears, draws PACKGRP members 34 and 36 at (216,80)
+and (184,200), fades to palette 4 of DS:`1050` and waits for one input (`CF5:2556`),
+after which main exits with code 3. The compiled program is `quit`. MAIN's fade goes
+through the graphics driver with its own delay word, whose step time was not
+derived, so this program uses the four-tick step.
+
 ## Opening
 
 The demo has sixteen scenes and two songs. The title picture is the tenth scene,

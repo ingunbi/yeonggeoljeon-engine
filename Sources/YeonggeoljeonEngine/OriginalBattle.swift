@@ -43,6 +43,8 @@ final class OriginalBattleSession {
     var turns = OriginalTurnState()
     var scriptActions = OriginalScriptActionState()
     var scriptValue24:UInt8 = 0 // MAIN27038 initial value; script2B selector4 ->3413C byte store.
+    /// Level notices of the closing bonus; the field shows them after the battle.
+    var closingNotices:[OriginalBattleNotice] = []
     var sourceOptionsWord:Int = 0 // MAIN1A423 initial object+4; saved/user settings are separate.
     private(set) var exchanges:[OriginalStrikeExchange] = []
     private(set) var strategyExecutions:[OriginalStrategyExecution] = []
@@ -256,7 +258,15 @@ final class OriginalBattleSession {
             attackValue:strike.attack,defenseValue:strike.defense,damage:strike.damage,moraleLoss:strike.moraleLoss,
             experience:before,gain:gain.total)
         return OriginalAttackContextEffect(attackerSlot:attackerSlot,targetSlot:targetSlot,attackerPerson:attacker.person,
-            targetPerson:target.person,subtype:subtype,preludeDraws:prelude,strike:strike,morale:morale,experience:experience,combat:combat)
+            targetPerson:target.person,subtype:subtype,preludeDraws:prelude,strike:strike,morale:morale,experience:experience,combat:combat,
+            ambush:revealAttacker(attackerSlot))
+    }
+    /// MAIN31926..31985 runs in every E91A context, counters included: a
+    /// hidden attacker shows itself. A status strategy has no such context.
+    func revealAttacker(_ slot:Int) -> Bool? {
+        guard let unit = units[slot],unit.scriptFlags&0x20 == 0 else { return nil }
+        units[slot]!.scriptFlags |= 0x20
+        return true
     }
     /// MAIN31EA7..31F92: what the scene shows, read before the blow lands.
     func combatSnapshot(kind:Int,subtype:Int,attackerSlot:Int,targetSlot:Int,attacker a:OriginalPersonStats,defender d:OriginalPersonStats,

@@ -32,6 +32,8 @@ final class OriginalBattleView:NSView {
     private var animator = OriginalBattleAnimator()
     var isAnimating:Bool { !animator.isIdle }
     private var afterCues:(()->Void)?
+    /// Cues that wait for a scene or a notice before them to end.
+    private var heldAfter:[OriginalBattleCue] = []
     var settingsTexts:OriginalSettingsTexts?
     /// The enlarged view, when its local art exists.
     var combatArt:OriginalCombatArt?
@@ -104,8 +106,6 @@ final class OriginalBattleView:NSView {
         guard animatesActions,!cues.isEmpty else { done();return }
         afterCues = done;perform(cues)
     }
-    /// MAIN1A919: a level gained sounds seven.
-    private func soundLevels(_ gained:Int) { if gained > 0 { onSound?(7) } }
     private func perform(_ cues:[OriginalBattleCue]) {
         animator.effectSounds = sprites?.catalog.effects?.sounds ?? []
         animator.play(cues,options:session.sourceOptionsWord)
@@ -128,7 +128,7 @@ final class OriginalBattleView:NSView {
             } else if let first = path.first { camera.follow(first,margin:layoutFacts.followMargin) }
         case .shot(_,let to,_)?:camera.follow(to,margin:layoutFacts.followMargin)
         case .effect(_,let x,let y)?:camera.follow(GridPoint(x:x/2,y:y/2),margin:layoutFacts.followMargin)
-        case .combat?,nil:break
+        case .combat?,.notice?,nil:break
         }
     }
     func advanceAnimation(_ seconds:Double) {
@@ -160,17 +160,27 @@ final class OriginalBattleView:NSView {
         combatPlayer = OriginalCombatPlayer(scene:scene);combatPicture = nil;needsDisplay = true
         return true
     }
+    /// True while the cues own the screen. A scene takes the whole view, so
+    /// notices play up to it and whatever follows waits for it to close.
+    private func presentHeld(_ cues:[OriginalBattleCue]) -> Bool {
+        if case .combat? = cues.first {
+            let rest = Array(cues.dropFirst())
+            if startCombat(cues) { heldAfter = rest;return true }
+            return presentHeld(rest)
+        }
+        let scene = cues.firstIndex { if case .combat = $0 { return true };return false } ?? cues.count
+        heldAfter = Array(cues[scene...])
+        guard scene > 0 else { return false }
+        perform(Array(cues[..<scene]));return true
+    }
     func resumeSourceFlow() throws {
         guard animator.isIdle,combatPlayer == nil else { return }
-        var held = flow.takeCues().filter(visible)
-        if case .combat? = held.first {
-            if startCombat(held) { return }
-            held = []
-        }
-        if !held.isEmpty { perform(held);return }
+        let held = heldAfter+flow.takeCues().filter(visible)
+        heldAfter = []
+        if presentHeld(held) { return }
         try flow.resumeSourceFlow()
         // A counter follows at once, so the map never shows between its scenes.
-        if case .combat? = flow.peekCues.first,startCombat(flow.takeCues()) { return }
+        if flow.peekCues.first?.isPresentation == true,presentHeld(flow.takeCues()) { return }
         if waitingForStrategy,let result = flow.lastStrategy {showStrategyResult(result);waitingForStrategy = false}
         if waitingForAttack,let result = flow.lastAttack {showAttackResult(result);waitingForAttack = false}
         if waitingForItem,let result = flow.lastItem {waitingForItem = false;finishItem(result)}
@@ -622,12 +632,14 @@ final class OriginalBattleView:NSView {
         }
     }
     private func showStrategyResult(_ result:OriginalStrategyExecution) {
-        soundLevels(result.completionExperience?.levelsGained ?? 0)
+        if let experience = result.completionExperience,let person = session.units[result.casterSlot]?.person,
+           let notices = try? session.levelNotices(person:person,experience:experience),!notices.isEmpty {
+            perform(notices.map { .notice($0) })
+        }
         if result.completed {message = "\(strategyTitle(result.abilityID)) 실행 · \(result.targets.count)개 대상 처리"}
         else {message = "책략을 실행하지 않았습니다: \(result.rejectionReason ?? "선택 취소")"}
     }
     private func showAttackResult(_ result:OriginalStrikeExchange) {
-        soundLevels(result.experience.levelsGained)
         message = "피해 \(result.strike.damage) · 반격 \(result.counter?.damage ?? 0) · EXP \(result.experience.experience)"
     }
     private func cycleStrategyTarget(_ step:Int) throws {
@@ -904,8 +916,13 @@ final class OriginalBattleView:NSView {
         context.interpolationQuality = .none
         drawFrame(context);drawField(context);drawList(context);drawMinimap(context);drawStatus(context)
         if combatPlayer != nil { drawCombat(context) }
+        if let notice = animator.notice,let catalog = combatArt?.catalog {
+            let area = layoutFacts.viewportRect,text = catalog.text(notice,person:personName,strategy:strategyTitle)
+            CanvasTheme.chip(text,at:CGPoint(x:area.midX,y:area.midY),maximumWidth:area.width-32,in:context)
+        }
         context.restoreGState()
     }
+    private func personName(_ id:Int) -> String { (try? session.people.person(id).name) ?? "" }
     /// MAIN2A556 and F752: the scene at (16,32,416,208) and two stat windows.
     private func drawCombat(_ context:CGContext) {
         guard let player = combatPlayer,let art = combatArt else { return }
@@ -998,6 +1015,7 @@ final class OriginalBattleView:NSView {
     override func mouseDown(with event:NSEvent) {
         window?.makeFirstResponder(self)
         if combatPlayer != nil { combatPlayer?.skip();return }
+        if animator.notice != nil { animator.dismissNotice();return }
         let p = canvasPoint(event)
         if clickPanel(p) { needsDisplay = true;return }
         guard let point = camera.cell(at:p,in:layoutFacts.viewportRect,size:layoutFacts.cell) else { return }
@@ -1126,6 +1144,7 @@ final class OriginalBattleView:NSView {
             if event.keyCode == 53 { combatPlayer?.finish() } else { combatPlayer?.skip() }
             return
         }
+        if animator.notice != nil { animator.dismissNotice();return }
         if strategySelection == nil,let step = [123:(-1,0),124:(1,0),125:(0,1),126:(0,-1)][Int(event.keyCode)] {
             camera.move(columns:step.0,rows:step.1);needsDisplay = true;return
         }

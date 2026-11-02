@@ -220,7 +220,7 @@ extension OriginalBattleSession {
             damage:value.damage,moraleLoss:value.moraleLoss,experience:before,gain:gain.total)
         let retirement = try strategyRetirement(targetSlot)
         return OriginalStrategyTargetEffect(runtimeSlot:targetSlot,person:target.person,kind:"damage",damage:value,morale:morale,
-            experience:experience,retiredPerson:retirement.person,retirement:retirement.notice,combat:combat)
+            experience:experience,retiredPerson:retirement.person,retirement:retirement.notice,combat:combat,ambush:revealAttacker(casterSlot))
     }
     func strategyConditionEffect(casterSlot:Int,targetSlot:Int) throws -> OriginalStrategyTargetEffect {
         guard let source = units[casterSlot],let target = units[targetSlot] else {throw BattleError.unsupported("Original status strategy slot changed before its producer")}

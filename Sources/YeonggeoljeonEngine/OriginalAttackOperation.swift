@@ -12,6 +12,8 @@ struct OriginalAttackContextEffect:Codable {
     var morale:OriginalMoraleMutation?
     var experience:OriginalExperienceMutation
     var combat:OriginalCombatSnapshot? = nil
+    /// True when this blow revealed a hidden attacker.
+    var ambush:Bool? = nil
 }
 struct OriginalAttackRetirementCheck:Codable {
     var runtimeSlot:Int

@@ -108,6 +108,8 @@ final class OriginalCampaignHost {
     private(set) var cityEntry:(city:Int,question:String)?
     private(set) var retirementPresentation:OriginalRetirementPresentation?
     private(set) var retirementText:String?
+    private var closingNotices:[OriginalBattleNotice] = []
+    func takeClosingNotice() -> OriginalBattleNotice? { closingNotices.isEmpty ? nil : closingNotices.removeFirst() }
     private var retirementPresentationStep:OriginalRetirementStep?
     var battleInputReady:Bool {
         waiting != nil && stage.hostWaiting && failure == nil && choice == nil && saveRequest == nil &&
@@ -151,7 +153,7 @@ final class OriginalCampaignHost {
         if let value = frameworkReturn {
             switch value.outcome {
             case .restart: return "원작 재시작 선택 · MAIN 다시 실행"
-            case .quit: return "원작 종료 선택 · 종료 그림(MAIN1E3A8) 미복원 · 입력하면 창을 닫습니다"
+            case .quit: return "원작 종료 선택 · 입력하면 창을 닫습니다"
             case .pending:
                 return value.asksRetry ? "원작 재시작 선택 대기 · 반환 마스크 \(String(format:"%02X",value.mask)) · \(value.producer)"
                     : "원작 외부 반환 마스크 \(String(format:"%02X",value.mask)) · \(value.producer)"
@@ -733,7 +735,10 @@ final class OriginalCampaignHost {
         case .unsupported(let reason):
             failure = CampaignVMFailure(recordID:nil,opcode:nil,sourceOffset:nil,reason:reason)
         case .enterMap(let index):
-            if battle.turns.result == 2 { carryover = try battle.finishBattleForCarryover() }
+            if battle.turns.result == 2 {
+                carryover = try battle.finishBattleForCarryover()
+                closingNotices += battle.closingNotices
+            }
             guard completeSelectedMap(selections[index]) else { return }
             pendingBattleMap = nil;battleReturnSelection = nil;controllerIdle = false;waiting = vm.waitingState()
             // The next battle of a chain runs its opening records like a source09 entry.

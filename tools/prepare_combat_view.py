@@ -23,7 +23,8 @@ CLASS_TABLES = {"prep": 0x4DBC, "run": 0x4DCF, "swing": 0x4DE2, "attack": 0x4DF5
 SLOT_TABLES, TERRAIN_BACK, TERRAIN_GROUND, STRATEGY_SOUNDS = (0x4E2E, 0x4E38), 0x4E42, 0x4E56, 0x4FE2
 CLASS_NAMES = 0x0FD8
 BACK_MEMBERS, GROUND_MEMBERS = range(0, 5), range(5, 9)
-TEXTS = {"failed": 0x4EB7, "noLoss": 0x4ECD, "loss": 0x4EEA, "moraleLoss": 0x4F06, "experience": 0x4F23,
+TEXTS = {"ambushFriendly": 0x4E6B, "ambushEnemy": 0x4E80, "strategyFailed": 0x4F45, "levelUp": 0x1305, "learned": 0x1326,
+         "failed": 0x4EB7, "noLoss": 0x4ECD, "loss": 0x4EEA, "moraleLoss": 0x4F06, "experience": 0x4F23,
          "counterFriendly": 0x4F5B, "counterEnemy": 0x4F66, "level": 0x4FAA, "attack": 0x4FB3, "defense": 0x4FB8,
          "troops": 0x4FC2, "morale": 0x4FC7, "exp": 0x4FCC, "terrain": 0x4FD1, "percent": 0x4FD6}
 
@@ -81,7 +82,7 @@ def extract(main: bytes, chr_data: bytes, chp_data: bytes, map_data: bytes) -> d
             "source": {"methods": ["MAIN.EXE:0x32318..0x3350B", "MAIN.EXE:0x31A06..0x31CF0", "MAIN.EXE:0x2A294"],
                        "method": "static original byte interpretation; DOS program not executed"},
             "limitations": ["Step lengths are source tick floors; no original framebuffer or timing was compared.",
-                            "The ambush notice and the level notices over the scene are not restored."]}
+                            "Notices are native chips over the map, not the source message window."]}
 
 
 def prepare(game: Path, output: Path) -> dict:

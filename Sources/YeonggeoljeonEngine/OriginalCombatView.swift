@@ -7,6 +7,7 @@ import Foundation
 struct OriginalCombatCatalog:Codable {
     struct Classes:Codable { var prep,run,swing,attack,total,shot:[Int] }
     struct Texts:Codable {
+        var ambushFriendly,ambushEnemy,strategyFailed,levelUp,learned:String
         var failed,noLoss,loss,moraleLoss,experience,counterFriendly,counterEnemy:String
         var level,attack,defense,troops,morale,exp,terrain,percent:String
     }
@@ -89,6 +90,17 @@ struct OriginalCombatPage:Equatable {
 }
 
 /// Printf subset of the source's result strings: %s, %u with a width, %%.
+extension OriginalCombatCatalog {
+    func text(_ notice:OriginalBattleNotice,person:(Int)->String,strategy:(Int)->String) -> String {
+        switch notice {
+        case .ambush(let friendly):return friendly ? texts.ambushFriendly : texts.ambushEnemy
+        case .strategyFailed(let id):return originalFormat(texts.strategyFailed,[person(id)])
+        case .level(let id,let level):return originalFormat(texts.levelUp,[person(id),String(level)])
+        case .learned(let abilities):return originalFormat(texts.learned,[abilities.map(strategy).joined()])
+        }
+    }
+}
+
 func originalFormat(_ pattern:String,_ values:[String]) -> String {
     var result = "",next = values.makeIterator()
     var scanner = pattern.makeIterator()

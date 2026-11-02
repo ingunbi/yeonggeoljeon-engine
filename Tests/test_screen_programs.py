@@ -8,7 +8,8 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from opening_script import OPENING
 from prepare_screens import prepare
-from screen_programs import END_BUFFERS, OPCODES, Recorder, centred, outlined, text_rows
+from resource_formats import ResourceError
+from screen_programs import END_BUFFERS, OPCODES, QUIT_PALETTE, QUIT_PICTURES, Recorder, centred, outlined, quit_screen, text_rows
 
 
 class FakeArchive:
@@ -58,6 +59,24 @@ class ScreenProgramTests(unittest.TestCase):
     def test_centred_rounds_to_whole_bytes(self):
         self.assertEqual(centred(40), 160)
         self.assertEqual(centred(84), -16)
+
+    def test_the_exit_screen_waits_for_one_input_on_two_pictures(self):
+        class Picture:
+            def __init__(self, width, height, pixels):
+                self.width, self.height, self.pixels = width, height, pixels
+        exe = bytes(QUIT_PALETTE) + bytes(range(1, 49))
+        v = Recorder(None, exe, 0, b"", b"", {}, {})
+        pictures = {member: Picture(w, h, bytes([member]) * (w * h)) for member, _, _, w, h in QUIT_PICTURES}
+        quit_screen(v, pictures)
+        names = {index: name for name, index in OPCODES.items()}
+        self.assertEqual([names[op[0]] for op in v.ops], ["fade", "clear", "picture", "picture", "fade", "inputwait"])
+        self.assertEqual(v.ops[0][1:], [0] * 48)
+        self.assertEqual(v.ops[2][1:5], [216, 80, 208, 112])
+        self.assertEqual(v.ops[3][1:5], [184, 200, 272, 40])
+        self.assertEqual(v.ops[4][1:], list(range(1, 49)))
+        pictures[34].width = 200
+        with self.assertRaises(ResourceError):
+            quit_screen(Recorder(None, exe, 0, b"", b"", {}, {}), pictures)
 
     def test_the_opening_script_holds_no_text(self):
         self.assertTrue(all(isinstance(entry["addr"], int) for entry in OPENING))

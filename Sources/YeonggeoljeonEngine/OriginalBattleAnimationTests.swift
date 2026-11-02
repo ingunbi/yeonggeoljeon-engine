@@ -76,7 +76,7 @@ func originalBattleAnimationSelfTests() throws {
         frameTiles:Array(repeating:16,count:169)+Array(repeating:9,count:12),backs:[],grounds:[],classes:classes,classNames:Array(repeating:"",count:19),
         slots:[[[10,4],[8,8],[6,6],[4,4],[2,8]],[[14,4],[12,8],[16,6],[20,4],[18,8]]],
         terrainBack:Array(repeating:4,count:20),terrainGround:Array(repeating:7,count:20),strategySounds:[28,27,29],
-        texts:.init(failed:"%s failed",noLoss:"%s none",loss:"%s(%4u)",moraleLoss:"m%2u",experience:"%s e%2u",counterFriendly:"c",counterEnemy:"C",
+        texts:.init(ambushFriendly:"go",ambushEnemy:"oh",strategyFailed:"%s no",levelUp:"%s L%w",learned:"%s!",failed:"%s failed",noLoss:"%s none",loss:"%s(%4u)",moraleLoss:"m%2u",experience:"%s e%2u",counterFriendly:"c",counterEnemy:"C",
                     level:"Lv%2u %s",attack:"a",defense:"d",troops:"t",morale:"m",exp:"e",terrain:"g",percent:"+%2u%%"),source:nil,limitations:nil)
     func combat(attacker:Int = 0,target:Int = 20,attackerClass:Int = 0,targetClass:Int = 0,kind:Int = 1,subtype:Int = 0,troops:Int = 700,damage:Int = 250) -> OriginalCombatSnapshot {
         OriginalCombatSnapshot(kind:kind,subtype:subtype,attackerSlot:attacker,targetSlot:target,attackerPerson:0,targetPerson:1,attackerClass:attackerClass,
@@ -122,6 +122,25 @@ func originalBattleAnimationSelfTests() throws {
     try check(player.index == 1,"a click ends a skippable hold")
     player.finish()
     try check(player.finished && player.frame == nil,"a scene can be cut short")
+    func noticeText(_ notice:OriginalBattleNotice) -> String { catalog.text(notice,person:{ "p\($0)" },strategy:{ "s\($0)" }) }
+    try check(noticeText(.ambush(friendly:true)) == "go" && noticeText(.ambush(friendly:false)) == "oh","each side has its ambush line")
+    try check(noticeText(.strategyFailed(person:4)) == "p4 no" && noticeText(.level(person:4,level:9)) == "p4 L9","notices fill the source formats")
+    try check(noticeText(.learned(abilities:[1,2])) == "s1s2!","names join with no separator, as CF5:46D4 appends them")
+    var notices = OriginalBattleAnimator()
+    notices.play([.notice(.level(person:0,level:2)),.notice(.learned(abilities:[1])),.notice(.ambush(friendly:true))])
+    try check(notices.advance(0) == [7],"a level notice sounds seven")
+    try check(notices.notice == .level(person:0,level:2),"a notice shows first in its queue")
+    _ = notices.advance(OriginalBattleAnimator.noticeSeconds-0.1)
+    try check(notices.notice == .level(person:0,level:2),"mode zero holds until its timeout")
+    try check(notices.advance(0.2) == [7],"a learned notice sounds seven")
+    _ = notices.advance(100)
+    try check(notices.notice == .learned(abilities:[1]),"mode one waits for input")
+    notices.dismissNotice()
+    try check(notices.notice == .learned(abilities:[1]),"a dismissal lands on the next advance")
+    try check(notices.advance(0).isEmpty && notices.notice == .ambush(friendly:true),"an ambush line is silent")
+    notices.dismissNotice();_ = notices.advance(0)
+    try check(notices.isIdle,"input closes mode zero early")
+    try check(OriginalBattleCue.notice(.ambush(friendly:true)).isPresentation && !OriginalBattleCue.shot(from:GridPoint(x:0,y:0),to:GridPoint(x:1,y:0),stone:false).isPresentation,"notices open before the next map step")
     // The screen player: a synthetic program on the source's canvas and buffers.
     let names = OriginalScreenCatalog.operations
     func op(_ name:String,_ values:Int...) -> [Int] { [names.firstIndex(of:name)!]+values }

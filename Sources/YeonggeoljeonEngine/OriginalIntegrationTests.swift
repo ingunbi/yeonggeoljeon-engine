@@ -44,6 +44,18 @@ func originalIntegrationSelfTests() throws {
     try check(result.strike.damage > 0,"restored producer used in session")
     try check(try people.person(0).level == 2 && people.person(0).rawTroops <= hp,"EXP level-up does not heal current troops")
     try check(try people.person(1).rawTroops == 1000-result.strike.damage,"target writeback belongs to shared person")
+    var hiddenRoster = roster
+    let hiddenPeople = try OriginalPeople(catalog:catalog,tables:tables)
+    let ambush = try OriginalBattleSession(definition:definition,roster:&hiddenRoster,people:hiddenPeople,combat:tables,movement:profile,rng:OriginalRNG(state:4))
+    ambush.units[0]!.scriptFlags &= ~UInt8(0x20)
+    try check(try ambush.physicalContext(attackerSlot:0,targetSlot:15,subtype:0).ambush == true,"a hidden attacker reveals itself")
+    try check(ambush.units[0]!.scriptFlags&0x20 != 0,"the reveal sets mask twenty")
+    try check(try ambush.physicalContext(attackerSlot:0,targetSlot:15,subtype:0).ambush == nil,"a visible attacker has no ambush line")
+    var taught = profile;taught.strategyLevelRequirements![4][0] = 3;taught.strategyLevelRequirements![6][0] = 3;taught.strategyLevelRequirements![31][0] = 3
+    let learner = try OriginalBattleSession(definition:definition,roster:&hiddenRoster,people:hiddenPeople,combat:tables,movement:taught,rng:OriginalRNG(state:4))
+    let gained = OriginalExperienceMutation(level:3,experience:0,levelsGained:2,ignoredReason:nil)
+    try check(try learner.levelNotices(person:0,experience:gained) == [.level(person:0,level:2),.level(person:0,level:3),.learned(abilities:[4,6])],"each level speaks, and only the first thirty rows teach")
+    try check(try learner.levelNotices(person:0,experience:OriginalExperienceMutation(level:3,experience:0,levelsGained:0,ignoredReason:nil)).isEmpty,"no level, no notice")
     do { _ = try session.move(0,to:GridPoint(x:0,y:1));throw EngineError.invalid("attack allowed a subsequent move") }
     catch BattleError.illegalAction { checks += 1 }
     try people.setAffiliation(person:2,value:255)

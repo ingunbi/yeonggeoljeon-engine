@@ -30,7 +30,7 @@ def prepare(game: Path, output: Path, opgrp: Path | None = None) -> dict:
             position += len(asset)
     (output / ".screens.bin.tmp").replace(output / "screens.bin")
     result = {"format": 1, "opcodes": OPCODES, "assets": ranges, "programs": programs,
-              "source": {"programs": ["END.EXE:0x4B9A..0x998B", "OPEN.EXE:0x4310..0x89A6"], "originalFilesPreserved": True,
+              "source": {"programs": ["END.EXE:0x4B9A..0x998B", "OPEN.EXE:0x4310..0x89A6", "MAIN.EXE:0x1E3A8..0x1E432"], "originalFilesPreserved": True,
                          "originalProgramsExecuted": False, "method": "static transcription; no original program was run"},
               "limitations": ["Deadlines and tick floors come from the source; blit and load durations of period hardware are unknown.",
                               "Nothing was compared with a running original."]}

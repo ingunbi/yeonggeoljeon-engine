@@ -234,7 +234,10 @@ extension OriginalBattleSession {
         if turns.result == 2 {
             for slot in 0..<45 {
                 guard let unit = units[slot],unit.status == 2 else {continue}
-                if slot < 15 && scriptValue24 != 0 {_ = try people.applyExperience(person:unit.person,gain:Int(scriptValue24))}
+                if slot < 15 && scriptValue24 != 0 {
+                    let experience = try people.applyExperience(person:unit.person,gain:Int(scriptValue24))
+                    closingNotices += try levelNotices(person:unit.person,experience:experience)
+                }
                 units[slot]!.status = 1
             }
         }

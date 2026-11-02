@@ -15,6 +15,8 @@ struct OriginalStrategyTargetEffect: Codable {
     var retiredPerson: Int?
     var retirement:OriginalRetirementNotice?
     var combat: OriginalCombatSnapshot? = nil
+    /// True when this effect revealed a hidden caster.
+    var ambush: Bool? = nil
 }
 
 struct OriginalStrategyExecution: Codable {
