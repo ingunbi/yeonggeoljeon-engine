@@ -182,6 +182,7 @@ with the producers. Battle lines now play as native notices over the map:
 | Confused, worse, missed | `0x2D596`, `0x2D5BF`, `0x2D8E3` | The outcome of a confusion or morale strategy. |
 | Morale down, healed, still confused | `0x2EC92`, `0x2ED61`, `0x2EF7E` | Outcome lines. |
 | Recovered | `0x2B6F7` | The upkeep or morale roll clears confusion. |
+| Terrain recovery | `0x2B500`..`0x2B594` | A player's unit gained troops or morale at upkeep. The source window with its gauges is a native notice here. |
 | Failed strategy | `0x31E6B` | A zero-damage strategy with the enlarged view off. |
 | Turn and weather | `0x28139` | Here before the player's phase line, not before round events. |
 | Delay retreat | `0x281AA` | The round reaches the turn limit. |

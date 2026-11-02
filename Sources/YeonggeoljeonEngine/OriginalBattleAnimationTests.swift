@@ -79,7 +79,7 @@ func originalBattleAnimationSelfTests() throws {
         texts:.init(ambushFriendly:"go",ambushEnemy:"oh",strategyFailed:"%s no",levelUp:"%s L%w",learned:"%s!",strategyUsed:"%s used %s",strategyCry:"%s cry",attackIntent:"%s go",
                     confuseIntent:"ci",moraleIntent:"mi",healIntent:"%s up",moraleDown:"%s down",healed:"%s %s %s",healVerb:"heal",raiseVerb:"raise",
                     stillConfused:"%s still",confused:"%s dazed",moreConfused:"%s worse",strategyMissed:"miss",recovered:"%s clear",turn:"T%u %s",
-                    closingBonus:"B%w",delayRetreat:"late",failed:"%s failed",noLoss:"%s none",loss:"%s(%4u)",moraleLoss:"m%2u",experience:"%s e%2u",counterFriendly:"c",counterEnemy:"C",
+                    closingBonus:"B%w",delayRetreat:"late",troopsFull:"tf",troopsUp:"%s +%u",moraleFull:"mf",moraleUp:"m+%2u",failed:"%s failed",noLoss:"%s none",loss:"%s(%4u)",moraleLoss:"m%2u",experience:"%s e%2u",counterFriendly:"c",counterEnemy:"C",
                     level:"Lv%2u %s",attack:"a",defense:"d",troops:"t",morale:"m",exp:"e",terrain:"g",percent:"+%2u%%"),source:nil,limitations:nil)
     func combat(attacker:Int = 0,target:Int = 20,attackerClass:Int = 0,targetClass:Int = 0,kind:Int = 1,subtype:Int = 0,troops:Int = 700,damage:Int = 250) -> OriginalCombatSnapshot {
         OriginalCombatSnapshot(kind:kind,subtype:subtype,attackerSlot:attacker,targetSlot:target,attackerPerson:0,targetPerson:1,attackerClass:attackerClass,
@@ -134,6 +134,7 @@ func originalBattleAnimationSelfTests() throws {
     try check(noticeText(.turn(round:3,weather:2)) == "T3 rain" && noticeText(.turn(round:3,weather:9)) == "T3 ","the banner names its weather")
     try check(noticeText(.closingBonus(points:40)) == "B40" && noticeText(.delayRetreat) == "late" && noticeText(.strategyMissed) == "miss","bare notices")
     try check(catalog.text(.healed(person:1,kind:2,raises:true),person:{ "p\($0)" },strategy:{ _ in "" },kind:{ "k\($0)" }) == "p1 k2 raise","a healed line names its kind")
+    try check(noticeText(.troopsRecovered(person:1,amount:30)) == "p1 +30" && noticeText(.moraleRecovered(amount:5)) == "m+ 5","upkeep lines fill their formats")
     try check(OriginalBattleNotice.delayRetreat.waitsForInput && OriginalBattleNotice.closingBonus(points:1).waitsForInput && !OriginalBattleNotice.strategyMissed.waitsForInput,"mode one lines wait")
     var notices = OriginalBattleAnimator()
     notices.play([.notice(.level(person:0,level:2)),.notice(.learned(abilities:[1])),.notice(.ambush(friendly:true))])

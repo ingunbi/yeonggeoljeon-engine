@@ -18,6 +18,10 @@ enum OriginalBattleNotice:Equatable {
     case turn(round:Int,weather:Int)
     case closingBonus(points:Int)
     case delayRetreat
+    case troopsRecovered(person:Int,amount:Int)
+    case troopsFull
+    case moraleRecovered(amount:Int)
+    case moraleFull
     var waitsForInput:Bool {
         switch self {
         case .learned,.closingBonus,.delayRetreat:return true

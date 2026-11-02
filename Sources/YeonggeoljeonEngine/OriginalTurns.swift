@@ -182,6 +182,15 @@ extension OriginalBattleSession {
         // The combat owner includes the morale setter's immediate condition2
         // mutation before this source class12 aura is applied.
         units[slot]!.scriptFlags = UInt8(recovery.remainingFlags)
+        // MAIN2B3DF..2B439: a player's unit reports only when something changed.
+        if unit.orderMode == 7,recovery.troopsDelta != 0 || recovery.moraleDelta != 0 {
+            if recovery.recoveryFlags&1 != 0 {
+                upkeepNotices.append(recovery.troopsDelta == 0 ? .troopsFull : .troopsRecovered(person:unit.person,amount:recovery.troopsDelta))
+            }
+            if recovery.recoveryFlags&2 != 0 {
+                upkeepNotices.append(recovery.moraleDelta == 0 ? .moraleFull : .moraleRecovered(amount:recovery.moraleDelta))
+            }
+        }
         if recovery.adjacentMPGain > 0 {
             for delta in movement.cardinalOffsets {
                 let point = GridPoint(x:unit.position.x+delta.dx,y:unit.position.y+delta.dy)

@@ -10,7 +10,7 @@ struct OriginalCombatCatalog:Codable {
         var ambushFriendly,ambushEnemy,strategyFailed,levelUp,learned:String
         var strategyUsed,strategyCry,attackIntent,confuseIntent,moraleIntent,healIntent,moraleDown:String
         var healed,healVerb,raiseVerb,stillConfused,confused,moreConfused,strategyMissed,recovered:String
-        var turn,closingBonus,delayRetreat:String
+        var turn,closingBonus,delayRetreat,troopsFull,troopsUp,moraleFull,moraleUp:String
         var failed,noLoss,loss,moraleLoss,experience,counterFriendly,counterEnemy:String
         var level,attack,defense,troops,morale,exp,terrain,percent:String
     }
@@ -110,6 +110,10 @@ extension OriginalCombatCatalog {
             return originalFormat(texts.turn,[String(round),weathers.indices.contains(weather) ? weathers[weather] : ""])
         case .closingBonus(let points):return originalFormat(texts.closingBonus,[String(points)])
         case .delayRetreat:return texts.delayRetreat
+        case .troopsRecovered(let id,let amount):return originalFormat(texts.troopsUp,[person(id),String(amount)])
+        case .troopsFull:return texts.troopsFull
+        case .moraleRecovered(let amount):return originalFormat(texts.moraleUp,[String(amount)])
+        case .moraleFull:return texts.moraleFull
         case .ambush(let friendly):return friendly ? texts.ambushFriendly : texts.ambushEnemy
         case .strategyFailed(let id):return originalFormat(texts.strategyFailed,[person(id)])
         case .level(let id,let level):return originalFormat(texts.levelUp,[person(id),String(level)])
