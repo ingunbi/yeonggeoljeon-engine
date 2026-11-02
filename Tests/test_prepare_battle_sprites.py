@@ -8,7 +8,8 @@ import unittest
 import zlib
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools"))
-from prepare_battle_sprites import FRAME_SIZE, flip_frame, prepare, tiled_frame, unit_frames
+from prepare_battle_sprites import (EFFECT_BYTES, EFFECT_FRAMES, EFFECT_OFFSET, FRAME_SIZE, SHOT_BYTES, SHOT_FRAMES,
+                                    SHOT_OFFSET, effect_art, flip_frame, prepare, tiled_frame, unit_frames)
 from prepare_resources import palette_at
 from resource_formats import Archive, IndexedImage, ResourceError, png_bytes
 
@@ -23,6 +24,18 @@ class BattleSpriteTests(unittest.TestCase):
         self.assertEqual([(im.width,im.height) for im in frames],[(32,32),(32,32)])
         self.assertEqual([[im.pixels[y*32+x] for x,y in [(0,0),(31,0),(0,31),(31,31)]] for im in frames],
                          [[1,2,3,4],[5,6,7,8]])
+
+    def test_effect_art_reads_interleaved_planes_at_its_offsets(self):
+        payload=bytearray(SHOT_OFFSET+SHOT_FRAMES*SHOT_BYTES)
+        # Colour nine in the leftmost pixel of the second frame: planes zero and three.
+        payload[EFFECT_OFFSET+EFFECT_BYTES:EFFECT_OFFSET+EFFECT_BYTES+4]=bytes([0x80,0,0,0x80])
+        payload[SHOT_OFFSET+SHOT_BYTES:SHOT_OFFSET+SHOT_BYTES+4]=bytes([0,0x80,0,0])
+        effects,shots=effect_art(bytes(payload))
+        self.assertEqual((len(effects),len(shots)),(EFFECT_FRAMES,SHOT_FRAMES))
+        self.assertEqual((effects[1].width,effects[1].height,effects[1].pixels[0]),(32,32,9))
+        self.assertEqual((shots[1].width,shots[1].height,shots[1].pixels[0]),(16,16,2))
+        with self.assertRaises(ResourceError):
+            effect_art(bytes(payload[:-1]))
 
     def test_pixel_flip_swaps_columns_without_swapping_frames_or_rows(self):
         original=IndexedImage(8,2,bytes(range(16)))

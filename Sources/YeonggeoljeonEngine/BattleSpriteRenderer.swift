@@ -12,8 +12,30 @@ final class OriginalBattleSpriteRenderer {
         catalog = try OriginalBattleSprites.load(from:root.appendingPathComponent("battle-sprites.json"))
     }
     func image(unit:OriginalLiveUnit,classID:Int,phase:UInt8 = 0) throws -> CGImage {
-        let selection = try catalog.standing(person:unit.person,classID:classID,enemy:unit.enemy,
-            flags:unit.scriptFlags,animationPhase:phase)
+        try picture(try catalog.standing(person:unit.person,classID:classID,enemy:unit.enemy,
+            flags:unit.scriptFlags,animationPhase:phase))
+    }
+    /// The walking frame at `stepPixels` into a cell (MAIN2CCD5).
+    func image(unit:OriginalLiveUnit,classID:Int,direction:Int,stepPixels:Int) throws -> CGImage {
+        try picture(try catalog.moving(person:unit.person,classID:classID,enemy:unit.enemy,
+            flags:unit.scriptFlags,direction:direction,stepPixels:stepPixels))
+    }
+    func effectImage(_ frame:Int) throws -> CGImage? {
+        guard let paths = catalog.effects?.frames,paths.indices.contains(frame) else { return nil }
+        return try loaded(paths[frame],size:32)
+    }
+    func shotImage(_ frame:Int) throws -> CGImage? {
+        guard let paths = catalog.effects?.shots,paths.indices.contains(frame) else { return nil }
+        return try loaded(paths[frame],size:16)
+    }
+    private func loaded(_ path:String,size:Int) throws -> CGImage {
+        if let image = images[path] { return image }
+        let url = try containedResource(root:root,relative:path)
+        guard let picture = NSBitmapImageRep(data:try Data(contentsOf:url))?.cgImage,
+              picture.width == size,picture.height == size else { throw EngineError.invalid("Original battle effect bitmap has the wrong size") }
+        images[path] = picture;return picture
+    }
+    private func picture(_ selection:OriginalBattleSpriteSelection) throws -> CGImage {
         if let image = images[selection.image] { return image }
         let url = try containedResource(root:root,relative:selection.image)
         guard let picture = NSBitmapImageRep(data:try Data(contentsOf:url))?.cgImage,

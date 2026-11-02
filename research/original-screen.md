@@ -293,8 +293,9 @@ scales the world picture instead.
   engine presentation, not original pixels.
 - Panel positions are engine choices that keep the frame visible; they are
   not source coordinates.
-- The command windows use the native panel, not the `0x3310` window pixels, and
-  the unit walk and attack animations are not played.
+- The command windows use the native panel, not the `0x3310` window pixels.
+  Unit walks and attack effects play as described in
+  [original-battle-sprites.md](original-battle-sprites.md).
 - A discarded item leaves the native list at once. The source list is built once
   per entry, so it keeps showing the discarded item until the menu closes.
 - The third button beside 아군 and 적군 has no restored handler.

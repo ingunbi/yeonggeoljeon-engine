@@ -23,15 +23,34 @@ final class OriginalBattleFlow {
     private var itemOperation:OriginalItemOperation?
     private var itemRetirementAcknowledgement:OriginalRetirementNotice?
     private(set) var lastItem:OriginalItemExecution?
+    /// A view that plays each native action sets this. The flow then holds
+    /// before the action commits, so dialogue and results wait for the picture.
+    var presentsNativeActions = false
+    private var heldCues:[OriginalBattleCue] = []
+    func takeCues() -> [OriginalBattleCue] { defer { heldCues = [] };return heldCues }
+    private func hold(_ cues:[OriginalBattleCue]) -> Bool {
+        guard presentsNativeActions,!cues.isEmpty else { return false }
+        heldCues = cues;suspended = true;return true
+    }
     var canLeaveBattle:Bool { session.turns.result != 0 && !suspended && attackOperation == nil && strategyOperation == nil && itemOperation == nil }
     init(session:OriginalBattleSession) { self.session = session }
     var acceptsManualInput:Bool { !suspended && attackOperation == nil && strategyOperation == nil && itemOperation == nil && session.turns.stage == .manualFriendly && session.turns.result == 0 }
     @discardableResult
     func manualAttack(_ slot:Int,target:Int) throws -> OriginalStrikeExchange? {
+        try beginManualAttack(slot,target:target)
+        return try finishManualOperation().attack
+    }
+    /// The view plays these cues between the two halves of a manual action.
+    @discardableResult
+    func beginManualAttack(_ slot:Int,target:Int) throws -> [OriginalBattleCue] {
         guard acceptsManualInput else { throw BattleError.illegalAction("Original source phase is not accepting manual input") }
         _ = try session.requireManualUnit(slot)
         attackOperation = try OriginalAttackOperation.begin(in:session,attackerSlot:slot,targetSlot:target)
-        attackIsNative = false;lastAttack = nil;try drivePhases();return lastAttack
+        attackIsNative = false;lastAttack = nil
+        return try session.attackCues(slot,target:target)
+    }
+    func finishManualOperation() throws -> (attack:OriginalStrikeExchange?,strategy:OriginalStrategyExecution?) {
+        try drivePhases();return (lastAttack,lastStrategy)
     }
     func manualWait(_ slot:Int) throws {
         guard acceptsManualInput else { throw BattleError.illegalAction("Original source phase is not accepting manual input") }
@@ -66,11 +85,16 @@ final class OriginalBattleFlow {
     }
     @discardableResult
     func manualStrategy(_ slot:Int,abilityID:Int,target:Int?) throws -> OriginalStrategyExecution? {
+        try beginManualStrategy(slot,abilityID:abilityID,target:target)
+        return try finishManualOperation().strategy
+    }
+    @discardableResult
+    func beginManualStrategy(_ slot:Int,abilityID:Int,target:Int?) throws -> [OriginalBattleCue] {
         guard acceptsManualInput else { throw BattleError.illegalAction("Original source phase is not accepting manual input") }
         _ = try session.requireManualUnit(slot)
         strategyOperation = try OriginalStrategyOperation.begin(in:session,casterSlot:slot,abilityID:abilityID,target:target)
         strategyIsNative = false;lastStrategy = nil
-        try drivePhases();return lastStrategy
+        return strategyOperation?.cues(in:session) ?? []
     }
     func start() throws { try drivePhases() }
     func resumeSourceFlow() throws {
@@ -238,17 +262,23 @@ final class OriginalBattleFlow {
                 try session.skipNativeUnit(slot);continue
             }
             let decision = try session.aiDecision(slot)
+            let walk:[OriginalBattleCue] = decision.path.count > 1 ? [.walk(slot:slot,path:decision.path)] : []
             try session.applyAIMovement(slot,decision)
             if let strategy = decision.strategyID {
                 strategyOperation = try OriginalStrategyOperation.begin(in:session,casterSlot:slot,abilityID:strategy,target:decision.targetSlot)
                 strategyIsNative = true;lastStrategy = nil
+                if hold(walk+(strategyOperation?.cues(in:session) ?? [])) { return }
                 guard try advanceStrategy() else { return }
             } else {
                 if let target = decision.targetSlot {
                     attackOperation = try OriginalAttackOperation.begin(in:session,attackerSlot:slot,targetSlot:target)
                     attackIsNative = true;lastAttack = nil
+                    if hold(walk+(try session.attackCues(slot,target:target))) { return }
                     guard try advanceAttack() else { return }
-                } else { pendingNativeSlot = slot }
+                } else {
+                    pendingNativeSlot = slot
+                    if hold(walk) { return }
+                }
             }
         }
     }

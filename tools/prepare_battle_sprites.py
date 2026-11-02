@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import struct
 import sys
 
 from prepare_resources import EXAMINED_MAIN, inventory, paint, palette_at
@@ -19,6 +20,11 @@ from resource_formats import Archive, IndexedImage, ResourceError, planar_image,
 PALETTE_OFFSET = 0x38DF0 + 3 * 48
 MEMBER_COUNT = 47
 FRAME_SIZE = 32
+# MAIN2AC83 and 3128F address these inside HEXGRP member0, loaded 0x8000 into
+# the work buffer. Each eight pixels take four plane bytes in a row.
+EFFECT_OFFSET, EFFECT_FRAMES, EFFECT_BYTES = 0x1280, 18, 512
+SHOT_OFFSET, SHOT_FRAMES, SHOT_BYTES = 0x3680, 5, 128
+EFFECT_SOUNDS = 0x37DA0 + 0x3F7E
 
 
 def tiled_frame(payload: bytes, columns: int, rows: int) -> IndexedImage:
@@ -37,6 +43,17 @@ def unit_frames(payload: bytes) -> tuple[IndexedImage, IndexedImage]:
     if len(payload) != 1024:
         raise ResourceError("HEXZCHR member must contain eight128-byte source tiles")
     return tiled_frame(payload[:512],2,2),tiled_frame(payload[512:],2,2)
+
+
+def effect_art(payload: bytes) -> tuple[list[IndexedImage], list[IndexedImage]]:
+    """Nine 32x32 effects of two frames, then four arrows and a thrown stone."""
+    if len(payload) < SHOT_OFFSET + SHOT_FRAMES * SHOT_BYTES:
+        raise ResourceError("HEXGRP member lacks the examined effect span")
+    effects = [planar_image(payload[EFFECT_OFFSET + index * EFFECT_BYTES:EFFECT_OFFSET + (index + 1) * EFFECT_BYTES],
+                            32, 32, interleaved=True) for index in range(EFFECT_FRAMES)]
+    shots = [planar_image(payload[SHOT_OFFSET + index * SHOT_BYTES:SHOT_OFFSET + (index + 1) * SHOT_BYTES],
+                          16, 16, interleaved=True) for index in range(SHOT_FRAMES)]
+    return effects, shots
 
 
 def flip_frame(image: IndexedImage) -> IndexedImage:
@@ -89,6 +106,18 @@ def prepare(game: Path, output: Path) -> dict:
         (output / flipped).write_bytes(png_bytes(flip_frame(image),colors,transparent_zero=True))
         duel_frames.append({"member":member_id,"image":relative,"flippedImage":flipped,
                             "indexedPixelSha256":hashlib.sha256(image.pixels).hexdigest(),"source":member.provenance()})
+    graphics_carrier = (game / "HEXGRP.R3").read_bytes()
+    graphics = Archive(graphics_carrier, "HEXGRP.R3").decode(0)
+    effects, shots = effect_art(graphics.data)
+    (output / "images" / "battle-effects").mkdir(parents=True, exist_ok=True)
+    effect_paths = []
+    for prefix, images_ in (("effect", effects), ("shot", shots)):
+        paths = []
+        for index, image in enumerate(images_):
+            relative = f"images/battle-effects/{prefix}-{index:02}.png"
+            (output / relative).write_bytes(png_bytes(image, colors, transparent_zero=True))
+            paths.append(relative)
+        effect_paths.append(paths)
     if before != inventory(game):
         raise ResourceError("original files changed during battle sprite extraction")
     result = {"format": 1, "width": FRAME_SIZE, "height": FRAME_SIZE, "memberCount": MEMBER_COUNT,
@@ -98,6 +127,11 @@ def prepare(game: Path, output: Path) -> dict:
                        "source":{"resource":"HEXICHR.R3","resourceSha256":hashlib.sha256(duel_carrier).hexdigest(),
                                  "specialPersonBanks":{"resource":"MAIN.EXE","offset":0x37DA0+0x5048,"bytes":5},
                                  "loaderCode":"MAIN.EXE:0x3431C..0x34538","tileGridCode":"MAIN.EXE:0x34216..0x34318"}},
+              "effects": {"frames": effect_paths[0], "shots": effect_paths[1],
+                          "sounds": list(struct.unpack_from("<8H", main, EFFECT_SOUNDS)),
+                          "source": {**graphics.provenance(), "effectOffset": EFFECT_OFFSET, "shotOffset": SHOT_OFFSET,
+                                     "sounds": {"resource": "MAIN.EXE", "offset": EFFECT_SOUNDS, "bytes": 16},
+                                     "code": ["MAIN.EXE:0x2AB40..0x2ADB7", "MAIN.EXE:0x31220..0x31460"]}},
               "source": {"mainSha256": EXAMINED_MAIN, "resource": "HEXZCHR.R3",
                          "resourceSha256": hashlib.sha256(carrier).hexdigest(),
                          "palette": {"resource": "MAIN.EXE", "offset": PALETTE_OFFSET, "bytes": 48, "slot": 3},
@@ -108,7 +142,7 @@ def prepare(game: Path, output: Path) -> dict:
                          "movementFrameCode": "MAIN.EXE:0x2CCD5..0x2CCE4;0x2CEB4..0x2CEC3",
                          "originalHashesPreserved": True, "originalExecution": False},
               "limitations": ["Static pixel reconstruction; no original DOS framebuffer comparison was performed.",
-                              "Native movement frame and facing selectors are recovered; original wall-clock animation timing is unverified.",
+                              "Native movement frame and facing selectors are recovered; timing comes from the driver tick and was not compared with a running original.",
                               "HEXBCHR enlarged combat-animation producer is outside this map/duel sprite catalog.",
                               "Duel graphics load mode is explicit; native stage composition and timing remain renderer responsibilities.",
                               "Dynamic palette transformations, fog/hidden-unit gates and native special draw effects remain separate renderer responsibilities."]}

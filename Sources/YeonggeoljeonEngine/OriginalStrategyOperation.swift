@@ -47,6 +47,19 @@ struct OriginalStrategyOperation:Codable {
 
     /// MAIN2E836..2EE1C: selection/availability and the branch's source locals
     /// are captured before the first effect. This consumes no gameplay RNG.
+    /// MAIN31DE7: the effect of the subtype's high nibble plays on each target
+    /// before its result, for kinds two and three.
+    func cues(in session:OriginalBattleSession) -> [OriginalBattleCue] {
+        let slots:[Int],subtype:Int
+        switch continuation {
+        case let .damage(target,value,_,_):slots = [target];subtype = value
+        case let .healing(values,_,value):slots = values;subtype = value
+        default:return []
+        }
+        return slots.compactMap { slot in
+            session.units[slot].map { .effect(subtype>>4,halfX:$0.position.x*2,halfY:$0.position.y*2) }
+        }
+    }
     static func begin(in session:OriginalBattleSession,casterSlot:Int,abilityID:Int,target:Int? = nil,confirmed:Bool = true) throws -> Self {
         let caster = try session.live(casterSlot)
         guard (0..<36).contains(abilityID),caster.scriptFlags&0x82 == 0 else {throw BattleError.illegalAction("Original strategy actor/ability is not eligible")}

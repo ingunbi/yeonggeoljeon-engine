@@ -81,6 +81,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         battleView?.externalStatus = errorText ?? inputNotice ?? host.notice ?? host.playerStatus
         guard !overlay.active,errorText == nil else { return }
         do {
+            battleView?.advanceAnimation(1.0/60)
             try host.advance(microseconds:16_667)
             needsDisplay = true
             try synchronizeBattle()
@@ -132,6 +133,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             board.menuTexts = host.framework?.battleMenu
             board.objective = { [weak self] in (self?.host.vm.state.chapter ?? 0,self?.host.vm.state.objectiveText) }
             board.announcesPhases = true
+            board.animatesActions = true
             board.presentation = CanvasPresentation.current
             board.frame = bounds
             addSubview(board,positioned:.below,relativeTo:overlay);battleView = board

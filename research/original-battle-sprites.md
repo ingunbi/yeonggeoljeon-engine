@@ -80,3 +80,38 @@ would move the actor twice. Native signed out-of-view coordinates remain valid
 and are clipped to the viewport. The tile compositor draws participant1 first
 and participant0 above it. `OriginalDuelSprites.sourceRect`, `sourceViewport`
 and `sourceDrawOrder` own these conversions for the AppKit consumer.
+
+## Action effects
+
+`HEXGRP` member zero sits 0x8000 into the battle work buffer. `2AC83` and `3128F`
+read effects at member offset `0x1280` and shots at `0x3680`. Pixels interleave
+four plane bytes per eight pixels. There are nine 32 by 32 effects of two frames
+(fire, water, rock, three banner troops and more, then the crossed swords) and
+five 16 by 16 shots: arrows up, right, down, left and a thrown stone. Effect eight
+uses one pass; the others use two.
+
+`1CB6:75E0` (`2AB40`) draws an effect at a half-cell position. Each frame holds a
+`CF5:2502` interval of two, and that helper multiplies by six. So a frame is
+twelve ticks. A tick comes from the driver, which adds `0x35` to a byte per PIT
+interrupt (`SBOPL2 0x255`): about 16.6 milliseconds. Six ticks match the town step
+of 99.488 milliseconds found earlier. Sounds come from DS:`3F7E` below effect
+eight, then 41 for the clash and 37 for effect nine, which draws effect zero.
+
+`31FEB..3216D` runs before the damage producer. Classes three to five fire two
+shots of four pixels per tick, sound 19; class five throws stones. Other classes
+clash at the midpoint of the two cells. The options high nibble doubles either.
+Strategies of kinds two and three play the subtype's high nibble on the target
+(`31DE7`). Items play effect four, or nine when thrown (`2E3B1`, `2E68D`).
+
+Walking (`2CBDD..2CDB1`) adds a step of 1, 2, 4, 8 or 16 pixels per draw, chosen
+by the options low nibble. The slowest step waits one tick per two pixels: 16
+ticks a cell. The other steps have no wait and ran as fast as the machine drew.
+The engine halves the time per doubling; that part is its own choice.
+
+`OriginalBattleAnimator` plays these as cues that never change game state. In the
+campaign window the flow holds before an action commits, so its dialogue and
+results wait for the picture. Verification and `--battle` skip the cues, and both
+paths run the same game steps in the same order.
+
+Not restored: the small result window of `31DCD`, random offsets on shots, and the
+enlarged combat view selected by the 부대전투 option.

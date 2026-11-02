@@ -26,6 +26,19 @@ struct OriginalBattleSpriteSelection:Equatable {
     /// has source-mask alpha0; the renderer must preserve nearest-neighbor pixels.
     var image:String
 }
+/// Effect art of MAIN2AB40 and the arrows of MAIN31220. `sounds` is DS:3F7E.
+struct OriginalBattleEffects:Codable {
+    var frames:[String]
+    var shots:[String]
+    var sounds:[Int]
+    var source:JSONValue?
+    func validate() throws {
+        guard frames.count == 18,shots.count == 5,sounds.count == 8 else {
+            throw EngineError.invalid("Original battle effect catalog cardinality is invalid")
+        }
+        try validateNativeSpritePaths(frames+shots)
+    }
+}
 struct OriginalBattleSprites:Codable {
     var format:Int
     var width:Int
@@ -34,6 +47,7 @@ struct OriginalBattleSprites:Codable {
     var paletteSlot:Int
     var frames:[OriginalBattleSpriteFrame]
     var duel:OriginalDuelSprites? = nil
+    var effects:OriginalBattleEffects? = nil
     var source:JSONValue?
     var limitations:[String]?
 
@@ -57,6 +71,7 @@ struct OriginalBattleSprites:Codable {
         }
         try validateNativeSpritePaths(frames.flatMap{[$0.image,$0.flippedImage]})
         try duel?.validate()
+        try effects?.validate()
     }
     /// MAIN2B7C4: condition2 takes precedence over person-specific sprites;
     /// native faction derives from the runtime slot, not the shared person flags.

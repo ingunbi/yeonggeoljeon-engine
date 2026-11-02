@@ -25,6 +25,13 @@ final class OriginalBattleView:NSView {
     /// campaign host the retreat/quit results have no outer dispatcher.
     var menuTexts:OriginalBattleMenuTexts? { didSet { needsDisplay = true } }
     var suspended:Bool { flow.suspended }
+    /// The campaign window plays actions; verification and `--battle` do not.
+    var animatesActions = false { didSet { flow.presentsNativeActions = animatesActions } }
+    /// A battle effect starts. The id is the source sound number.
+    var onSound:((Int)->Void)?
+    private var animator = OriginalBattleAnimator()
+    var isAnimating:Bool { !animator.isIdle }
+    private var afterCues:(()->Void)?
     var inputReady:(()->Bool)?
     /// Replaces the status line while the owner has something to report.
     var externalStatus:String? { didSet { if externalStatus != oldValue { needsDisplay = true } } }
@@ -83,14 +90,44 @@ final class OriginalBattleView:NSView {
     }
     required init?(coder:NSCoder) { fatalError("init(coder:) is not supported") }
     func start() throws { try flow.start();announcePhase();needsDisplay = true }
+    private func play(_ cues:[OriginalBattleCue],then done:@escaping ()->Void) {
+        guard animatesActions,!cues.isEmpty else { done();return }
+        afterCues = done;perform(cues)
+    }
+    private func perform(_ cues:[OriginalBattleCue]) {
+        animator.effectSounds = sprites?.catalog.effects?.sounds ?? []
+        animator.play(cues,options:session.sourceOptionsWord)
+        followCue();needsDisplay = true
+    }
+    /// MAIN2997E keeps the action in view; the source calls it before each one.
+    private func followCue() {
+        switch animator.cues.first {
+        case .walk(_,let path)?:
+            if let walker = animator.walker {
+                camera.follow(GridPoint(x:Int(walker.x.rounded()),y:Int(walker.y.rounded())),margin:layoutFacts.followMargin)
+            } else if let first = path.first { camera.follow(first,margin:layoutFacts.followMargin) }
+        case .shot(_,let to,_)?:camera.follow(to,margin:layoutFacts.followMargin)
+        case .effect(_,let x,let y)?:camera.follow(GridPoint(x:x/2,y:y/2),margin:layoutFacts.followMargin)
+        case nil:break
+        }
+    }
+    func advanceAnimation(_ seconds:Double) {
+        guard !animator.isIdle else { return }
+        for id in animator.advance(seconds) { onSound?(id) }
+        followCue();needsDisplay = true
+        if animator.isIdle,let done = afterCues { afterCues = nil;done() }
+    }
     func resumeSourceFlow() throws {
+        guard animator.isIdle else { return }
+        let held = flow.takeCues()
+        if !held.isEmpty { perform(held);return }
         try flow.resumeSourceFlow()
         if waitingForStrategy,let result = flow.lastStrategy {showStrategyResult(result);waitingForStrategy = false}
         if waitingForAttack,let result = flow.lastAttack {showAttackResult(result);waitingForAttack = false}
         if waitingForItem,let result = flow.lastItem {waitingForItem = false;finishItem(result)}
         announcePhase();needsDisplay = true
     }
-    private var canInput:Bool {flow.acceptsManualInput && (inputReady?() ?? true)}
+    private var canInput:Bool {animator.isIdle && flow.acceptsManualInput && (inputReady?() ?? true)}
     private var scale:CGFloat { CanvasGeometry(bounds:bounds).scale }
     private var canvasOrigin:CGPoint { CanvasGeometry(bounds:bounds).origin }
     private func canvasPoint(_ event:NSEvent) -> CGPoint {
@@ -405,7 +442,19 @@ final class OriginalBattleView:NSView {
         if key == "terrain",case .attack(let family,_) = use { return style.commands?.terrainRefusals[family] ?? key }
         return itemText(key)
     }
+    /// MAIN2E3B1, 2E436 and 2E68D: effect nine for a thrown item, four otherwise.
+    private func itemCues(item:Int,target:Int?) -> [OriginalBattleCue] {
+        guard let target = target,let cell = session.units[target]?.position else { return [] }
+        switch OriginalItemUse.of(item) {
+        case .attack,.bomb:return [.effect(9,halfX:cell.x*2,halfY:cell.y*2)]
+        case .recovery,.areaRecovery:return [.effect(4,halfX:cell.x*2,halfY:cell.y*2)]
+        default:return []
+        }
+    }
     private func performItem(_ slot:Int,item:Int,target:Int?) {
+        play(itemCues(item:item,target:target)) { [weak self] in self?.commitItem(slot,item:item,target:target) }
+    }
+    private func commitItem(_ slot:Int,item:Int,target:Int?) {
         do {
             if let result = try flow.manualItem(slot,item:item,target:target) { finishItem(result) }
             else { waitingForItem = true;resetCommand();message = "도구의 퇴장 대사·이벤트가 끝나기를 기다립니다." }
@@ -488,14 +537,20 @@ final class OriginalBattleView:NSView {
         guard !targets.isEmpty,selection.abilityID >= 30 || selection.targetSlot.map(targets.contains) == true else {
             throw BattleError.illegalAction("책략 대상 상태가 바뀌었습니다. 대상을 다시 선택하세요.")
         }
-        let result = try flow.manualStrategy(slot,abilityID:selection.abilityID,target:selection.targetSlot)
+        let cues = try flow.beginManualStrategy(slot,abilityID:selection.abilityID,target:selection.targetSlot)
         strategySelection = nil
-        if let result {
-            showStrategyResult(result)
-            // MAIN2DDCD returns to the command window unless the unit acted.
-            if result.completed {resetCommand()} else {openCommand(slot)}
+        play(cues) { [weak self] in
+            guard let self = self else { return }
+            do {
+                if let result = try self.flow.finishManualOperation().strategy {
+                    self.showStrategyResult(result)
+                    // MAIN2DDCD returns to the command window unless the unit acted.
+                    if result.completed {self.resetCommand()} else {self.openCommand(slot)}
+                }
+                else {self.waitingForStrategy = true;self.resetCommand();self.message = "책략의 퇴장 대사·이벤트가 끝나기를 기다립니다."}
+            } catch { self.message = "\(error)";self.resetCommand() }
+            self.needsDisplay = true
         }
-        else {waitingForStrategy = true;resetCommand();message = "책략의 퇴장 대사·이벤트가 끝나기를 기다립니다."}
     }
     private func showStrategyResult(_ result:OriginalStrategyExecution) {
         if result.completed {message = "\(strategyTitle(result.abilityID)) 실행 · \(result.targets.count)개 대상 처리"}
@@ -642,9 +697,15 @@ final class OriginalBattleView:NSView {
         }
         for unit in session.units.values.sorted(by:{$0.slot < $1.slot}) where unit.status == 2 {
             guard let person = try? session.people.person(unit.person) else { continue }
-            let box = rect(unit.position)
+            var box = rect(unit.position)
+            let walker = animator.walker.flatMap { $0.slot == unit.slot ? $0 : nil }
+            if let walker = walker { box = rect(GridPoint(x:0,y:0)).offsetBy(dx:CGFloat(walker.x)*CGFloat(cell),dy:CGFloat(walker.y)*CGFloat(cell)) }
             if let sprites = sprites {
-                do { Renderer.image(try sprites.image(unit:unit,classID:person.classID),in:box,context:context) }
+                do {
+                    let image = try walker.map { try sprites.image(unit:unit,classID:person.classID,direction:$0.direction,stepPixels:$0.stepPixels) }
+                        ?? sprites.image(unit:unit,classID:person.classID)
+                    Renderer.image(image,in:box,context:context)
+                }
                 catch { message = "원작 그림 경계: \(error)";text("?",in:box,color:.systemYellow) }
             } else {
                 (unit.enemy ? NSColor.systemRed : NSColor.systemBlue).setFill();NSBezierPath(ovalIn:box.insetBy(dx:3,dy:3)).fill()
@@ -652,6 +713,17 @@ final class OriginalBattleView:NSView {
             if selected == unit.slot { NSColor.systemYellow.setStroke();let p = NSBezierPath(rect:box.insetBy(dx:1,dy:1));p.lineWidth = 2;p.stroke() }
             if strategySelection?.targetSlot == unit.slot {NSColor.systemGreen.setStroke();let p = NSBezierPath(rect:box);p.lineWidth = 3;p.stroke()}
             if showsSlotNumbers { text(String(unit.slot),in:CGRect(x:box.minX+1,y:box.maxY-11,width:24,height:11),color:.systemYellow,size:9) }
+        }
+        if let sprites = sprites {
+            let origin = rect(GridPoint(x:0,y:0))
+            if let effect = animator.effect,let image = try? sprites.effectImage(effect.frame) {
+                Renderer.image(image,in:origin.offsetBy(dx:CGFloat(effect.halfX*cell)/2,dy:CGFloat(effect.halfY*cell)/2),context:context)
+            }
+            if let shot = animator.shot,let image = try? sprites.shotImage(shot.frame) {
+                let quarter = CGFloat(cell)/4
+                let box = CGRect(x:origin.minX+CGFloat(shot.x)*CGFloat(cell)+quarter,y:origin.minY+CGFloat(shot.y)*CGFloat(cell)+quarter,width:quarter*2,height:quarter*2)
+                Renderer.image(image,in:box,context:context)
+            }
         }
         if let duel = session.scriptActions.duel,duel.active,let sprites = sprites {
             let duelViewport = OriginalDuelSprites.sourceViewport
@@ -835,8 +907,8 @@ final class OriginalBattleView:NSView {
                 say(refusal("outOfMoveRange"))
                 return
             }
-            _ = try session.move(slot,to:point)
-            openCommand(slot)
+            let path = try session.move(slot,to:point)
+            play([.walk(slot:slot,path:path)]) { [weak self] in self?.openCommand(slot) }
         case .attackTarget(let slot):
             guard try attackCells(slot).contains(point) else {
                 say(refusal("outOfAttackRange"));return
@@ -845,9 +917,16 @@ final class OriginalBattleView:NSView {
             guard target.enemy else {
                 say(refusal("cannotAttackAlly"));return
             }
-            if let result = try flow.manualAttack(slot,target:target.slot) { showAttackResult(result) }
-            else {waitingForAttack = true;message = "공격의 퇴장 대사·이벤트가 끝나기를 기다립니다."}
+            let cues = try flow.beginManualAttack(slot,target:target.slot)
             resetCommand()
+            play(cues) { [weak self] in
+                guard let self = self else { return }
+                do {
+                    if let result = try self.flow.finishManualOperation().attack { self.showAttackResult(result) }
+                    else {self.waitingForAttack = true;self.message = "공격의 퇴장 대사·이벤트가 끝나기를 기다립니다."}
+                } catch { self.message = "\(error)" }
+                self.needsDisplay = true
+            }
         case .giveTarget(let slot,let item):
             guard let unit = session.units[slot] else { return }
             guard try giveCells(slot).contains(point) || point == unit.position else {
