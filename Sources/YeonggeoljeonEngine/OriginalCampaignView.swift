@@ -41,6 +41,10 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             self.needsDisplay = true
         }
         timer = Timer.scheduledTimer(withTimeInterval:1.0/60,repeats:true) { [weak self] _ in self?.tick() }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching:[.keyDown,.flagsChanged]) { [weak self] event in
+            guard let self = self,event.window === self.window,self.window?.contentView === self else { return event }
+            return self.shortcut(event) ? nil : event
+        }
         presentationObserver = NotificationCenter.default.addObserver(forName:CanvasPresentation.changed,object:nil,queue:.main) { [weak self] _ in
             guard let self = self else { return }
             self.battleView?.presentation = CanvasPresentation.current
@@ -67,9 +71,15 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         overlay.show(CanvasMenu(title:text,options:[.init(label:"예"),.init(label:"아니요")],horizontal:true) { index in answer(index == 0) })
     }
     /// Native saves live outside the app bundle and the original GAME folder.
+    /// YEONGGEOLJEON_SAVES moves the folder, so a test run never touches the player's saves.
     static func savesDirectory() throws -> URL {
-        let base = try FileManager.default.url(for:.applicationSupportDirectory,in:.userDomainMask,appropriateFor:nil,create:true)
-        let folder = base.appendingPathComponent("Yeonggeoljeon Engine",isDirectory:true).appendingPathComponent("Saves",isDirectory:true)
+        let folder:URL
+        if let path = ProcessInfo.processInfo.environment["YEONGGEOLJEON_SAVES"],!path.isEmpty {
+            folder = URL(fileURLWithPath:path,isDirectory:true)
+        } else {
+            let base = try FileManager.default.url(for:.applicationSupportDirectory,in:.userDomainMask,appropriateFor:nil,create:true)
+            folder = base.appendingPathComponent("Yeonggeoljeon Engine",isDirectory:true).appendingPathComponent("Saves",isDirectory:true)
+        }
         try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
         return folder
     }
@@ -82,7 +92,66 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         return try OriginalCampaignHost.resume(data:data,from:OriginalCampaignResume.read(from:url))
     }
     required init?(coder:NSCoder) { fatalError("init(coder:) is not supported") }
-    func stop() { timer?.invalidate();timer = nil;audio?.shutDown() }
+    func stop() {
+        timer?.invalidate();timer = nil;audio?.shutDown()
+        if let monitor = keyMonitor { NSEvent.removeMonitor(monitor);keyMonitor = nil }
+    }
+    /// Engine additions. Held Control runs the game four times as fast, L
+    /// opens the dialogue log, and F5 and F9 save and load the quick slot.
+    private func shortcut(_ event:NSEvent) -> Bool {
+        if event.type == .flagsChanged {
+            fastForwardHeld = event.modifierFlags.contains(.control);needsDisplay = true
+            return false
+        }
+        guard !event.isARepeat,event.modifierFlags.intersection([.command,.control,.option]).isEmpty else { return false }
+        switch event.keyCode {
+        case 37:return presentLog()
+        case 96:quickSave(nil);return true
+        case 101:quickLoad(nil);return true
+        default:return false
+        }
+    }
+    @objc func toggleFastForward(_ sender:Any?) {
+        fastForwardLocked.toggle();needsDisplay = true
+        (sender as? NSMenuItem)?.state = fastForwardLocked ? .on : .off
+    }
+    @objc func openDialogueLog(_ sender:Any?) { _ = presentLog() }
+    /// Lines the player has read, newest last. The source keeps none.
+    private func presentLog() -> Bool {
+        guard host.hasStarted,!overlay.active else { return false }
+        let rows = dialogueLog.map { entry in
+            CanvasSheet.Row(label:entry.speaker.isEmpty ? "—" : entry.speaker,value:String(entry.text.prefix(14)),
+                            detail:.init(heading:entry.speaker,body:entry.text))
+        }
+        guard !rows.isEmpty else { inputNotice = "아직 기록된 대사가 없습니다.";needsDisplay = true;return true }
+        overlay.show(fieldSheet(title:"대사 기록",line:"",rows:rows,selected:rows.count-1,hint:"↑↓ 이동 · esc 닫기") { _ in })
+        return true
+    }
+    @objc func quickSave(_ sender:Any?) {
+        guard host.hasStarted,!overlay.active else { return }
+        do {
+            try saveSlots().write(try host.resumeSnapshot(),title:slotTitle,named:.quick)
+            overlay.show(CanvasNotice(speaker:"",text:"빠른 저장했습니다.",portrait:nil,timeout:1.2) { })
+        } catch { inputNotice = "지금은 저장할 수 없습니다. 마을이나 세계지도에서 다시 시도하세요.";needsDisplay = true }
+    }
+    @objc func quickLoad(_ sender:Any?) {
+        guard !overlay.active else { return }
+        guard let slots = try? saveSlots(),slots.entry(.quick) != nil else { inputNotice = "빠른 저장이 없습니다.";needsDisplay = true;return }
+        yesNo("빠른 저장을 불러올까요?") { [weak self] yes in
+            guard yes,let self = self else { return }
+            do { self.replace(with:try OriginalCampaignView(host:try OriginalCampaignHost.resume(data:self.host.data,from:slots.read(.quick)))) }
+            catch { self.recordInputError(error) }
+        }
+    }
+    /// An engine addition: an idle field writes the autosave whenever its
+    /// scene or map changes since the last one.
+    private func autosave() {
+        let state = host.vm.state
+        let key = "\(state.chapter):\(state.member):\(state.block):\(state.groupBase):\(state.packedMap)"
+        guard key != autosaveKey,let slots = try? saveSlots(),let snapshot = try? host.resumeSnapshot() else { return }
+        autosaveKey = key
+        try? slots.write(snapshot,title:slotTitle,named:.auto)
+    }
     /// Word +A bit 8 greys the palette; the filter sits over the whole canvas.
     private func applySettings() {
         settings = OriginalSettings.current
@@ -94,6 +163,14 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private var screenPlayer:OriginalScreenPlayer?
     private var screenIsOpening = false
     private var screenIsQuit = false
+    private var keyMonitor:Any?
+    private var fastForwardHeld = false
+    private var fastForwardLocked = false
+    private var fastForward:Bool { fastForwardHeld || fastForwardLocked }
+    private var skipTicks = 0
+    private var dialogueLog:[(speaker:String,text:String)] = []
+    private var lastLogged:CommandSnapshot?
+    private var autosaveKey:String?
     private var quitScreenStarted = false
     private var endingMusicStarted = false
     private var endingFade = 0.0
@@ -157,13 +234,25 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         if let session = host.ending,advanceEnding(session) { return }
         if host.ending == nil { audio?.select(host.vm.state.currentMusic) }
         battleView?.externalStatus = errorText ?? inputNotice ?? host.notice ?? host.playerStatus
+        battleView?.fastForward = fastForward
+        // Fast-forward reads a line for a tenth of a second, then moves on.
+        if fastForward,host.hasStarted {
+            skipTicks += 1
+            if skipTicks >= 6 {
+                skipTicks = 0
+                if overlay.notice != nil { overlay.skipNotice() }
+                battleView?.skipLines()
+            }
+        }
         guard !overlay.active,errorText == nil else { return }
         do {
-            battleView?.advanceAnimation(1.0/60)
+            let rate = fastForward ? Double(OriginalBattleView.fastRate) : 1
+            battleView?.advanceAnimation(rate/60)
             for id in host.takeSounds() { audio?.playEffect(id) }
-            try host.advance(microseconds:Int64(16_667*settings.timeScale))
+            try host.advance(microseconds:Int64(16_667*settings.timeScale*rate))
             needsDisplay = true
             try synchronizeBattle()
+            if host.fieldMenuReady { autosave() }
             if let notice = host.takeClosingNotice() { presentClosing(notice);return }
             if host.frameworkReturn?.outcome == .restart { restartMain();return }
             if let value = host.frameworkReturn,value.outcome == .pending,value.asksRetry { presentRetry() }
@@ -247,6 +336,10 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     /// A framed map keeps its window; a full picture gives the line the whole canvas.
     private func presentDialogue() {
         guard let dialogue = host.stage.dialogue else { return }
+        if dialogue != lastLogged {
+            lastLogged = dialogue;dialogueLog.append((dialogue.speaker,dialogue.text))
+            if dialogueLog.count > 300 { dialogueLog.removeFirst() }
+        }
         if host.stage.palette != 3 { overlay.viewport = host.fieldScreenState() != nil ? fieldOverlay : Self.pictureViewport }
         overlay.show(CanvasNotice(speaker:dialogue.speaker,text:dialogue.text,portrait:portrait(dialogue.person,palette:host.stage.palette)) { [weak self] in
             guard let self = self else { return }
@@ -646,20 +739,31 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         guard let slots = try? saveSlots() else { done(false);return }
         let dates = DateFormatter();dates.dateStyle = .short;dates.timeStyle = .short
         let entries = slots.entries()
+        enum Target { case slot(Int),named(OriginalSaveSlots.Named),original(OriginalSaveCatalog.Slot),file,none }
         var rows = entries.enumerated().map { index,entry in
             CanvasSheet.Row(label:"슬롯 \(index+1)",value:entry.map { dates.string(from:$0.date) } ?? "비어 있음",
                             detail:entry.map { .init(heading:$0.title) },enabled:saving || entry != nil)
+        }
+        var targets:[Target] = (0..<rows.count).map { .slot($0) }
+        if !saving {
+            for name in OriginalSaveSlots.Named.allCases {
+                guard let entry = slots.entry(name) else { continue }
+                rows.append(.init(label:name == .auto ? "자동 저장" : "빠른 저장",value:dates.string(from:entry.date),detail:.init(heading:entry.title)))
+                targets.append(.named(name))
+            }
         }
         let originals = saving ? nil : try? OriginalSaveCatalog.load(root:host.data.root)
         for slot in originals?.slots ?? [] {
             let date = slot.date
             rows.append(.init(label:"원작 슬롯 \(slot.slot+1)",value:String(format:"%02d/%02d/%02d %02d:%02d",date.year,date.month,date.day,date.hour,date.minute),
                               detail:.init(heading:slot.title)))
+            targets.append(.original(slot))
         }
         for refused in originals?.refused ?? [] {
             rows.append(.init(label:"원작 슬롯 \(refused.slot+1)",value:"읽을 수 없음",enabled:false))
+            targets.append(.none)
         }
-        if !saving { rows.append(.init(label:"파일에서 불러오기")) }
+        if !saving { rows.append(.init(label:"파일에서 불러오기"));targets.append(.file) }
         let items = host.framework?.fieldMenu?.items
         let title = items?.first(where:{ $0.action == (saving ? "save" : "load") })?.text ?? ""
         overlay.show(fieldSheet(title:title,line:"",rows:rows,selected:rows.firstIndex(where:\.enabled) ?? 0) { [weak self] index in
@@ -677,15 +781,20 @@ final class OriginalCampaignView:NSView,EngineTimedView {
                             if yes { write() } else { self?.presentSlots(saving:true,done) }
                         }
                     }
-                } else if index < OriginalSaveSlots.count {
-                    self.replace(with:try OriginalCampaignView(host:try OriginalCampaignHost.resume(data:self.host.data,from:slots.read(slot:index))))
-                } else if let slots = originals?.slots,slots.indices.contains(index-OriginalSaveSlots.count) {
-                    // MAIN keeps its boot-seeded stream across a load; a slot stores none.
-                    let slot = slots[index-OriginalSaveSlots.count]
-                    self.replace(with:try OriginalCampaignView(host:try OriginalCampaignHost.importOriginal(data:self.host.data,slot:slot,rng:self.host.rng)))
-                } else if let resumed = try Self.chooseResume(data:self.host.data) {
-                    self.replace(with:try OriginalCampaignView(host:resumed))
-                } else { done(false) }
+                } else {
+                    switch targets[index] {
+                    case .slot(let slot):
+                        self.replace(with:try OriginalCampaignView(host:try OriginalCampaignHost.resume(data:self.host.data,from:slots.read(slot:slot))))
+                    case .named(let name):
+                        self.replace(with:try OriginalCampaignView(host:try OriginalCampaignHost.resume(data:self.host.data,from:slots.read(name))))
+                    case .original(let slot):
+                        // MAIN keeps its boot-seeded stream across a load; a slot stores none.
+                        self.replace(with:try OriginalCampaignView(host:try OriginalCampaignHost.importOriginal(data:self.host.data,slot:slot,rng:self.host.rng)))
+                    case .file:
+                        if let resumed = try Self.chooseResume(data:self.host.data) { self.replace(with:try OriginalCampaignView(host:resumed)) } else { done(false) }
+                    case .none:done(false)
+                    }
+                }
             } catch { self.recordInputError(error);done(false) }
         })
     }
@@ -750,6 +859,9 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         // Only a state the player can act on or must know reaches the window.
         if let text = errorText ?? inputNotice ?? host.notice ?? host.playerStatus {
             CanvasTheme.chip(text,at:CGPoint(x:320,y:376),maximumWidth:600,color:errorText == nil ? CanvasTheme.text : CanvasTheme.danger,in:context)
+        }
+        if fastForward,host.hasStarted {
+            CanvasTheme.chip("빨리 감기 ×\(OriginalBattleView.fastRate)",at:CGPoint(x:580,y:24),maximumWidth:120,in:context)
         }
         context.restoreGState()
     }

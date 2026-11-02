@@ -931,7 +931,12 @@ final class OriginalBattleView:NSView {
         context.translateBy(x:canvasOrigin.x,y:canvasOrigin.y);context.scaleBy(x:scale,y:scale)
         context.interpolationQuality = .none
         drawFrame(context);drawField(context);drawList(context);drawMinimap(context);drawStatus(context)
+        if combatPlayer == nil { drawForecasts(context) }
         if combatPlayer != nil { drawCombat(context) }
+        if fastForward {
+            let area = layoutFacts.viewportRect
+            CanvasTheme.chip("빨리 감기 ×\(OriginalBattleView.fastRate)",at:CGPoint(x:area.maxX-56,y:area.minY+16),maximumWidth:120,in:context)
+        }
         if let notice = animator.notice,let catalog = combatArt?.catalog {
             let area = layoutFacts.viewportRect,text = catalog.text(notice,person:personName,strategy:strategyTitle,kind:kindLabel)
             CanvasTheme.chip(text,at:CGPoint(x:area.midX,y:area.midY),maximumWidth:area.width-32,in:context)
@@ -941,6 +946,30 @@ final class OriginalBattleView:NSView {
     private var weatherName:String {
         let names = combatArt?.catalog.weathers ?? [],index = Int(session.turns.weatherIndex)
         return names.indices.contains(index) ? names[index] : String(index)
+    }
+    /// Held Tab runs the campaign this many times as fast.
+    static let fastRate = 4
+    var fastForward = false { didSet { if fastForward != oldValue { needsDisplay = true } } }
+    /// Fast-forward closes lines and timed notices as a click would.
+    func skipLines() {
+        if overlay.notice != nil { overlay.skipNotice() }
+        if animator.notice != nil { animator.dismissNotice() }
+    }
+    /// Each enemy in reach shows the damage it would take and its counter
+    /// chance. An engine addition over the source's red cells.
+    private func drawForecasts(_ context:CGContext) {
+        guard case .attackTarget(let slot) = phase,let cells = try? attackCells(slot) else { return }
+        let facts = layoutFacts,viewport = facts.viewportRect
+        context.saveGState();context.clip(to:viewport)
+        for unit in session.units.values where unit.status == 2 && unit.enemy && cells.contains(unit.position) && unit.scriptFlags&0x20 != 0 {
+            guard let value = try? session.attackForecast(slot,target:unit.slot) else { continue }
+            let cell = camera.rect(of:unit.position,in:viewport,size:facts.cell)
+            var text = value.defeats ? "-\(value.damage) 격파" : "-\(value.damage)"
+            if value.counterPercent > 0 { text += " · 반격 \(value.counterPercent)%" }
+            CanvasTheme.chip(text,at:CGPoint(x:cell.midX,y:cell.minY-6),maximumWidth:180,
+                             color:value.defeats ? CanvasTheme.accent : CanvasTheme.text,in:context)
+        }
+        context.restoreGState()
     }
     private func personName(_ id:Int) -> String { (try? session.people.person(id).name) ?? "" }
     /// MAIN2A556 and F752: the scene at (16,32,416,208) and two stat windows.

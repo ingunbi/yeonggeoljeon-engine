@@ -357,3 +357,28 @@ final class OriginalBattleSession {
     }
     func recordStrategyExecution(_ result:OriginalStrategyExecution) { strategyExecutions.append(result) }
 }
+
+/// What a player's attack will do. The blow itself draws no random number
+/// (MAIN31474); only the counter rolls, against the defender's attack scalar
+/// out of 150. An engine addition: the source shows no forecast.
+struct OriginalAttackForecast:Equatable {
+    var damage:Int
+    var moraleLoss:Int
+    var defeats:Bool
+    var counterPercent:Int
+}
+
+extension OriginalBattleSession {
+    func attackForecast(_ attackerSlot:Int,target targetSlot:Int) throws -> OriginalAttackForecast {
+        let attacker = try live(attackerSlot),target = try live(targetSlot)
+        let a = try people.stats(attacker.person,morale:attacker.morale),d = try people.stats(target.person,morale:target.morale)
+        let subtype = try OriginalCombat.normalPhysicalSubtype(classID:a.classID,tables:combat)
+        var scratch = rng
+        let strike = try OriginalCombat.physicalStrike(OriginalPhysicalInput(attacker:a,defender:d,
+            terrainID:Int(terrain[target.position.y*width+target.position.x]),subtype:subtype,
+            defenderCounterDisabled:target.scriptFlags&2 != 0),tables:combat,rng:&scratch)
+        let counters = strike.counterRoll != nil && [0,2,5].contains(subtype) && strike.damage < d.troops && target.scriptFlags&2 == 0
+        return OriginalAttackForecast(damage:strike.damage,moraleLoss:strike.moraleLoss,defeats:strike.damage >= d.troops,
+                                      counterPercent:counters ? min(150,max(0,d.attackScalar))*100/150 : 0)
+    }
+}

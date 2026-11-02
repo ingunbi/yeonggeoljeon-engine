@@ -80,7 +80,7 @@ always run the source defaults.
 
 | Item | Source | Native effect |
 | --- | --- | --- |
-| 스크롤 단위 | `22832`, byte `+11` | Disabled. It sets the mouse's edge-scroll step (`24212`), and the engine's maps do not scroll that way. |
+| 스크롤 단위 | `22832`, byte `+11` | Disabled. The labels at DS:`2FEC` pick 1, 2, 4 or 8. The field loop passes the value to `0:4F68` (`24212`), which writes byte `+11` of input device 0's 18-byte record at CS:`14FE`: the step of the keyboard-driven pointer while input is enabled. The engine has no keyboard pointer. |
 | 속도설정 | `22BFE`, byte `+13` | The field loop waits speed x 3 ticks (`24818`), so normal is the known six ticks. Field time scales by 2/speed. 노웨이트 has no wait, and the engine uses six times normal. |
 | 모니터 | `229AE`, word `+A` bit 8 | A grey filter on the whole canvas. A captured view does not show this filter, so it has not been looked at. |
 | BGM, 효과음 | `228C6`, word `+A` bits 2 and 1 | The audio switches. |
@@ -89,3 +89,20 @@ always run the source defaults.
 | 부대전투 | `27DC4`, word `+4` high nibble | Zero plays the enlarged view ([original-combat-view.md](original-combat-view.md)). Nonzero skips it and doubles the map effects and the prelude draws, as in the source. |
 | 이동속도 | `27E2C`, low nibble | The walk step of the battle animator. |
 | 적의 이동 | `27774`, bit `1000` | The camera follows enemy walks (`2C4D6`). With it off the engine skips a walk that has no visible cell, where the source still takes the time. |
+
+## Engine additions
+
+These have no source counterpart and never change game state.
+
+- The field writes `Saves/slots/auto.json` whenever the idle field's scene or map
+  differs from the last autosave. F5 and F9 (or the 게임 menu) write and read
+  `quick.json`. Both use the same resume format as the five slots and appear in the
+  load list.
+- Holding Control multiplies the frame step by four for the field, the battle
+  animator and the combat view. Plain lines close after six frames. Questions,
+  lists and choices still wait.
+- The dialogue log keeps the last 300 lines shown in the window.
+- In attack targeting each enemy in reach shows the damage of the blow and the
+  counter chance. The blow draws no random number (`0x31474`). The counter compares
+  the defender's attack scalar with a draw below 150, so the chance is that scalar
+  over 150 when the source would allow a counter.

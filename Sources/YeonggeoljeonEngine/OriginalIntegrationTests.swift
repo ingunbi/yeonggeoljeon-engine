@@ -51,6 +51,14 @@ func originalIntegrationSelfTests() throws {
     try check(try ambush.physicalContext(attackerSlot:0,targetSlot:15,subtype:0).ambush == true,"a hidden attacker reveals itself")
     try check(ambush.units[0]!.scriptFlags&0x20 != 0,"the reveal sets mask twenty")
     try check(try ambush.physicalContext(attackerSlot:0,targetSlot:15,subtype:0).ambush == nil,"a visible attacker has no ambush line")
+    let forecastPeople = try OriginalPeople(catalog:catalog,tables:tables)
+    let forecasting = try OriginalBattleSession(definition:definition,roster:&hiddenRoster,people:forecastPeople,combat:tables,movement:profile,rng:OriginalRNG(state:9))
+    let rngBefore = forecasting.rng
+    let forecast = try forecasting.attackForecast(0,target:15)
+    try check(forecasting.rng == rngBefore,"a forecast draws nothing from the battle stream")
+    let blow = try forecasting.physicalContext(attackerSlot:0,targetSlot:15,subtype:0)
+    try check(forecast.damage == blow.strike.damage && forecast.moraleLoss == blow.strike.moraleLoss,"the forecast matches the blow")
+    try check(forecast.counterPercent == min(150,try forecastPeople.person(1).attackScalar)*100/150,"the counter chance reads the defender's attack scalar")
     var taught = profile;taught.strategyLevelRequirements![4][0] = 3;taught.strategyLevelRequirements![6][0] = 3;taught.strategyLevelRequirements![31][0] = 3
     let learner = try OriginalBattleSession(definition:definition,roster:&hiddenRoster,people:hiddenPeople,combat:tables,movement:taught,rng:OriginalRNG(state:4))
     let gained = OriginalExperienceMutation(level:3,experience:0,levelsGained:2,ignoredReason:nil)

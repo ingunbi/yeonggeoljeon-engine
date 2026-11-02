@@ -148,6 +148,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let frames = NSMenuItem(title:"원작 화면 틀",action:#selector(toggleOriginalFrames(_:)),keyEquivalent:"f")
         frames.keyEquivalentModifierMask = [.command,.shift];frames.target = self
         frames.state = CanvasPresentation.current == .original ? .on : .off;viewMenu.addItem(frames)
+        // Engine additions; the campaign window answers them through the responder chain.
+        let game = NSMenuItem(title:"게임",action:nil,keyEquivalent:"")
+        let gameMenu = NSMenu(title:"게임"); game.submenu = gameMenu; menu.addItem(game)
+        gameMenu.addItem(withTitle:"빠른 저장",action:Selector(("quickSave:")),keyEquivalent:"s")
+        gameMenu.addItem(withTitle:"빠른 불러오기",action:Selector(("quickLoad:")),keyEquivalent:"l")
+        gameMenu.addItem(.separator())
+        gameMenu.addItem(withTitle:"대사 기록",action:Selector(("openDialogueLog:")),keyEquivalent:"j")
+        gameMenu.addItem(withTitle:"빨리 감기 고정",action:Selector(("toggleFastForward:")),keyEquivalent:"t")
         NSApplication.shared.mainMenu = menu
     }
     @objc private func toggleOriginalFrames(_ sender:NSMenuItem) {

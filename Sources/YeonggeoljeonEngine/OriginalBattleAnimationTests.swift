@@ -65,6 +65,10 @@ func originalBattleAnimationSelfTests() throws {
     try check(slots.entries()[2] == OriginalSaveSlots.Entry(title:"첫째",date:when) && slots.entries()[1] == nil,"a slot keeps its title and date")
     try slots.write(["a":2],title:"둘째",slot:2,date:when)
     try check(slots.entries()[2]?.title == "둘째","a slot can be overwritten")
+    try check(slots.entry(.auto) == nil && slots.entry(.quick) == nil,"no engine slot is written yet")
+    try slots.write(["a":3],title:"auto",named:.auto,date:when)
+    try check(slots.entry(.auto) == OriginalSaveSlots.Entry(title:"auto",date:when) && slots.entry(.quick) == nil,"the autosave sits beside the five")
+    try check(slots.entries().compactMap { $0 }.count == 1,"named slots do not take a numbered one")
     do { try slots.write(["a":1],title:"",slot:5);throw EngineError.invalid("Slot five was accepted") }
     catch EngineError.invalid(let text) where text.hasPrefix("Save slot") { checks += 1 }
     // The enlarged view: a synthetic catalog with identity-sized tables.

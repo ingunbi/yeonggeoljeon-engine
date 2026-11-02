@@ -190,6 +190,9 @@ final class CanvasOverlayView:NSView {
         guard let value = notice else { return }
         close();value.onDismiss()
     }
+    /// Fast-forward closes a plain line as a key press would. Questions and
+    /// lists still wait for an answer.
+    func skipNotice() { dismissNotice() }
     private func dismissBrief() {
         guard let value = brief else { return }
         close();value.onDismiss()

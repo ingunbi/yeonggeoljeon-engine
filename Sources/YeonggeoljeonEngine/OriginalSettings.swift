@@ -42,19 +42,28 @@ struct OriginalSaveSlots {
     static let count = 5
     struct Entry:Codable,Equatable { var title:String;var date:Date }
     let directory:URL
-    private func file(_ slot:Int) -> URL { directory.appendingPathComponent("slot-\(slot).json") }
-    private func label(_ slot:Int) -> URL { directory.appendingPathComponent("slot-\(slot).label.json") }
-    func entries() -> [Entry?] {
-        (0..<Self.count).map { slot in
-            guard FileManager.default.fileExists(atPath:file(slot).path),let data = try? Data(contentsOf:label(slot)) else { return nil }
-            return try? JSONDecoder().decode(Entry.self,from:data)
-        }
+    /// Engine slots beside the five: the autosave and the quick slot.
+    enum Named:String,CaseIterable { case auto,quick }
+    private func file(_ name:String) -> URL { directory.appendingPathComponent("\(name).json") }
+    private func label(_ name:String) -> URL { directory.appendingPathComponent("\(name).label.json") }
+    private func entry(_ name:String) -> Entry? {
+        guard FileManager.default.fileExists(atPath:file(name).path),let data = try? Data(contentsOf:label(name)) else { return nil }
+        return try? JSONDecoder().decode(Entry.self,from:data)
     }
+    private func write<Snapshot:Encodable>(_ snapshot:Snapshot,title:String,name:String,date:Date) throws {
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+        try JSONEncoder().encode(snapshot).write(to:file(name),options:.atomic)
+        try JSONEncoder().encode(Entry(title:title,date:date)).write(to:label(name),options:.atomic)
+    }
+    func entries() -> [Entry?] { (0..<Self.count).map { entry("slot-\($0)") } }
     func write<Snapshot:Encodable>(_ snapshot:Snapshot,title:String,slot:Int,date:Date = Date()) throws {
         guard (0..<Self.count).contains(slot) else { throw EngineError.invalid("Save slot is outside the five slots") }
-        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
-        try JSONEncoder().encode(snapshot).write(to:file(slot),options:.atomic)
-        try JSONEncoder().encode(Entry(title:title,date:date)).write(to:label(slot),options:.atomic)
+        try write(snapshot,title:title,name:"slot-\(slot)",date:date)
     }
-    func read(slot:Int) throws -> OriginalCampaignResume { try OriginalCampaignResume.read(from:file(slot)) }
+    func read(slot:Int) throws -> OriginalCampaignResume { try OriginalCampaignResume.read(from:file("slot-\(slot)")) }
+    func entry(_ name:Named) -> Entry? { entry(name.rawValue) }
+    func write<Snapshot:Encodable>(_ snapshot:Snapshot,title:String,named name:Named,date:Date = Date()) throws {
+        try write(snapshot,title:title,name:name.rawValue,date:date)
+    }
+    func read(_ name:Named) throws -> OriginalCampaignResume { try OriginalCampaignResume.read(from:file(name.rawValue)) }
 }
