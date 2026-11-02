@@ -8,9 +8,9 @@ END has a `1600`-byte MZ header and DGROUP file base `CE40`.
 MAIN opcode `2A` submits the selected byte through the framework INT65 call
 with subfunction `0400` and immediately returns interpreter status eight
 (`0x1D176..0x1D196`). This wrapper is not a direct graphics loader. END reads
-that selection using subfunction `0401` (`0x4667..0x4709`). Values zero and one
-both select the END1 program; value three selects the separate END2 branch.
-The two END1 variants diverge later. Resource file names alone do not establish
+that selection using subfunction `0401` (`0x4667..0x4709`). Value three selects
+the separate END2 branch and every other value selects END1. The script issues
+0, 1, 2 and 3. Values 1 and 2 behave alike, and they diverge from 0 later on. Resource file names alone do not establish
 which ending was selected. Exhausting a script member never selects an ending.
 
 The restored common opening uses END1 archive member 19 as a 544×176 NPK
@@ -41,9 +41,7 @@ alternate display mode remains outside this first export.
 
 `tools/prepare_ending.py` emits only local PNG/JSON data. `Ending.swift` owns
 asset validation, exact frame ordering, source clock units and source-bound
-checkpoints. It returns an explicit unrestored frontier at END file `0x4B9A`;
-it never turns the end of the exported frame array into a complete ending.
-The center-out initial reveal, fades, subsequent scenes, selection-specific
-branches, common final flow and END2 branch are not yet restored. Synthetic
-mask/font/clock tests and optional source conformance checks do not establish
-original DOS framebuffer parity or full campaign playability.
+checkpoints for this first scene. Its frontier at END file `0x4B9A` is where the
+scene programs take over ([original-screen-programs.md](original-screen-programs.md)).
+The center-out initial reveal of this first scene is still not restored. Nothing
+here establishes original DOS framebuffer parity.

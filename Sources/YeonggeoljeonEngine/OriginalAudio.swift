@@ -39,6 +39,16 @@ final class OriginalAudio {
         start()
         lock.lock();driver.playEffect(id);lock.unlock()
     }
+    /// OPMUSIC and EDMUSIC: the opening and ending programs choose their own songs.
+    func playProgram(bank:Int,member:Int,loop:Bool) {
+        let songs = bank == 1 ? catalog.opening : catalog.ending
+        guard OriginalAudio.musicEnabled,songs.indices.contains(member),let data = Data(base64Encoded:songs[member].data) else { return }
+        selection = nil;start()
+        lock.lock();driver.loops = loop;driver.play([UInt8](data));lock.unlock()
+    }
+    func fadeProgram(_ rate:Int) { lock.lock();driver.fade(UInt8(rate&255));lock.unlock() }
+    func stopProgram() { lock.lock();driver.stop();driver.loops = true;lock.unlock() }
+    var programPlaying:Bool { lock.lock();defer { lock.unlock() };return driver.playing }
     func stopEffect() { lock.lock();driver.stopEffect();lock.unlock() }
     var effectPlaying:Bool { lock.lock();defer { lock.unlock() };return driver.effect != 0 }
     /// Same selection keeps playing, as CF5:600A does. Nil stops the music.

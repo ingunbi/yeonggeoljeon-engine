@@ -89,8 +89,61 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         contentFilters = settings.monochrome ? [CIFilter(name:"CIPhotoEffectMono")].compactMap { $0 } : []
         audio?.volume = settings.volume
     }
+    /// The opening or ending program in front of everything else.
+    private var screenPlayer:OriginalScreenPlayer?
+    private var screenIsOpening = false
+    private var endingMusicStarted = false
+    private var endingFade = 0.0
+    private static let endingFadeSeconds = 15*OriginalScreenPlayer.tick*4/100
+    private func makeScreen(_ name:String) -> OriginalScreenPlayer? {
+        guard let loaded = try? OriginalScreenCatalog.load(from:host.data.root),let ops = loaded.catalog.programs[name] else { return nil }
+        let player = OriginalScreenPlayer(ops:ops,assets:loaded.catalog.assets,data:loaded.data)
+        player.musicBusy = { [weak self] in self?.audio?.programPlaying ?? false }
+        return player
+    }
+    func playOpening() {
+        screenPlayer = makeScreen("opening");screenIsOpening = screenPlayer != nil
+    }
+    private func advanceScreen(_ player:OriginalScreenPlayer) {
+        for action in player.advance(centiseconds:100.0/60) {
+            switch action {
+            case .music(let bank,let member,let loop):audio?.playProgram(bank:bank,member:member,loop:loop)
+            case .stopMusic(let rate):audio?.fadeProgram(rate)
+            }
+        }
+        needsDisplay = true
+        if player.finished { leaveScreen() }
+    }
+    /// HERO.COM runs MAIN after OPEN. END leaves for DOS; here it returns to the title.
+    private func leaveScreen() {
+        audio?.stopProgram()
+        let opening = screenIsOpening
+        screenPlayer = nil;screenIsOpening = false;needsDisplay = true
+        if !opening { restartMain() }
+    }
+    /// END 0x46CA: three runs END2 from its start; the rest continue END1's first scene.
+    private func startEndingProgram(_ selection:Int) {
+        guard let player = makeScreen(selection == 3 ? "end2" : selection == 0 ? "end1-0" : "end1-1") else { return }
+        screenPlayer = player
+    }
+    private func advanceEnding(_ session:OriginalEndingSession) -> Bool {
+        let selection = session.state.selection
+        if !endingMusicStarted {
+            endingMusicStarted = true
+            audio?.select(nil)
+            if selection != 3 { audio?.playProgram(bank:2,member:0,loop:false) }
+        }
+        var frontier = selection == 3
+        if case .unsupported = session.output { frontier = true }
+        guard frontier else { return false }
+        if selection != 3,endingFade < Self.endingFadeSeconds { endingFade += 1.0/60;needsDisplay = true;return true }
+        startEndingProgram(selection)
+        return screenPlayer != nil
+    }
     private func tick() {
-        audio?.select(host.ending == nil ? host.vm.state.currentMusic : nil)
+        if let player = screenPlayer { advanceScreen(player);return }
+        if let session = host.ending,advanceEnding(session) { return }
+        if host.ending == nil { audio?.select(host.vm.state.currentMusic) }
         battleView?.externalStatus = errorText ?? inputNotice ?? host.notice ?? host.playerStatus
         guard !overlay.active,errorText == nil else { return }
         do {
@@ -437,7 +490,9 @@ final class OriginalCampaignView:NSView,EngineTimedView {
                 case 1:
                     self.presentSlots(saving:false) { [weak self] _ in self?.presentTitleMenu() }
                 case 2:self.presentTitleSettings()
-                case 3: self.replace(with:try OriginalCampaignView(data:self.host.data))
+                case 3:
+                    let next = try OriginalCampaignView(data:self.host.data)
+                    self.replace(with:next);next.playOpening()
                 default: return
                 }
             } catch { self.recordInputError(error) }
@@ -615,11 +670,15 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         NSColor.black.setFill();bounds.fill()
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let shape = CanvasGeometry(bounds:bounds)
+        if let player = screenPlayer,let image = player.image() { Renderer.image(image,in:shape.rect,context:context);return }
         let screen = host.fieldScreenState(),modern = CanvasPresentation.current == .modern && screen != nil
         do {
             let frame = try host.ending.map { try renderer.renderEnding($0) } ?? renderer.render(host.stage,screen:screen,dialogue:false)
             Renderer.image(modern ? frame.image.cropping(to:CanvasFieldMap.viewport) ?? frame.image : frame.image,in:shape.rect,context:context)
         } catch { errorText = "\(error)" }
+        if endingFade > 0 {
+            context.setFillColor(CGColor(gray:0,alpha:min(1,endingFade/Self.endingFadeSeconds)));context.fill(shape.rect)
+        }
         context.saveGState()
         context.translateBy(x:shape.origin.x,y:shape.origin.y);context.scaleBy(x:shape.scale,y:shape.scale)
         // A sheet carries its own money and covers this corner.
@@ -631,6 +690,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         context.restoreGState()
     }
     override func keyDown(with event:NSEvent) {
+        if screenPlayer != nil { screenInput(escape:event.keyCode == 53);return }
         if event.keyCode == 53 || host.frameworkReturn?.outcome == .quit { window?.performClose(nil);return }
         if [36,49,76].contains(event.keyCode),!event.isARepeat {
             inputNotice = nil
@@ -642,7 +702,13 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         if host.failure != nil { errorText = "\(error)" }
         else { inputNotice = "\(error)" }
     }
+    /// OPEN leaves on a mouse button. END has one button loop at the very end.
+    private func screenInput(escape:Bool) {
+        guard let player = screenPlayer else { return }
+        if screenIsOpening || escape { leaveScreen() } else { player.acceptInput() }
+    }
     override func mouseDown(with event:NSEvent) {
+        if screenPlayer != nil { screenInput(escape:false);return }
         // MAIN1E3A8 waits for one input before main exits with code3.
         if host.frameworkReturn?.outcome == .quit { window?.performClose(nil);return }
         inputNotice = nil

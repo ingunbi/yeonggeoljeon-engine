@@ -198,7 +198,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     @objc func playOriginalCampaign() {
         guard let data = data else { return }
-        do { show(try OriginalCampaignView(data:data),title:"원작 캠페인 복원",size:NSSize(width:1024,height:640)) }
+        do {
+            let view = try OriginalCampaignView(data:data)
+            show(view,title:"원작 캠페인 복원",size:NSSize(width:1024,height:640));view.playOpening()
+        }
         catch { self.error(error) }
     }
     /// Native engine saves only; original MSAVE slots are not read.
@@ -397,6 +400,7 @@ do {
         window.title = "영걸전 자체 엔진 · 원작 캠페인"; window.contentView = view; window.contentMinSize = NSSize(width:640,height:440)
         window.center(); delegate.window = window
         window.makeKeyAndOrderFront(nil); window.makeFirstResponder(view); app.activate(ignoringOtherApps:true)
+        (view as? OriginalCampaignView)?.playOpening()
         app.run(); withExtendedLifetime(delegate) {}
     }
 } catch {

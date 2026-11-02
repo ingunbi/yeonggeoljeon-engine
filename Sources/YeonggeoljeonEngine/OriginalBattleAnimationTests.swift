@@ -122,5 +122,26 @@ func originalBattleAnimationSelfTests() throws {
     try check(player.index == 1,"a click ends a skippable hold")
     player.finish()
     try check(player.finished && player.frame == nil,"a scene can be cut short")
+    // The screen player: a synthetic program on the source's canvas and buffers.
+    let names = OriginalScreenCatalog.operations
+    func op(_ name:String,_ values:Int...) -> [Int] { [names.firstIndex(of:name)!]+values }
+    let red = (0..<48).map { $0%3 == 1 ? 15 : 0 }
+    let art:[UInt8] = [0x80,0,0,0,0,0,0,0]                    // leftmost pixel of two groups: colour one
+    var program:[[Int]] = [op("load",0,0,0),op("put",4,2,16,1,0,0),op("clock",100)]
+    program += [op("wait",10),op("mode",4),op("put",4,3,16,1,0,0),op("get",4,2,8,2,1,0),op("music",1,0,1)]
+    program += [[names.firstIndex(of:"fade")!]+red,op("inputwait"),op("musicstop",8),op("clear")]
+    let screen = OriginalScreenPlayer(ops:program,assets:[[0,8]],data:art)
+    var screenActions = screen.advance(centiseconds:0)
+    try check(screen.pc == 4 && screenActions.isEmpty,"a clock op sets the deadline and the first wait holds")
+    screenActions = screen.advance(centiseconds:9)
+    try check(screen.pc == 4,"a wait holds until its absolute deadline")
+    screenActions = screen.advance(centiseconds:3)
+    try check(screenActions == [.music(bank:1,member:0,loop:true)],"music is an action for the window")
+    try check(screen.palette[1] == 1,"a fade moves each channel one step")
+    screen.advance(centiseconds:15*4*OriginalScreenPlayer.tick+1)
+    try check(screen.palette[1] == 15 && !screen.finished && screen.waitingForInput,"a fade takes four ticks a step, then the input wait holds")
+    screen.acceptInput()
+    try check(screen.advance(centiseconds:1) == [.stopMusic(8)] && screen.finished,"a click answers the final button loop")
+    try check(OriginalScreenPlayer.colors(red)[1]&0xFF00 == 0xFF00,"stored channels are 4-bit, red in the second byte")
     print("Original battle animation self-tests passed: \(checks)")
 }

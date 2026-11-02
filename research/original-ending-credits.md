@@ -9,7 +9,9 @@ remain only in ignored local output.
 The selection-three END2 branch is file `0x77BE..0x9541`. It is a separate
 narrative sequence, not the shared final credits. END's main calls the common
 final flow at `0x9570` after either END1 or END2 returns (`0x46CA..0x46E4`).
-The entire END2 narrative has not been restored by this change.
+The narrative now plays through [original-screen-programs.md](original-screen-programs.md),
+along with the final credits described below. END2 has no random effects: every
+sprite position comes from modulo arithmetic and fixed tables.
 
 The first END2 producer draws two NPK halves from END2 members zero and one,
 320×328 at `(0,36)` and `(320,36)` (`0x7803..0x7880`). It cycles six raw
@@ -17,9 +19,7 @@ The first END2 producer draws two NPK halves from END2 members zero and one,
 is nine consecutive 224×16 interleaved-planar strips. Its six five-line
 captions are separate source word lists, displayed from `(16,240)` with the
 source outline offsets. Two original palette references and the text pointer
-facts are retained by the local reader. The next scene starts at `0x7C22`;
-later palette, buffer-transition and randomized effects remain a distinct
-restoration frontier.
+facts are retained by the local reader.
 
 The source `0:8642`, file `0x9C42..0x9D4F`, is a 16-pattern planar transition.
 It calculates `(step*7)%16`, selects one of four row residues and a caller-owned
