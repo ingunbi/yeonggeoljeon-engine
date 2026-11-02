@@ -982,4 +982,28 @@ final class OriginalCampaignHost {
         else { host.waiting = host.vm.waitingState() }
         return host
     }
+    /// Read-only import of an exported original slot (research/original-saves.md).
+    static func importOriginal(data:DataSet,slot:OriginalSaveCatalog.Slot,rng:OriginalRNG) throws -> OriginalCampaignHost {
+        let blank = try OriginalCampaignHost(data:data,rng:rng)
+        let chapter = slot.script.chapter,packed = slot.game.packedMap
+        guard let mapping = blank.exploration.chapterMappings.first(where:{$0.chapter == chapter}) else {
+            throw EngineError.invalid("Original slot chapter has no city table")
+        }
+        var firstActorSlot = 0,worldCells:(width:Int,height:Int)?
+        switch slot.game.kind {
+        case 0:firstActorSlot = try blank.exploration.map(packed:packed,chapter:chapter).objects.count+1
+        case 1:
+            let map = try blank.exploration.map(packed:packed,chapter:chapter)
+            worldCells = (map.width/16,map.height/16)
+        case 2:
+            guard let map = data.resources.maps[String(packed)] else { throw EngineError.invalid("Original slot palace map is unavailable") }
+            firstActorSlot = (map.objects?.count ?? 0)+1
+        default:break
+        }
+        let combat = blank.source.combat
+        let facts = OriginalSaveFacts(program:blank.vm.program,people:blank.source.people.people,
+            maxTroops:{ try OriginalCombat.maxTroops(classID:$0,level:$1,tables:combat) },
+            cityCount:mapping.cityCount,firstActorSlot:firstActorSlot,worldCells:worldCells,rng:rng)
+        return try resume(data:data,from:try slot.resume(facts:facts))
+    }
 }

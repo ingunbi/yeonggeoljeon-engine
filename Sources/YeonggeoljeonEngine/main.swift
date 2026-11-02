@@ -327,7 +327,7 @@ do {
         try originalScriptActionSelfTests();try originalPartySelfTests();try originalPartyIntegrationSelfTests()
         try originalEndingSelfTests();try originalBattleSpriteSelfTests();try originalRetirementSelfTests()
         try originalStrategyFlowInputSelfTests();try originalPlayInputSelfTests();try originalExplorationInputSelfTests()
-        try originalAttackOperationSelfTests();try originalFrameworkSelfTests();try originalResumeSelfTests()
+        try originalAttackOperationSelfTests();try originalFrameworkSelfTests();try originalResumeSelfTests();try originalSaveImportSelfTests()
         try originalBattleScreenSelfTests();try originalItemSelfTests();try originalShopSelfTests();try originalBattleAnimationSelfTests();try originalMusicSelfTests();exit(0)
     }
     guard let root = options.data ?? Bundle.main.resourceURL?.appendingPathComponent("GameData",isDirectory:true) else {

@@ -43,9 +43,9 @@ physical binding of input code `23` is not established.
 
 At a source `3D` prompt the window asks the original question and writes an
 `OriginalCampaignResume` JSON file into a slot under the user's Application
-Support folder. It is native engine state, not an MSAVE slot; original slots
-are neither read nor written. An MSAVE file starts with four bytes of date and
-then a scenario title, and the native slot keeps its own title and date. A resume point is produced only when the stage
+Support folder. It is native engine state, not an MSAVE slot. Original slots
+are never written; the load list also imports them read-only, as described in
+[the save note](original-saves.md). The native slot keeps its own title and date. A resume point is produced only when the stage
 is idle outside the battle palette and no other source operation owns the
 host: either at a pending `3D`, or at an idle field controller with no
 running script (the field-menu save, recorded without a save offset). It retains the VM state with its pending `3D`, shared person objects,

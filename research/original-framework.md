@@ -79,8 +79,8 @@ examined push sequence; public source contains no original string.
 
 The campaign window shows the selector over the current screen. Yes replaces
 the campaign host with a new one, which shows MAIN's title menu as described in
-[the resume note](native-resume.md). Original save slots and the `0x1E3A8`
-pictures are not restored. No leaves a native
+[the resume note](native-resume.md). The `0x1E3A8` pictures are not restored.
+Original slots import read-only ([the save note](original-saves.md)). No leaves a native
 status line and closes the window on the next input. The replay driver accepts
 `{kind:"retry-choice",index}` and stops after recording the outcome.
 

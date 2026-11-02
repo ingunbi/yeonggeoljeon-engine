@@ -599,6 +599,15 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             CanvasSheet.Row(label:"슬롯 \(index+1)",value:entry.map { dates.string(from:$0.date) } ?? "비어 있음",
                             detail:entry.map { .init(heading:$0.title) },enabled:saving || entry != nil)
         }
+        let originals = saving ? nil : try? OriginalSaveCatalog.load(root:host.data.root)
+        for slot in originals?.slots ?? [] {
+            let date = slot.date
+            rows.append(.init(label:"원작 슬롯 \(slot.slot+1)",value:String(format:"%02d/%02d/%02d %02d:%02d",date.year,date.month,date.day,date.hour,date.minute),
+                              detail:.init(heading:slot.title)))
+        }
+        for refused in originals?.refused ?? [] {
+            rows.append(.init(label:"원작 슬롯 \(refused.slot+1)",value:"읽을 수 없음",enabled:false))
+        }
         if !saving { rows.append(.init(label:"파일에서 불러오기")) }
         let items = host.framework?.fieldMenu?.items
         let title = items?.first(where:{ $0.action == (saving ? "save" : "load") })?.text ?? ""
@@ -619,6 +628,10 @@ final class OriginalCampaignView:NSView,EngineTimedView {
                     }
                 } else if index < OriginalSaveSlots.count {
                     self.replace(with:try OriginalCampaignView(host:try OriginalCampaignHost.resume(data:self.host.data,from:slots.read(slot:index))))
+                } else if let slots = originals?.slots,slots.indices.contains(index-OriginalSaveSlots.count) {
+                    // MAIN keeps its boot-seeded stream across a load; a slot stores none.
+                    let slot = slots[index-OriginalSaveSlots.count]
+                    self.replace(with:try OriginalCampaignView(host:try OriginalCampaignHost.importOriginal(data:self.host.data,slot:slot,rng:self.host.rng)))
                 } else if let resumed = try Self.chooseResume(data:self.host.data) {
                     self.replace(with:try OriginalCampaignView(host:resumed))
                 } else { done(false) }

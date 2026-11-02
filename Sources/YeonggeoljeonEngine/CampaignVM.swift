@@ -433,6 +433,9 @@ final class CampaignVM {
         guard [0,2].contains(state.packedMap >> 12) else {
             throw EngineError.invalid("Source actor-cache replay has no world/battle call site")
         }
+        return Self.settlementCacheReplay(&state)
+    }
+    static func settlementCacheReplay(_ state: inout OriginalCampaignState) -> OriginalSettlementCacheReplay {
         let ownerMatches = state.actorCacheCity == state.city && state.actorCacheMap == state.packedMap
         if !ownerMatches {
             state.actorCacheDirty = true

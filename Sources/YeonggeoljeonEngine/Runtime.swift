@@ -362,10 +362,12 @@ final class Runtime {
     func closeStory() { storyPanel = nil }
     private func centerWorldCamera(_ point:GridPoint) throws {
         guard let map = currentMap,map.width/16 >= 32,map.height/16 >= 20 else { throw EngineError.invalid("Original world viewport exceeds its picture dimensions") }
-        let w = map.width/16,h = map.height/16
+        camera = Self.worldCameraOrigin(point,width:map.width/16,height:map.height/16)
+    }
+    static func worldCameraOrigin(_ point:GridPoint,width w:Int,height h:Int) -> [Int] {
         let x = point.x < 15 ? 0 : point.x > w-17 ? w-32 : point.x-15
         let y = point.y < 10 ? 0 : point.y > h-10 ? h-20 : point.y-10
-        camera = [x*16,y*16]
+        return [x*16,y*16]
     }
     var viewport: [Int] { currentMap?.viewport ?? data.scene.viewport ?? [16,16,512,320] }
     /// Native resume of an idle host-driven scene. Only a stage with no
