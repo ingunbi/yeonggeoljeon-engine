@@ -104,8 +104,8 @@ struct OriginalBattleAnimator {
     private var speed = 0
     private var started = false
     private var noticeDismissed = false
-    /// The native view's mode zero timeout; the source timer rate is unknown.
-    static let noticeSeconds = 2.0
+    /// CF5:3C5E mode zero holds through CF5:25A6(2): sixteen units of six ticks.
+    static let noticeSeconds = 96*tick
     var isIdle:Bool { cues.isEmpty }
     var notice:OriginalBattleNotice? {
         if case .notice(let value)? = cues.first { return value }

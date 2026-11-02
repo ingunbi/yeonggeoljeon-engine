@@ -122,7 +122,8 @@ extension OriginalSaveCatalog.Slot {
             camera = Runtime.worldCameraOrigin(first.position,width:cells.width,height:cells.height)
         }
         let stage = Snapshot(mode:"scene",microseconds:0,nextCommand:0,map:packed,camera:camera,blackAlpha:0,actors:actors,dialogue:nil,
-            batch:nil,endReason:nil,inputCount:0,visible:true,caption:nil,termination:nil,followPerson:world ? actors.first?.person : nil,
+            // CF5:B34E reads the slot title back into the HUD caption DS:DB4C (0x1ED38).
+            batch:nil,endReason:nil,inputCount:0,visible:true,caption:title.isEmpty ? nil : title,termination:nil,followPerson:world ? actors.first?.person : nil,
             storyPanel:nil,palette:game.kind)
         let checkpoint = OriginalCampaignCheckpoint(vm:vm,people:constructed,roster:restoredRoster(),rng:facts.rng,money:player.money,
             stage:stage,liveUnits:nil,turns:nil,battleValue24:nil)

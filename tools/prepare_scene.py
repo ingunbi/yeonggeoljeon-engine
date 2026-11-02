@@ -44,6 +44,33 @@ class SceneError(ValueError):
     """An expected source-format failure; never guess a replacement value."""
 
 
+# Source 0B (1C602) calls CF5:CF04, which shows its text with the selector
+# CF5:3C5E in mode 0; 0E (1C6A8) builds a stock text and joins that call.
+# Mode 0 has no button and holds through CF5:25A6(2), which is CF5:2570(16):
+# sixteen units of six driver ticks, or less if any input arrives. Source 0D
+# (1C671) is the HUD caption: CF5:C340 copies its text to DS:DB4C.
+MESSAGE_BOX_ROUTES = (
+    (0x1C633, bytes.fromhex("9a04cff50c"), "0B calls CF5:CF04"),
+    (0x1C6F4, bytes.fromhex("e936ff"), "0E joins the 0B call"),
+    (0x1C6A0, bytes.fromhex("9a40c3f50c"), "0D calls CF5:C340"),
+    (0x2085D, bytes.fromhex("6a009a5e3cf50c"), "CF5:CF04 calls CF5:3C5E in mode 0"),
+    (0x178B1, bytes.fromhex("b802009aa625f50c"), "mode 0 holds through CF5:25A6(2)"),
+    (0x15EF6, bytes.fromhex("c1e0039a7025f50c"), "CF5:25A6 passes eight times its units to CF5:2570"),
+    (0x15EC9, bytes.fromhex("6bf706"), "CF5:2570 counts six ticks a unit"),
+)
+# SBOPL2.COM sets PIT divisor 0x1000 and counts 53 of every 256 interrupts.
+DRIVER_TICK_SECONDS = 256 / 53 * 4096 / 1193182
+MESSAGE_BOX_TICKS = 2 * 8 * 6
+
+
+def message_box_seconds(main: bytes) -> float:
+    """How long a mode 0 box stays without input, after checking its route."""
+    for at, expected, label in MESSAGE_BOX_ROUTES:
+        if span(main, at, len(expected), "MAIN.EXE message box route") != expected:
+            raise SceneError(f"MAIN.EXE message box route does not match the examined profile: {label}")
+    return MESSAGE_BOX_TICKS * DRIVER_TICK_SECONDS
+
+
 def span(data: bytes, offset: int, size: int, context: str) -> bytes:
     if offset < 0 or size < 0 or offset + size > len(data):
         raise SceneError(f"{context}: truncated source span at {offset:#x}+{size:#x}")
@@ -149,7 +176,8 @@ def extract_record(script: bytes, start: int, end: int, text: bytes,
                    text_bounds: tuple[int, int], people: bytes,
                    *, allowed_maps: set[int] | None = None,
                    script_resource: str = "SNR0D.R3", script_member: int = 0,
-                   text_resource: str = "SNR0M.R3") -> tuple[list, list, dict]:
+                   text_resource: str = "SNR0M.R3",
+                   message_seconds: float | None = None) -> tuple[list, list, dict]:
     commands, effects = [], []
     offset = start
     selected_map = None
@@ -186,9 +214,11 @@ def extract_record(script: bytes, start: int, end: int, text: bytes,
                     raise SceneError(f"selected record leaves the first palace map: {selected_map}")
                 commands.append({"op": "map", "map": selected_map, **fields})
             elif opcode == 0x0B:
-                at = text_bounds[0] + word(raw, 1, "caption offset")
-                caption, after = text_at(text, at, text_bounds[1], text_resource)
-                commands.append({"op": "caption", "text": caption, **fields,
+                if message_seconds is None:
+                    raise SceneError("source 0B message box needs MAIN's checked timing")
+                at = text_bounds[0] + word(raw, 1, "message offset")
+                message, after = text_at(text, at, text_bounds[1], text_resource)
+                commands.append({"op": "say", "speaker": "", "text": message, "seconds": message_seconds, **fields,
                                  "textSource": source_span(text_resource, text, at, after - at)})
             elif opcode == 0x18:
                 person = word(raw, 1, "remove person")
@@ -219,6 +249,12 @@ def extract_record(script: bytes, start: int, end: int, text: bytes,
     return commands, effects, boundary
 
 
+def scene_name(commands: list[dict]) -> str:
+    """The caption, else the first message box, which usually names the place."""
+    caption = next((c["text"] for c in commands if c["op"] == "caption"), "")
+    return caption or next((c["text"] for c in commands if c["op"] == "say" and "seconds" in c), "")
+
+
 def read_resource(game: Path, name: str) -> tuple[bytes, dict]:
     matches = [path for path in game.iterdir() if path.name.casefold() == name.casefold()]
     if len(matches) != 1 or not matches[0].is_file():
@@ -241,9 +277,9 @@ def prepare_scene(game: Path) -> dict:
     text = inputs["SNR0M.R3"][0]
     text_bounds = offset_sections(text, "SNR0M.R3", sentinel=False)[0]
     commands, effects, boundary = extract_record(member.data, start, end, text,
-                                                 text_bounds, inputs["BAKDATA.R3"][0])
-    caption = next((c["text"] for c in commands if c["op"] == "caption"), "")
-    return {"format": 1, "id": "original-opening-palace", "name": caption,
+                                                 text_bounds, inputs["BAKDATA.R3"][0],
+                                                 message_seconds=message_box_seconds(inputs["MAIN.EXE"][0]))
+    return {"format": 1, "id": "original-opening-palace", "name": scene_name(commands),
             "width": 640, "height": 400, "coordinateSystem": "town",
             "viewport": [16, 16, 512, 320],
             "coordinates": {"grid": [16, 16], "columnStaggerY": 8, "actorAnchor": [0, 24]},

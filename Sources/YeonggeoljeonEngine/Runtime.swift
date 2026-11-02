@@ -213,6 +213,8 @@ enum Termination: String, Codable { case sourceBoundary, unsupportedBoundary, ru
 struct CommandSnapshot: Codable, Equatable {
     var person: Int?; var speaker: String; var text: String; var source: JSONValue?
     var textSource: JSONValue?
+    /// A MAIN3C5E mode0 box closes by itself after this many seconds; nil waits for input.
+    var closesAfter: Double? = nil
 }
 
 /// Contract: research/bootstrap-contract.md. Original-byte exporters own image,
@@ -239,6 +241,7 @@ final class Runtime {
     private(set) var termination: Termination?
     private var registration = 0
     private var waitRemaining: Int64 = 0
+    private var dialogueRemaining: Int64 = 0
     private var fadeRemaining: Int64 = 0
     private var fadeDuration: Int64 = 0
     private var fadeStart = 0.0
@@ -418,7 +421,7 @@ final class Runtime {
         guard !busy, mode != "ended" else { return }
         if mode == "title" { mode = "scene"; inputCount += 1; pump(); return }
         guard dialogue != nil else { return }
-        dialogue = nil; inputCount += 1; pump()
+        dialogue = nil; dialogueRemaining = 0; inputCount += 1; pump()
     }
     var verifiedBoundary: Bool { termination == .sourceBoundary || termination == .unsupportedBoundary }
     private func finish(_ reason: String, kind: Termination) {
@@ -462,7 +465,8 @@ final class Runtime {
                     guard hostMaps[id] != nil || data.resources.maps[String(id)] != nil else { throw EngineError.invalid("Map resource is unavailable: \(id)") }
                     mapID = id; actors.removeAll(); camera = [0,0]; registration = 0;followPerson = nil
                     try setPalette(id>>12)
-                    visible = false; caption = nil; record(index,c)
+                    // Only source 0D writes the HUD caption DS:DB4C; a map keeps it.
+                    visible = false; record(index,c)
                 case "show": visible = true; record(index,c)
                 case "caption":
                     guard let text = c.text else { throw EngineError.invalid("Caption text is missing") }
@@ -503,7 +507,8 @@ final class Runtime {
                     if total == 0 { settleBatch() }
                 case "say":
                     guard let text = c.text else { throw EngineError.invalid("Dialogue text is missing") }
-                    dialogue = CommandSnapshot(person: c.person,speaker: c.speaker ?? "",text: text,source: c.source,textSource: c.textSource)
+                    dialogueRemaining = c.seconds == nil ? 0 : try duration(c.seconds)
+                    dialogue = CommandSnapshot(person: c.person,speaker: c.speaker ?? "",text: text,source: c.source,textSource: c.textSource,closesAfter: c.seconds)
                     record(index,c)
                 case "remove":
                     let person = try required(c.person,"person")
@@ -536,10 +541,16 @@ final class Runtime {
         }
     }
     func advance(microseconds: Int64) {
-        guard microseconds > 0, mode == "scene", dialogue == nil else { return }
+        guard microseconds > 0, mode == "scene", dialogue == nil || dialogueRemaining > 0 else { return }
         var available = microseconds
-        while available > 0 && mode == "scene" && dialogue == nil {
-            if var b = batch {
+        while available > 0 && mode == "scene" {
+            if dialogue != nil {
+                // Only a timed box runs out; any other line waits for input.
+                guard dialogueRemaining > 0 else { return }
+                let used = min(available,dialogueRemaining); guard advanceClock(used) else { return }
+                dialogueRemaining -= used; available -= used
+                if dialogueRemaining == 0 { dialogue = nil; pump() }
+            } else if var b = batch {
                 let used = min(available,b.duration - b.elapsed)
                 guard advanceClock(used) else { return }
                 b.elapsed += used; available -= used; batch = b; updateActors()

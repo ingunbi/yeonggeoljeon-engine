@@ -244,6 +244,30 @@ class CampaignVMFormatTests(unittest.TestCase):
         self.assertEqual(menu["options"], ["A", "B"])
         self.assertEqual(menu["textSource"]["resource"], "synthetic-text")
 
+    def test_script_text_routes_follow_main(self):
+        from prepare_scene import DRIVER_TICK_SECONDS, MESSAGE_BOX_ROUTES, MESSAGE_BOX_TICKS
+        main = bytearray(0x21000)
+        for at, expected, _ in MESSAGE_BOX_ROUTES:
+            main[at:at + len(expected)] = expected
+        table = bytearray(lengths())
+        for opcode in (8, 0x0B, 0x0D):
+            table[opcode] = 2
+        code = bytes([0x0B, 0, 0, 0x0D, 0, 0, 0x08, 0, 0, 0xFF])
+        text = b"Box\0"
+
+        def compile_with(source: bytes):
+            return compile_instructions(code, list(instructions(code, 0, len(code), bytes(table))), text, (0, len(text)),
+                                        b"", source, bytes(table), resource="synthetic", text_resource="synthetic-text",
+                                        member=0, battle_ids={})
+        box, caption, narration = (effect["commands"][0] for effect in compile_with(bytes(main))[:3])
+        self.assertEqual((box["op"], box["seconds"]), ("say", MESSAGE_BOX_TICKS * DRIVER_TICK_SECONDS))
+        self.assertAlmostEqual(box["seconds"], 1.5918, places=3)
+        self.assertEqual((caption["op"], caption["text"]), ("caption", "Box"))
+        self.assertEqual((narration["op"], "seconds" in narration), ("say", False))
+        main[0x2085E] = 1  # a mode one box would wait for its button instead
+        with self.assertRaises(SceneError):
+            compile_with(bytes(main))
+
     def test_choice_prompt_dialogue_is_deferred_without_duplicate_speech(self):
         from prepare_scene import PERSON_BASE
         people = bytes(PERSON_BASE) + b"Test\0\0"

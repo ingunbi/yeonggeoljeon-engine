@@ -17,8 +17,8 @@ import sys
 
 from prepare_resources import inventory
 from prepare_battles import battle_identity, battle_identity_map
-from prepare_scene import (MAIN_SHA256, SceneError, extract_record, offset_sections,
-                           read_resource, source_span)
+from prepare_scene import (MAIN_SHA256, SceneError, extract_record, message_box_seconds,
+                           offset_sections, read_resource, scene_name, source_span)
 from resource_formats import decode_archive
 from scenario_format import (instructions, record_directory, source_operand_lengths,
                              text_sections)
@@ -60,7 +60,8 @@ def transition(instruction, chapter: int, member: int, block: int,
 
 def preview_scene(script: bytes, descriptor: dict, text: bytes,
                   bounds: tuple[int, int], people: bytes, identity: str,
-                  script_name: str, text_name: str, member: int) -> tuple[dict | None, dict]:
+                  script_name: str, text_name: str, member: int,
+                  message_seconds: float | None = None) -> tuple[dict | None, dict]:
     # The existing town command owner remains the only interpreter of native
     # scene effects. The wider framing catalog does not grant those operations
     # executable semantics.
@@ -68,7 +69,7 @@ def preview_scene(script: bytes, descriptor: dict, text: bytes,
                                                   descriptor["bodyEnd"], text, bounds, people,
                                                   allowed_maps=set(range(0x2000, 0x2017)),
                                                   script_resource=script_name, script_member=member,
-                                                  text_resource=text_name)
+                                                  text_resource=text_name, message_seconds=message_seconds)
     meaningful = any(command["op"] != "end" for command in commands)
     if not meaningful:
         return None, boundary
@@ -87,8 +88,7 @@ def preview_scene(script: bytes, descriptor: dict, text: bytes,
             placed.discard(command["person"])
     if not has_map:
         return None, {**boundary, "previewReason": "no self-contained map state; previous source context is not fabricated"}
-    caption = next((command["text"] for command in commands if command["op"] == "caption"), "")
-    scene = {"format": 1, "id": identity, "name": caption or identity,
+    scene = {"format": 1, "id": identity, "name": scene_name(commands) or identity,
              "width": 640, "height": 400, "coordinateSystem": "town",
              "viewport": [16, 16, 512, 320],
              "coordinates": {"grid": [16, 16], "columnStaggerY": 8, "actorAnchor": [0, 24]},
@@ -106,6 +106,7 @@ def prepare_campaign(game: Path) -> dict:
     if hashlib.sha256(main).hexdigest() != MAIN_SHA256:
         raise SceneError("MAIN.EXE does not match the examined scenario framing profile")
     lengths = source_operand_lengths(main)
+    message_seconds = message_box_seconds(main)
     people, people_source = read_resource(game, "BAKDATA.R3")
     inputs = [main_source, people_source]
     records, chapters, vm_records = [], [], []
@@ -153,7 +154,7 @@ def prepare_campaign(game: Path) -> dict:
                         if fact is not None:
                             transitions.append(fact)
                     scene, boundary = preview_scene(member.data, descriptor, text, text_bounds[member.index], people, identity,
-                                                    script_name, text_name, member.index)
+                                                    script_name, text_name, member.index, message_seconds)
                     if scene is None:
                         execution = "data-only"
                         coverage["dataOnlyRecords"] += 1

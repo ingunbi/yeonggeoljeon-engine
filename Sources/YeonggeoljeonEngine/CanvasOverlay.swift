@@ -35,6 +35,9 @@ struct CanvasNotice {
     /// Seconds before a source timed message closes by itself; input closes
     /// it sooner. Nil waits for input.
     var timeout:TimeInterval? = nil
+    /// A script line that waits for input sits low, where dialogue does,
+    /// even without a speaker, so a picture above it stays visible.
+    var narration = false
     var onDismiss:() -> Void
 }
 
@@ -119,9 +122,10 @@ final class CanvasOverlayView:NSView {
     static let fieldViewport = CGRect(x:16,y:16,width:512,height:320)
     var viewport = fieldViewport
     private func noticeRect(_ value:CanvasNotice) -> CGRect {
-        guard value.portrait == nil,value.speaker.isEmpty else {
+        guard value.portrait == nil,value.speaker.isEmpty,!value.narration else {
             let width = min(viewport.width-16,540)
-            return CGRect(x:viewport.midX-width/2,y:viewport.maxY-112,width:width,height:104)
+            let height = value.narration ? max(72,textHeight(value.text,width:width-40)+28) : 104
+            return CGRect(x:viewport.midX-width/2,y:viewport.maxY-8-height,width:width,height:height)
         }
         // A plain refusal is a small card in the middle of the map window.
         let style = CanvasTheme.attributes(font,CanvasTheme.text)
@@ -460,7 +464,7 @@ final class CanvasOverlayView:NSView {
         let top = value.speaker.isEmpty ? (value.portrait == nil ? rect.minY+14 : rect.minY+18) : rect.minY+30
         (value.text as NSString).draw(with:CGRect(x:textX,y:top,width:rect.maxX-textX-18,height:rect.maxY-top-6),
                                       options:[.usesLineFragmentOrigin],attributes:attributes())
-        if value.timeout == nil,value.portrait != nil || !value.speaker.isEmpty {
+        if value.timeout == nil,value.portrait != nil || !value.speaker.isEmpty || value.narration {
             CanvasTheme.continueMark(at:CGPoint(x:rect.maxX-16,y:rect.maxY-13),in:context)
         }
     }

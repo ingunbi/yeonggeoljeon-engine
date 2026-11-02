@@ -31,7 +31,7 @@ cities. The importer reads only `cityCount` rows.
 | Offset | Size | Contents |
 |---|---|---|
 | `0x0000` | 5 | Date: BCD year, month in the high nibble in binary, BCD day, hour and minute (`0x1F08B..0x1F133`). |
-| `0x0005` | 30 | Title, CP949. |
+| `0x0005` | 30 | Title, CP949: the HUD caption DS:`DB4C` (`0x1E80B`, read back at `0x1ED38`). |
 | `0x0023` | 20 | Player: `+0` money, `+4` battle options, `+A` sound word, `+C` input enable, `+E` current music (FFFF none), `+10` current city, `+11` scroll, `+12` map chapter, `+13` speed. |
 | `0x0037` | 9 | Game: `+0,+1` x and y, `+4` city selector, `+5` map kind, `+6` map index, `+7` entry mode. |
 | `0x0040` | 9 | Return block, same layout, with the real return cell. |

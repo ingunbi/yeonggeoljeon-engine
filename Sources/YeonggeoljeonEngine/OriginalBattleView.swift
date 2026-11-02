@@ -533,7 +533,7 @@ final class OriginalBattleView:NSView {
     }
     /// MAIN3C5E mode0 waits a fixed time unless input arrives.
     private func say(_ text:String,then done:@escaping () -> Void = { }) {
-        overlay.show(CanvasNotice(speaker:"",text:text,portrait:nil,timeout:2,onDismiss:done))
+        overlay.show(CanvasNotice(speaker:"",text:text,portrait:nil,timeout:OriginalBattleAnimator.noticeSeconds,onDismiss:done))
     }
     private func kindLabel(_ kind:Int) -> String { style.commands?.kindLabels[kind] ?? String(kind) }
     private func className(_ id:Int) -> String { style.commands?.classNames[id] ?? String(id) }

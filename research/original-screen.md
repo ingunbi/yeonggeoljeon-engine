@@ -25,10 +25,38 @@ row equals its cleared row.
 
 | Field | Writer | Value | Format |
 |---|---|---|---|
-| caption | `0x1FC5E..0x1FC8E` | DS:`DB4C`, written by source `0B` through `CF5:C340` | `%s` |
+| caption | `0x1FC5E..0x1FC8E` | DS:`DB4C`, written by source `0D` through `CF5:C340` | `%s` |
 | money | `0x1FCB2..0x1FCE8` | player object `7A80+0` through `CF5:220A` | `%5u` |
 | level | `0x1FCEA..0x1FD22` | person 0 (DS:`7A94`) `+21` through `CF5:7572` | `%4u` |
 | territory | `0x1FD24..0x1FD62` | city of player `7A80+10` through `CF5:210E`/`2118` | `%6s` |
+
+## Script text
+
+The interpreter `CF5:8794` sends three text opcodes three ways
+(`0x1C1E4..0x1C24E` is the case chain):
+
+| Opcode | Handler | Effect |
+|---|---|---|
+| `08` | `0x1C572` | Narration window `CF5:C15A`; it waits for input. |
+| `0B` | `0x1C602` | `CF5:CF04` calls the selector `CF5:3C5E` in mode 0. |
+| `0D` | `0x1C671` | `CF5:C340` copies the text to DS:`DB4C` and redraws the caption. |
+| `0E` | `0x1C6A8` | A stock text from DS:`24FE`, then the `0B` call (`0x1C6F4`). |
+
+Mode 0 has no button. It holds through `CF5:25A6(2)`, which calls `CF5:2570(16)`:
+sixteen units of six driver ticks, about 1.59 seconds, or less if any input arrives
+(`0x178B1`, `0x15EC0..0x15EF4`). So `0B` and `0E` are short boxes such as a place
+name or a gain, and `0D` is the chapter title that stays in the HUD. Each chapter
+opens with a `0E` box and a `0D` with the same text. Only `0D` writes DS:`DB4C`; the
+title menu clears it (`0x1F9B7`), a map load keeps it, and MSAVE stores it as the
+slot title (`0x1E80B`, read back at `0x1ED38`).
+
+The producers check these call sites and the mode 0 wait before exporting
+(`MESSAGE_BOX_ROUTES` in `tools/prepare_scene.py`). Earlier builds swapped them:
+they showed `0B` text as the caption and `0D` as narration. The native runtime
+closes a `0B` or `0E` line after the 96 ticks; input closes it sooner. The window
+centres these boxes and puts narration low in the map window, where dialogue sits,
+so a picture above it stays visible. The native slot title is the caption; an
+imported original slot restores its title as the caption.
 
 Local `story.json` keeps each writer's rectangle, clear colour, text origin,
 format and source offsets under `screens`. Public tests use synthetic MAIN

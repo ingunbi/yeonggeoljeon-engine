@@ -82,6 +82,17 @@ func selfTests() throws {
     try check(fading.trace.contains { $0.operation == "caption" && $0.textSource != nil },"caption provenance survives the runtime")
     fading.advance(microseconds:100_000)
     try check(fading.verifiedBoundary && fading.blackAlpha == 1,"fade completes at the exact boundary")
+    // Source 0B/0E boxes (MAIN3C5E mode0) close by themselves; narration waits.
+    let boxes = Runtime(try data([Command("map",map:8192),Command("say",text:"box",seconds:0.5),Command("say",text:"line"),
+                                  Command("say",text:"again",seconds:0.5),Command("end")]))
+    boxes.acknowledge(); boxes.advance(microseconds:400_000)
+    try check(boxes.dialogue?.text == "box" && boxes.dialogue?.closesAfter == 0.5,"a timed box holds until its time")
+    boxes.advance(microseconds:200_000)
+    try check(boxes.dialogue?.text == "line" && boxes.inputCount == 1,"a timed box closes without input")
+    boxes.advance(microseconds:5_000_000)
+    try check(boxes.dialogue?.text == "line","narration waits for input")
+    boxes.acknowledge(); boxes.acknowledge()
+    try check(boxes.verifiedBoundary && boxes.inputCount == 3,"input closes a timed box early")
     do { _ = try fixture.containedFile("../escape.png"); throw EngineError.invalid("Traversal test did not reject") }
     catch EngineError.invalid(let message) { try check(message.contains("contained"),"path traversal is rejected") }
     resources.title = "/absolute.png"

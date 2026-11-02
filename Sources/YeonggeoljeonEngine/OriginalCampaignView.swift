@@ -348,10 +348,13 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             if dialogueLog.count > 300 { dialogueLog.removeFirst() }
         }
         if host.stage.palette != 3 { overlay.viewport = host.fieldScreenState() != nil ? fieldOverlay : Self.pictureViewport }
-        overlay.show(CanvasNotice(speaker:dialogue.speaker,text:dialogue.text,portrait:portrait(dialogue.person,palette:host.stage.palette)) { [weak self] in
+        // A timed box (source 0B, 0E) closes by itself; narration sits where dialogue does.
+        var line = CanvasNotice(speaker:dialogue.speaker,text:dialogue.text,portrait:portrait(dialogue.person,palette:host.stage.palette),timeout:dialogue.closesAfter) { [weak self] in
             guard let self = self else { return }
             self.act { try self.host.acknowledge() }
-        })
+        }
+        line.narration = dialogue.closesAfter == nil
+        overlay.show(line)
     }
     /// A visit stays in one window. Each blocking call of the source routine
     /// changes the merchant's line, the list and what answers it.
@@ -554,7 +557,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         case .gaveUp(let id):(pattern,item) = (texts.giftGaveUp,id)
         case .discarded(let id):(pattern,item) = (texts.giftDiscarded,id)
         }
-        overlay.show(CanvasNotice(speaker:"",text:originalFormat(pattern,[itemName(item)]),portrait:nil,timeout:2) { [weak self] in
+        // MAIN1A87C: CF5:3C5E in mode zero.
+        overlay.show(CanvasNotice(speaker:"",text:originalFormat(pattern,[itemName(item)]),portrait:nil,timeout:OriginalBattleAnimator.noticeSeconds) { [weak self] in
             self?.act { try self?.host.acknowledgeItemMessage() }
         })
     }
@@ -734,8 +738,10 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private func saveSlots() throws -> OriginalSaveSlots {
         OriginalSaveSlots(directory:try Self.savesDirectory().appendingPathComponent("slots",isDirectory:true))
     }
-    /// The name a slot shows, as MSAVE keeps a title beside its data.
+    /// MSAVE's slot title is the HUD caption DS:DB4C (0x1E80B); the engine
+    /// adds the place when the source has written no caption yet.
     private var slotTitle:String {
+        if let caption = host.stage.caption,!caption.isEmpty { return caption }
         let state = host.vm.state
         let place = host.fieldScreenState()?.territory ?? host.battle?.definition.name ?? ""
         return "\(state.chapter)장 \(place)"

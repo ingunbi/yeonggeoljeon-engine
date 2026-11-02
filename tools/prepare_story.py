@@ -39,7 +39,7 @@ def picture_directory(data: bytes, count: int) -> list[tuple[int, int]]:
 # (1FE2E..1FE69). HUD writers share one shape: clear rect, then text cursor.
 FIELD_FRAME_CALL, BATTLE_FRAME_CALL, PORTRAIT_CALL = 0x1FDB1, 0x1FE39, 0x1FE15
 HUD_FIELDS = {"caption": 0x1FC5E, "money": 0x1FCB2, "level": 0x1FCEA, "territory": 0x1FD24}
-HUD_SOURCES = {"caption": "MAIN.EXE:0x1FC5E..0x1FC8E; DS:DB4C via CF5:C340 (source0B)",
+HUD_SOURCES = {"caption": "MAIN.EXE:0x1FC5E..0x1FC8E; DS:DB4C via CF5:C340 (source0D)",
                "money": "MAIN.EXE:0x1FCB2..0x1FCE8; player7A80+0 via CF5:220A",
                "level": "MAIN.EXE:0x1FCEA..0x1FD22; person0 (DS:7A94) +21 via CF5:7572",
                "territory": "MAIN.EXE:0x1FD24..0x1FD62; city player7A80+10 via CF5:210E/2118"}

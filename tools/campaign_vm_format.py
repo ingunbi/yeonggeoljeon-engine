@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import struct
 
-from prepare_scene import SceneError, dialogue, source_span, span, text_at
+from prepare_scene import SceneError, dialogue, message_box_seconds, source_span, span, text_at
 
 
 MAIN_DATA_SEGMENT = 0x37DA0
@@ -324,10 +324,17 @@ def compile_instructions(script: bytes, frames: list, text: bytes, bounds: tuple
         elif opcode == 7:
             effect["kind"] = "story-layout"
         elif opcode in (8, 0x0B, 0x0D):
+            # 08 is the narration window (CF5:C15A); 0B is a mode 0 box that
+            # closes by itself; 0D is the HUD caption (CF5:C340).
             effect["kind"] = "commands"
             effect["arguments"] = [u16(data)]
             value, text_source = string(u16(data))
-            command("caption" if opcode == 0x0B else "say", text=value, speaker="", textSource=text_source)
+            if opcode == 0x0D:
+                command("caption", text=value, textSource=text_source)
+            elif opcode == 0x0B:
+                command("say", text=value, speaker="", seconds=message_box_seconds(main), textSource=text_source)
+            else:
+                command("say", text=value, speaker="", textSource=text_source)
         elif opcode == 0x0C:
             # Both words are consumed and the second string is expanded into a
             # temporary buffer. The examined handler has no observable use.
@@ -337,7 +344,9 @@ def compile_instructions(script: bytes, frames: list, text: bytes, bounds: tuple
             pointer = u16(main, MAIN_DATA_SEGMENT + 0x24FE + stock_caption_index(selector) * 2)
             value, after = text_at(main, MAIN_DATA_SEGMENT + pointer, len(main), "MAIN.EXE")
             effect["kind"] = "commands"
-            command("caption", text=value, textSource=source_span("MAIN.EXE", main, MAIN_DATA_SEGMENT + pointer, after - (MAIN_DATA_SEGMENT + pointer)))
+            # 1C6F4 joins 0B's box with the stock text.
+            command("say", text=value, speaker="", seconds=message_box_seconds(main),
+                    textSource=source_span("MAIN.EXE", main, MAIN_DATA_SEGMENT + pointer, after - (MAIN_DATA_SEGMENT + pointer)))
             effect["selectorSource"] = selector_source
         elif opcode == 9:
             packed = u16(data)
