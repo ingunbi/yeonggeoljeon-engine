@@ -224,6 +224,8 @@ extension OriginalBattleSession {
             guard slot(arguments[0]) != nil else { return result }
             guard var duel = scriptActions.duel else { throw BattleError.unsupported("Original duel motion context is absent") }
             try OriginalDuelActions.motion(&duel,person:arguments[0],code:arguments[1])
+            // MAIN34571: every approach runs on the mounted footfall sound.
+            if [0,1,6,7,10].contains(arguments[1]) { scriptSounds.append(17) }
             scriptActions.duel = duel
         case 0x2D:
             let enemy = arguments[0] != 0

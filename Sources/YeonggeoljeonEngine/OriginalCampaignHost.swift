@@ -120,7 +120,10 @@ final class OriginalCampaignHost {
     private var pendingBattleMap:CampaignVMMapRequest?
     /// Source sound numbers the window has yet to play.
     private var sounds:[Int] = []
-    func takeSounds() -> [Int] { defer { sounds = [] };return sounds }
+    func takeSounds() -> [Int] {
+        defer { sounds = [];battle?.scriptSounds = [] }
+        return sounds+(battle?.scriptSounds ?? [])
+    }
     /// Source11 writes script context+0A without an interpreter return. Its
     /// selection is entered only when the enclosing battle loop finishes.
     private var battleReturnSelection:CampaignVMMapRequest?

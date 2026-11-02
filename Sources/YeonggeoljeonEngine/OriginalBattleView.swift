@@ -728,7 +728,8 @@ final class OriginalBattleView:NSView {
             guard let unit = session.units[slot] else {continue}
             NSColor(calibratedRed:0.1,green:1,blue:0.7,alpha:0.3).setFill();rect(unit.position).fill()
         }
-        for unit in session.units.values.sorted(by:{$0.slot < $1.slot}) where unit.status == 2 {
+        // MAIN2A143..2A15B: an enemy with mask 0x20 clear is hidden from the map.
+        for unit in session.units.values.sorted(by:{$0.slot < $1.slot}) where unit.status == 2 && !(unit.enemy && unit.scriptFlags&0x20 == 0) {
             guard let person = try? session.people.person(unit.person) else { continue }
             var box = rect(unit.position)
             let walker = animator.walker.flatMap { $0.slot == unit.slot ? $0 : nil }
@@ -819,7 +820,8 @@ final class OriginalBattleView:NSView {
         let map = CGRect(x:origin.x,y:origin.y,width:CGFloat(session.width*scale),height:CGFloat(session.height*scale))
         if let picture = style.minimap { Renderer.image(picture,in:map,context:context) }
         else { context.setFillColor(CGColor(gray:0.2,alpha:1));context.fill(map) }
-        for unit in session.units.values where unit.status == 2 {
+        // MAIN2BA39: only units with mask 0x20 mark the minimap.
+        for unit in session.units.values where unit.status == 2 && unit.scriptFlags&0x20 != 0 {
             context.setFillColor(color(OriginalBattleRoster.markColor(unit)).cgColor)
             context.fill(CGRect(x:map.minX+CGFloat(unit.position.x*scale),y:map.minY+CGFloat(unit.position.y*scale),width:CGFloat(scale),height:CGFloat(scale)))
         }

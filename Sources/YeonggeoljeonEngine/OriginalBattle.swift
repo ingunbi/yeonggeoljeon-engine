@@ -47,6 +47,8 @@ final class OriginalBattleSession {
     private(set) var exchanges:[OriginalStrikeExchange] = []
     private(set) var strategyExecutions:[OriginalStrategyExecution] = []
     var objectiveEvents:[OriginalCampaignEvent] = []
+    /// Source sound numbers from script actions, for the window to drain.
+    var scriptSounds:[Int] = []
     private(set) var retirements:[OriginalRetirementNotice] = []
     private var nextRetirementSequence = 0
     private var movementOrigins:[Int:GridPoint] = [:]
