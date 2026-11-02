@@ -57,11 +57,23 @@ final class OriginalAudio {
         guard wanted != selection else { return }
         selection = wanted
         guard let wanted = wanted,let song = catalog.song(wanted) else {
-            lock.lock();driver.stop();lock.unlock()
+            lock.lock();driver.stop();waiting = nil;lock.unlock()
             return
         }
         start()
-        lock.lock();driver.play(song);lock.unlock()
+        lock.lock();waiting = Self.change(driver,to:song);lock.unlock()
+    }
+    /// The song that starts once the fade before it ends.
+    private var waiting:[UInt8]?
+    var switching:Bool { lock.lock();defer { lock.unlock() };return waiting != nil }
+    /// CF5:600A fades a playing song over length 8 (CF5:6086, then the wait at
+    /// CF5:5F56) before it starts the next. That is 36 effect ticks, about 0.6
+    /// seconds. Returns the song left waiting. The source holds the script
+    /// during the fade; the engine does not.
+    static func change(_ driver:OriginalMusicDriver,to song:[UInt8]) -> [UInt8]? {
+        guard driver.playing else { driver.play(song);return nil }
+        driver.fade(8)
+        return song
     }
     func shutDown() { select(nil);if running { engine.stop();running = false } }
     private func start() {
@@ -79,7 +91,10 @@ final class OriginalAudio {
     private func fill(_ samples:UnsafeMutablePointer<Float>,count:Int) {
         var done = 0
         while done < count {
-            if untilInterrupt < 1 { driver.interrupt();untilInterrupt += Self.samplesPerInterrupt }
+            if untilInterrupt < 1 {
+                driver.interrupt();untilInterrupt += Self.samplesPerInterrupt
+                if let next = waiting,!driver.playing { driver.play(next);waiting = nil }
+            }
             let run = min(count-done,Int(untilInterrupt))
             chip.render(samples+done,count:run)
             done += run;untilInterrupt -= Double(run)

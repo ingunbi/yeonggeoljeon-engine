@@ -112,6 +112,17 @@ func originalMusicSelfTests() throws {
     let rate = 60/(Double(interrupts-startInterrupts)/OriginalMusicDriver.interruptRate)
     try check(abs(rate-48) < 1,"tempo sixty runs forty-eight ticks per second")
 
+    // A new selection fades the old song for 36 effect ticks, then starts.
+    (player,log) = driver(song([62,2,1,0xFE,60,2,1,0xFF]))
+    run(player,ticks:4)
+    let next = song([64,2,1,0xFF])
+    let left = OriginalAudio.change(player,to:next)
+    interrupts = 0
+    while player.playing,interrupts < 10_000 { player.interrupt();interrupts += 1 }
+    try check(left == next && !player.playing,"the old song fades out before the next one")
+    try check(abs(interrupts-36*256/54) <= 5,"length eight lasts thirty-six effect ticks: \(interrupts)")
+    let silent = OriginalMusicDriver(tables:tables) { _,_ in }
+    try check(OriginalAudio.change(silent,to:next) == nil && silent.playing,"with nothing playing the song starts at once")
     // The chip: pitch, envelope and silence.
     func tone(modulated:Bool,seconds:Double) -> [Float] {
         let chip = OPL2Chip()

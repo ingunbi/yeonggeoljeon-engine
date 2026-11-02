@@ -63,11 +63,24 @@ behind an `AVAudioSourceNode`. `--render-music N --output FILE` writes twenty se
 to a WAV. Music starts with the first selection, so tests and replays never open
 audio. The BGM entries of the field and battle menus switch it on and off.
 
+## Song changes
+
+`CF5:600A` (`0x1995A`) ignores ids from 20 up and a song that is already playing.
+Otherwise it calls `CF5:6086` with length 8, which asks the driver to fade
+(interrupt 66h function 2) and waits at `CF5:5F56` (`0x198A6`) until the driver
+reports the song stopped, then starts the new one. The driver steps the fade every
+fourth effect tick and stops after the eighth step: 36 ticks at about 61 Hz, near
+0.6 seconds. The engine fades and starts the next song the same way, from the
+audio thread, but it does not hold the script during the fade.
+
 ## Not restored
 
 - The source's own volume. The field menu's volume row sets one output level, an
   engine addition.
-- The 20-to-1 fade the source uses when it leaves a scene (`CF5:5F56`).
+- The other fades through `CF5:6086`: length 16 at `0x1E3B3`, `0x1E584` and
+  `0x1E5F9`, 4 at `0x1EE5D`, 8 at `0x2294A`, 15 at `0x27859`, and the plain stop at
+  `0x1E0BE`. The engine stops at once there.
+- The script hold during a fade.
 - Duel sounds past the approach.
 
 ## Sound effects
