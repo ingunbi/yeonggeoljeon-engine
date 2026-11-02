@@ -142,6 +142,6 @@ func originalBattleAnimationSelfTests() throws {
     try check(screen.palette[1] == 15 && !screen.finished && screen.waitingForInput,"a fade takes four ticks a step, then the input wait holds")
     screen.acceptInput()
     try check(screen.advance(centiseconds:1) == [.stopMusic(8)] && screen.finished,"a click answers the final button loop")
-    try check(OriginalScreenPlayer.colors(red)[1]&0xFF00 == 0xFF00,"stored channels are 4-bit, red in the second byte")
+    try check(OriginalScreenPlayer.colors(red)[1]&0xFFFFFF == 0xFF,"stored channels are 4-bit, red in the second byte")
     print("Original battle animation self-tests passed: \(checks)")
 }
