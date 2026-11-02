@@ -662,7 +662,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         if !saving { rows.append(.init(label:"파일에서 불러오기")) }
         let items = host.framework?.fieldMenu?.items
         let title = items?.first(where:{ $0.action == (saving ? "save" : "load") })?.text ?? ""
-        overlay.show(fieldSheet(title:title,line:"",rows:rows) { [weak self] index in
+        overlay.show(fieldSheet(title:title,line:"",rows:rows,selected:rows.firstIndex(where:\.enabled) ?? 0) { [weak self] index in
             guard let self = self else { return }
             guard let index = index else { done(false);return }
             do {
