@@ -13,6 +13,8 @@ struct OriginalCombatCatalog:Codable {
         var turn,closingBonus,delayRetreat,troopsFull,troopsUp,moraleFull,moraleUp:String
         var failed,noLoss,loss,moraleLoss,experience,counterFriendly,counterEnemy:String
         var level,attack,defense,troops,morale,exp,terrain,percent:String
+        /// The duel panels' strength and experience rows (DS:4FBD, DS:4FDD).
+        var strength,duelExperience:String
     }
     var format:Int
     var palette:[[Int]]
@@ -410,13 +412,22 @@ final class OriginalCombatArt {
         colors = catalog.palette.map { UInt32($0[0])|UInt32($0[1])<<8|UInt32($0[2])<<16|0xFF00_0000 }
     }
     func picture(_ frame:OriginalCombatFrame,scene:OriginalCombatScene) -> CGImage? {
+        compose(back:backs[scene.backMember],ground:grounds[scene.groundMember],scroll:frame.scroll,layers:frame.layers,bank:scene.bank)
+    }
+    /// The duel's background (0x3488F..0x348E6): the same members by terrain,
+    /// with no layers. The source reads past a row from camera 41 on; this clamps.
+    func backdrop(terrain:Int,scroll:Int) -> CGImage? {
+        guard catalog.terrainBack.indices.contains(terrain),backs.indices.contains(catalog.terrainBack[terrain]),
+              grounds.indices.contains(catalog.terrainGround[terrain]-5) else { return nil }
+        return compose(back:backs[catalog.terrainBack[terrain]],ground:grounds[catalog.terrainGround[terrain]-5],scroll:min(max(0,scroll),40),layers:[],bank:[])
+    }
+    private func compose(back:[UInt8],ground:[UInt8],scroll:Int,layers:[Int16],bank:[Int32]) -> CGImage? {
         let width = OriginalCombatScene.columns*16,height = OriginalCombatScene.rows*16
         var pixels = [UInt32](repeating:0xFF00_0000,count:width*height)
-        let back = backs[scene.backMember],ground = grounds[scene.groundMember],layers = frame.layers,bank = scene.bank
         pixels.withUnsafeMutableBufferPointer { out in
             for row in 0..<OriginalCombatScene.rows {
                 for column in 0..<OriginalCombatScene.columns {
-                    let tile = row < 5 ? Int(back[row*46+frame.scroll/3+column]) : Int(ground[(row-5)*66+frame.scroll+column])
+                    let tile = row < 5 ? Int(back[row*46+scroll/3+column]) : Int(ground[(row-5)*66+scroll+column])
                     let origin = row*16*width+column*16
                     for line in 0..<16 { for dot in 0..<16 { out[origin+line*width+dot] = colors[Int(background[tile*256+line*16+dot])&15] } }
                     guard layers.count == 4*OriginalCombatScene.rows*OriginalCombatScene.columns else { continue }

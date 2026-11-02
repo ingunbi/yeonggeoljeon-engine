@@ -27,6 +27,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     init(host:OriginalCampaignHost) throws {
         self.host = host
         host.announcesItems = true
+        host.presentsDuels = true
         host.citizensWander = true
         renderer = try Renderer(host.data)
         super.init(frame:CGRect(x:0,y:0,width:1024,height:640))
@@ -232,7 +233,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         if let player = screenPlayer { advanceScreen(player);return }
         if host.frameworkReturn?.outcome == .quit { startQuitScreen() }
         if let session = host.ending,advanceEnding(session) { return }
-        if host.ending == nil { audio?.select(host.vm.state.currentMusic) }
+        // 2CB4:125E plays song 18 for the duel and 1824 restores the one before.
+        if host.ending == nil { audio?.select(host.battle?.scriptActions.duel?.active == true ? 18 : host.vm.state.currentMusic) }
         battleView?.externalStatus = errorText ?? inputNotice ?? host.notice ?? host.playerStatus
         battleView?.fastForward = fastForward
         // Fast-forward reads a line for a tenth of a second, then moves on.
@@ -247,6 +249,10 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         guard !overlay.active,errorText == nil else { return }
         do {
             let rate = fastForward ? Double(OriginalBattleView.fastRate) : 1
+            battleView?.duelStage = host.duelStage
+            if let steps = host.duelSteps,let board = battleView,!board.isPlayingDuel {
+                board.playDuel(steps) { [weak self] in self?.host.finishDuelSteps() }
+            }
             battleView?.advanceAnimation(rate/60)
             for id in host.takeSounds() { audio?.playEffect(id) }
             try host.advance(microseconds:Int64(16_667*settings.timeScale*rate))

@@ -33,7 +33,8 @@ TEXTS = {"ambushFriendly": 0x4E6B, "ambushEnemy": 0x4E80, "strategyFailed": 0x4F
          "troopsFull": 0x40E2, "troopsUp": 0x4104, "moraleFull": 0x411C, "moraleUp": 0x4138,
          "failed": 0x4EB7, "noLoss": 0x4ECD, "loss": 0x4EEA, "moraleLoss": 0x4F06, "experience": 0x4F23,
          "counterFriendly": 0x4F5B, "counterEnemy": 0x4F66, "level": 0x4FAA, "attack": 0x4FB3, "defense": 0x4FB8,
-         "troops": 0x4FC2, "morale": 0x4FC7, "exp": 0x4FCC, "terrain": 0x4FD1, "percent": 0x4FD6}
+         "troops": 0x4FC2, "morale": 0x4FC7, "exp": 0x4FCC, "terrain": 0x4FD1, "percent": 0x4FD6,
+         "strength": 0x4FBD, "duelExperience": 0x4FDD}
 
 
 def word(main: bytes, offset: int) -> int:

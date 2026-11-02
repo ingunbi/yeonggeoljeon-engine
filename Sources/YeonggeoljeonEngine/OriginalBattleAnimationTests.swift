@@ -84,7 +84,7 @@ func originalBattleAnimationSelfTests() throws {
                     confuseIntent:"ci",moraleIntent:"mi",healIntent:"%s up",moraleDown:"%s down",healed:"%s %s %s",healVerb:"heal",raiseVerb:"raise",
                     stillConfused:"%s still",confused:"%s dazed",moreConfused:"%s worse",strategyMissed:"miss",recovered:"%s clear",turn:"T%u %s",
                     closingBonus:"B%w",delayRetreat:"late",troopsFull:"tf",troopsUp:"%s +%u",moraleFull:"mf",moraleUp:"m+%2u",failed:"%s failed",noLoss:"%s none",loss:"%s(%4u)",moraleLoss:"m%2u",experience:"%s e%2u",counterFriendly:"c",counterEnemy:"C",
-                    level:"Lv%2u %s",attack:"a",defense:"d",troops:"t",morale:"m",exp:"e",terrain:"g",percent:"+%2u%%"),source:nil,limitations:nil)
+                    level:"Lv%2u %s",attack:"a",defense:"d",troops:"t",morale:"m",exp:"e",terrain:"g",percent:"+%2u%%",strength:"s",duelExperience:"x"),source:nil,limitations:nil)
     func combat(attacker:Int = 0,target:Int = 20,attackerClass:Int = 0,targetClass:Int = 0,kind:Int = 1,subtype:Int = 0,troops:Int = 700,damage:Int = 250) -> OriginalCombatSnapshot {
         OriginalCombatSnapshot(kind:kind,subtype:subtype,attackerSlot:attacker,targetSlot:target,attackerPerson:0,targetPerson:1,attackerClass:attackerClass,
             targetClass:targetClass,attackerLevel:3,targetLevel:4,attackerTroops:1300,targetTroops:troops,attackerMaxTroops:1500,targetMaxTroops:1000,

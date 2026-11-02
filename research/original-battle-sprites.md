@@ -80,6 +80,8 @@ would move the actor twice. Native signed out-of-view coordinates remain valid
 and are clipped to the viewport. The tile compositor draws participant1 first
 and participant0 above it. `OriginalDuelSprites.sourceRect`, `sourceViewport`
 and `sourceDrawOrder` own these conversions for the AppKit consumer.
+The campaign window plays each duel opcode step by step over the combat view's
+background; see [duel scene](original-duel.md).
 
 ## Action effects
 

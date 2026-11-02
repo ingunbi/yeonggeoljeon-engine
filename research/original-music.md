@@ -81,7 +81,6 @@ audio thread, but it does not hold the script during the fade.
   `0x1E5F9`, 4 at `0x1EE5D`, 8 at `0x2294A`, 15 at `0x27859`, and the plain stop at
   `0x1E0BE`. The engine stops at once there.
 - The script hold during a fade.
-- Duel sounds past the approach.
 
 ## Sound effects
 
@@ -102,8 +101,8 @@ with the original.
 The sound test table DS:`3364` names all 43 ids. Played so far: left and right
 click, purchase and sale, level, class change, retirement, not selectable, the
 walking sounds 14 to 16 and move end, arrow, clash and bomb, and the table
-DS:`3F7E` for strategies, and the sounds of the enlarged combat view. Duels play
-only their approach sound so far.
+DS:`3F7E` for strategies, the sounds of the enlarged combat view, and every duel
+sound ([duel scene](original-duel.md)).
 
 ## Opening and ending programs
 

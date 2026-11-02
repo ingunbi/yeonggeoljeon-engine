@@ -69,6 +69,57 @@ func originalIntegrationSelfTests() throws {
     try check(line.rng == lineRNG && line.units[15]?.position == GridPoint(x:8,y:0),"a threat draws nothing and moves nobody")
     line.units[15]!.scriptFlags &= ~UInt8(0x20)
     try check(try line.threatCells().isEmpty,"a hidden enemy shows no threat")
+    // The duel window replays the session's own duel and ends where it does.
+    var duelRoster = lineRoster
+    let duelling = try OriginalBattleSession(definition:BattleDefinition(id:"duel",width:9,height:1,coordinateSystem:"orthogonal",tiles:Array(repeating:0,count:9)),
+        roster:&duelRoster,people:try OriginalPeople(catalog:catalog,tables:tables),combat:tables,movement:profile,rng:OriginalRNG(state:21))
+    var scene = OriginalDuelStage(people:[0,1],terrain:0,panels:[])
+    func same(_ label:String) throws {
+        guard let duel = duelling.scriptActions.duel else { throw EngineError.invalid("Original integration regression: \(label) lost the duel") }
+        try check(scene.x == duel.positions.map { Int($0) } && scene.frames == duel.frames.map { Int($0) } && scene.camera == Int(duel.camera),
+                  "\(label): the window ends where the session does, \(scene.x) \(scene.frames) \(scene.camera) against \(duel.positions) \(duel.frames) \(duel.camera)")
+    }
+    try duelling.applyScriptAction(opcode:0x10,arguments:[0,1])
+    let setup = scene.setup()
+    try same("setup")
+    try check(setup.reduce(0) { $0+$1.ticks } == 188,"setup holds 188 ticks")
+    try check(setup.flatMap(\.sounds).filter { $0 == 17 }.count == 3,"both intros and the ride-in run on the mounted sound")
+    try check(setup.first?.picture.poses[1] == nil && setup.first?.picture.poses[0]?.x == 7 && setup[12].picture.poses[0] == nil && setup[12].picture.poses[1]?.x == 13 && setup[12].picture.camera == 40 && setup[12].stopsSound && setup[13].picture.camera == 40 && setup[14].picture.camera == 39,
+              "each rider first runs alone over the scrolling ground")
+    let clashed = try duelling.applyScriptAction(opcode:0x34,arguments:[])
+    var replay = OriginalRNG(state:clashed.rngBefore),probe = replay
+    let clash = try scene.clash(rng:&replay)
+    try check(replay.state == clashed.rngAfter,"the clash draws what the session drew")
+    try same("clash")
+    var blows = 0
+    for _ in 0..<5 {
+        let first = try probe.next(bound:3),second = try probe.next(bound:3)
+        if first != 2 || second != 2 { blows += 2;_ = try probe.next(bound:2);_ = try probe.next(bound:2) }
+    }
+    try check(clash.reduce(0) { $0+$1.ticks } == 132 && clash.filter { $0.ticks == 4 && $0.sounds.contains { [40,41].contains($0) } }.count == blows,
+              "five rounds of two four-tick poses and a pause, each pose with a blow unless both stand")
+    for (person,code) in [(0,0),(1,1),(0,2),(0,6),(1,7),(0,5),(0,8),(0,10),(0,9),(1,9),(0,3)] {
+        try duelling.applyScriptAction(opcode:0x35,arguments:[person,code])
+        let steps = try scene.motion(person:person,code:code)
+        try same("motion \(code)")
+        if code == 0 {
+            try check(steps.contains { $0.sounds == [40] && $0.ticks == 6 } && steps.contains { $0.waitsForSound },"a blow sounds with its first frame and holds until it ends")
+        }
+    }
+    try check(scene.shown.poses[0]?.mode == 0 && scene.banks[1][4] == 2,"death art loads into bank 1 even when participant 0 is named")
+    try duelling.applyScriptAction(opcode:0x35,arguments:[1,4])
+    let fled = scene.x[1]
+    _ = try scene.motion(person:1,code:4)
+    try same("flee")
+    try check(scene.shown.poses[1] == nil && scene.x[1] == fled+14 && scene.banks[1][0] == 3,"a fled rider is left erased")
+    let still = OriginalDuelPicture(poses:[nil,nil],camera:0)
+    var player = OriginalDuelPlayer(steps:[.init(picture:still,ticks:2,sounds:[40]),.init(picture:still,ticks:0,waitsForSound:true),.init(picture:still,ticks:1)])
+    let first = player.advance(OriginalBattleAnimator.tick*2.5,soundBusy:false)
+    try check(first == [.sound(40)] && player.index == 1,"a sound started in the same call holds the wait")
+    _ = player.advance(OriginalBattleAnimator.tick,soundBusy:true)
+    try check(player.index == 1,"a playing effect holds the wait")
+    _ = player.advance(OriginalBattleAnimator.tick*1.5,soundBusy:false)
+    try check(player.finished,"the wait ends with the effect")
     var taught = profile;taught.strategyLevelRequirements![4][0] = 3;taught.strategyLevelRequirements![6][0] = 3;taught.strategyLevelRequirements![31][0] = 3
     let learner = try OriginalBattleSession(definition:definition,roster:&hiddenRoster,people:hiddenPeople,combat:tables,movement:taught,rng:OriginalRNG(state:4))
     let gained = OriginalExperienceMutation(level:3,experience:0,levelsGained:2,ignoredReason:nil)

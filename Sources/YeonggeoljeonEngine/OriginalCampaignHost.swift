@@ -118,6 +118,14 @@ final class OriginalCampaignHost {
     private var itemInstruction:OriginalCampaignInstruction?
     /// The window turns this on; verification grants items silently.
     var announcesItems = false
+    /// The window plays duels step by step; verification applies them at once.
+    var presentsDuels = false
+    /// The duel window, kept for drawing between opcodes. Never saved.
+    private(set) var duelStage:OriginalDuelStage?
+    /// Steps the window has yet to play. The script waits for them, as the
+    /// source's duel routines hold it until they return.
+    private(set) var duelSteps:[OriginalDuelStep]?
+    func finishDuelSteps() { duelSteps = nil }
     private var closingNotices:[OriginalBattleNotice] = []
     func takeClosingNotice() -> OriginalBattleNotice? { closingNotices.isEmpty ? nil : closingNotices.removeFirst() }
     private var retirementPresentationStep:OriginalRetirementStep?
@@ -649,7 +657,7 @@ final class OriginalCampaignHost {
     }
     func pump() throws {
         guard started,stage.hostWaiting,choice == nil,saveRequest == nil,partySelection == nil,failure == nil,waiting == nil,
-              itemInstruction == nil,interpreterReturn == nil,frameworkReturn == nil else {
+              itemInstruction == nil,interpreterReturn == nil,frameworkReturn == nil,duelSteps == nil else {
             if let termination = stage.termination,termination != .sourceBoundary {
                 let record = vm.activeRecord
                 let source = stage.trace.last?.source
@@ -715,6 +723,7 @@ final class OriginalCampaignHost {
                         controllerInvocationPending:controllerInvocationPending,controllerIdle:controllerIdle,
                         currentEventPerson:currentEventPerson) } : nil
                 }
+                if duelSteps != nil { return }
             case .choice(let value):choice = value;return
             case .waiting(let value):waiting = value;return
             case .unsupported(let value):failure = value;return
@@ -879,6 +888,32 @@ final class OriginalCampaignHost {
             }
         }
     }
+    /// Builds the steps of a duel opcode the session has already applied.
+    /// The session's result decides whether the source ran anything at all.
+    private func presentDuel(opcode:Int,arguments args:[Int],result:OriginalScriptActionResult,battle:OriginalBattleSession) throws {
+        func unit(_ person:Int) -> OriginalLiveUnit? { battle.units.keys.sorted().lazy.compactMap { battle.units[$0] }.first { $0.person == person } }
+        switch opcode {
+        case 0x10:
+            guard result.sourceReturn == 1,let second = unit(args[1]) else { return }
+            let terrain = Int(battle.terrain[second.position.y*battle.width+second.position.x])
+            let panels = try args.map { id -> OriginalDuelPanel in
+                let person = try battle.people.person(id)
+                return OriginalDuelPanel(person:id,level:person.level,classID:person.classID,strength:person.attackScalar,troops:person.rawTroops,
+                    maxTroops:try OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:battle.combat),experience:person.experience)
+            }
+            var scene = OriginalDuelStage(people:args,terrain:terrain,panels:panels)
+            duelSteps = scene.setup();duelStage = scene
+        case 0x33:duelStage = nil
+        case 0x34:
+            guard var scene = duelStage else { return }
+            var rng = OriginalRNG(state:result.rngBefore)
+            duelSteps = try scene.clash(rng:&rng);duelStage = scene
+        case 0x35:
+            guard var scene = duelStage,unit(args[0]) != nil else { return }
+            duelSteps = try scene.motion(person:args[0],code:args[1]);duelStage = scene
+        default:break
+        }
+    }
     private func apply(_ instruction:OriginalCampaignInstruction) throws {
         let args = instruction.arguments
         let scriptActions:Set<Int> = [2,0x10,0x26,0x27,0x28,0x2D,0x33,0x34,0x35]
@@ -886,7 +921,8 @@ final class OriginalCampaignHost {
         guard scriptActions.contains(instruction.opcode) || instruction.opcode == 0x1C || instruction.opcode == 0x20 || expected[instruction.opcode] == args.count else { throw EngineError.invalid("Original host operands do not match their registered contract") }
         if scriptActions.contains(instruction.opcode) {
             guard let battle = battle else { throw BattleError.unsupported("Original battle action has no native battle context") }
-            _ = try battle.applyScriptAction(opcode:instruction.opcode,arguments:args,mapIndex:vm.state.packedMap&255)
+            let result = try battle.applyScriptAction(opcode:instruction.opcode,arguments:args,mapIndex:vm.state.packedMap&255)
+            if presentsDuels { try presentDuel(opcode:instruction.opcode,arguments:args,result:result,battle:battle) }
             return
         }
         switch instruction.opcode {

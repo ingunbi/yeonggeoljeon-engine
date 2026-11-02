@@ -43,8 +43,12 @@ final class OriginalBattleSpriteRenderer {
         images[selection.image] = picture;return picture
     }
     func duelImage(_ duel:OriginalScriptDuel,side:Int) throws -> CGImage {
-        guard let catalog = catalog.duel,(0..<2).contains(side) else { throw EngineError.invalid("Original duel source catalog/side is unavailable") }
-        let selection = try catalog.select(person:duel.people[side],loadMode:Int(duel.loadModes[side]),frame:Int(duel.frames[side]))
+        guard (0..<2).contains(side) else { throw EngineError.invalid("Original duel source catalog/side is unavailable") }
+        return try duelImage(person:duel.people[side],loadMode:Int(duel.loadModes[side]),frame:Int(duel.frames[side]))
+    }
+    func duelImage(person:Int,loadMode:Int,frame:Int) throws -> CGImage {
+        guard let catalog = catalog.duel else { throw EngineError.invalid("Original duel source catalog/side is unavailable") }
+        let selection = try catalog.select(person:person,loadMode:loadMode,frame:frame)
         if let image = images[selection.image] { return image }
         let url = try containedResource(root:root,relative:selection.image)
         guard let picture = NSBitmapImageRep(data:try Data(contentsOf:url))?.cgImage,picture.width == 96,picture.height == 96 else {

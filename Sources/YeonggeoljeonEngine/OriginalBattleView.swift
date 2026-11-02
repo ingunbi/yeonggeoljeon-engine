@@ -131,7 +131,27 @@ final class OriginalBattleView:NSView {
         case .combat?,.notice?,nil:break
         }
     }
+    /// The campaign's duel window, and the steps of one opcode as they play.
+    var duelStage:OriginalDuelStage? { didSet { if duelStage != oldValue { needsDisplay = true } } }
+    private var duelPlayer:OriginalDuelPlayer?
+    private var afterDuel:(()->Void)?
+    var isPlayingDuel:Bool { duelPlayer != nil }
+    func playDuel(_ steps:[OriginalDuelStep],then done:@escaping ()->Void) {
+        duelPlayer = OriginalDuelPlayer(steps:steps);afterDuel = done;needsDisplay = true
+    }
     func advanceAnimation(_ seconds:Double) {
+        if var player = duelPlayer {
+            for action in player.advance(seconds,soundBusy:soundBusy?() ?? false) {
+                switch action {
+                case .sound(let id):onSound?(id)
+                case .stopSound:stopSound?()
+                }
+            }
+            duelPlayer = player.finished ? nil : player
+            if duelPlayer == nil,let done = afterDuel { afterDuel = nil;done() }
+            needsDisplay = true
+            return
+        }
         if var player = combatPlayer {
             for action in player.advance(seconds,soundBusy:soundBusy?() ?? false) {
                 switch action {
@@ -893,7 +913,9 @@ final class OriginalBattleView:NSView {
                 Renderer.image(image,in:box,context:context)
             }
         }
-        if let duel = session.scriptActions.duel,duel.active,let sprites = sprites {
+        if let duel = session.scriptActions.duel,duel.active,let stage = duelStage,let picture = duelPlayer?.picture ?? Optional(stage.shown) {
+            drawDuel(context,stage:stage,picture:picture)
+        } else if let duel = session.scriptActions.duel,duel.active,let sprites = sprites {
             let duelViewport = OriginalDuelSprites.sourceViewport
             context.saveGState();context.clip(to:duelViewport);context.setFillColor(CGColor(gray:0,alpha:1));context.fill(duelViewport)
             do {
@@ -970,6 +992,8 @@ final class OriginalBattleView:NSView {
     }
     /// Turn, the selected unit and any hint float over the map window.
     private func drawStatus(_ context:CGContext) {
+        // The duel window covers the whole map view and has its own panels.
+        if duelStage != nil,session.scriptActions.duel?.active == true { return }
         let map = layoutFacts.viewportRect,width = map.width-32
         if presentation == .original {
             CanvasTheme.chip("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(weatherName)",
@@ -1044,6 +1068,43 @@ final class OriginalBattleView:NSView {
         context.restoreGState()
     }
     private func personName(_ id:Int) -> String { (try? session.people.person(id).name) ?? "" }
+    /// 2CB4:125E's window: the scene at (16,32,416,208) over the combat view's
+    /// background, participant 1 drawn first, and two panels set at setup.
+    private func drawDuel(_ context:CGContext,stage:OriginalDuelStage,picture:OriginalDuelPicture) {
+        let scene = OriginalDuelSprites.sourceViewport
+        context.setFillColor(presentation == .modern ? CanvasTheme.background : CGColor(gray:0,alpha:1));context.fill(layoutFacts.viewportRect)
+        context.saveGState();context.clip(to:scene)
+        if let image = combatArt?.backdrop(terrain:stage.terrain,scroll:picture.camera) { Renderer.image(image,in:scene,context:context) }
+        else { context.setFillColor(CGColor(gray:0,alpha:1));context.fill(scene) }
+        if let sprites = sprites {
+            for side in OriginalDuelSprites.sourceDrawOrder {
+                guard let pose = picture.poses[side] else { continue }
+                do {
+                    let image = try sprites.duelImage(person:stage.people[side],loadMode:pose.mode,frame:pose.frame)
+                    Renderer.image(image,in:CGRect(x:16+pose.x*16,y:32+3*16,width:96,height:96),context:context)
+                } catch { message = "원작 일기토 그림 경계: \(error)" }
+            }
+        }
+        context.restoreGState()
+        if let art = combatArt { for (side,panel) in stage.panels.enumerated() { drawDuelPanel(context,side:side,panel:panel,art:art) } }
+    }
+    /// 1CB6:F752 with sides 2 and 3: level and class, strength, troops and experience.
+    private func drawDuelPanel(_ context:CGContext,side:Int,panel:OriginalDuelPanel,art:OriginalCombatArt) {
+        CanvasTheme.panel(CGRect(x:side == 0 ? 16 : 224,y:240,width:208,height:144),in:context)
+        let portraitX = side == 0 ? 24 : 360
+        if let image = portraitImage?(panel.person) { Renderer.image(image,in:CGRect(x:portraitX,y:248,width:64,height:80),context:context) }
+        let plain = CanvasTheme.attributes(CanvasTheme.font(12),CanvasTheme.text),faint = CanvasTheme.attributes(CanvasTheme.font(12),CanvasTheme.muted)
+        let name = personName(panel.person),width = (name as NSString).size(withAttributes:plain).width
+        (name as NSString).draw(at:CGPoint(x:CGFloat(portraitX)+32-width/2,y:346),withAttributes:plain)
+        let textX = side == 0 ? 104 : 240,gaugeX = textX+40,texts = art.catalog.texts
+        let className = art.catalog.classNames.indices.contains(panel.classID) ? art.catalog.classNames[panel.classID] : ""
+        (originalFormat(texts.level,[String(panel.level),className]) as NSString).draw(at:CGPoint(x:CGFloat(textX),y:254),withAttributes:plain)
+        for (row,value) in [(texts.strength,panel.strength,100),(texts.troops,panel.troops,panel.maxTroops),(texts.duelExperience,panel.experience,100)].enumerated() {
+            let y = 278+row*24
+            (value.0 as NSString).draw(at:CGPoint(x:CGFloat(textX),y:CGFloat(y)),withAttributes:faint)
+            drawCombatGauge(context,x:gaugeX,y:y+6,width:64,value:value.1,maximum:value.2,text:"\(value.1)")
+        }
+    }
     /// MAIN2A556 and F752: the scene at (16,32,416,208) and two stat windows.
     private func drawCombat(_ context:CGContext) {
         guard let player = combatPlayer,let art = combatArt else { return }
