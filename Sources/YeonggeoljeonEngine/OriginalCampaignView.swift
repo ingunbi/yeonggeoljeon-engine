@@ -26,6 +26,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     }
     init(host:OriginalCampaignHost) throws {
         self.host = host
+        host.announcesItems = true
         host.citizensWander = true
         renderer = try Renderer(host.data)
         super.init(frame:CGRect(x:0,y:0,width:1024,height:640))
@@ -172,6 +173,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             else if host.shop != nil { presentShop() }
             else if let entry = host.cityEntry { yesNo(entry.question) { [weak self] enter in self?.act { try self?.host.answerCityEntry(enter) } } }
             else if host.retirementPresentation != nil { presentRetirement() }
+            else if host.itemOffer != nil { presentItemOffer() }
+            else if host.itemMessage != nil { presentItemMessage() }
             else if host.stage.dialogue != nil { presentDialogue() }
         } catch { errorText = "\(error)";needsDisplay = true }
     }
@@ -189,7 +192,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         }
     }
     /// Exit code4 makes HERO.COM execute MAIN again. The engine replaces this
-    /// campaign host with a new one; MAIN's own title menu is not restored.
+    /// campaign host with a new one, which opens on MAIN's title menu.
     private func restartMain() {
         do { replace(with:try OriginalCampaignView(data:host.data)) }
         catch { errorText = "\(error)";needsDisplay = true }
@@ -427,6 +430,33 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         case 2:presentWholeMap()
         default:openFieldMenu(at:point)
         }
+    }
+    /// MAIN1A726..1A869: a full person chooses what to give up.
+    private func presentItemOffer() {
+        guard let offer = host.itemOffer else { return }
+        let texts = host.shopCatalog.texts
+        yesNo(originalFormat(texts.giftFull,[itemName(offer.item)])) { [weak self] yes in
+            guard let self = self else { return }
+            guard yes else { self.act { try self.host.answerItemOffer(slot:nil,declined:true) };return }
+            let items = (try? self.host.people.person(offer.person).itemIDs) ?? []
+            let rows = items.map { CanvasSheet.Row(label:self.itemName($0),detail:self.itemDetail($0,facts:[])) }
+            self.overlay.show(self.fieldSheet(title:"",line:texts.giftChoose,rows:rows) { [weak self] index in
+                self?.act { try self?.host.answerItemOffer(slot:index) }
+            })
+        }
+    }
+    private func presentItemMessage() {
+        guard let message = host.itemMessage else { return }
+        let texts = host.shopCatalog.texts,pattern:String,item:Int
+        switch message {
+        case .gained(let id):(pattern,item) = (texts.giftGained,id)
+        case .declined(let id):(pattern,item) = (texts.giftDeclined,id)
+        case .gaveUp(let id):(pattern,item) = (texts.giftGaveUp,id)
+        case .discarded(let id):(pattern,item) = (texts.giftDiscarded,id)
+        }
+        overlay.show(CanvasNotice(speaker:"",text:originalFormat(pattern,[itemName(item)]),portrait:nil,timeout:2) { [weak self] in
+            self?.act { try self?.host.acknowledgeItemMessage() }
+        })
     }
     /// MAIN27F90..28019: the closing bonus levels people up over the field.
     private func presentClosing(_ notice:OriginalBattleNotice) {

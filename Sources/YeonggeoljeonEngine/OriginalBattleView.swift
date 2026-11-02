@@ -249,8 +249,13 @@ final class OriginalBattleView:NSView {
               announcedRound != session.turns.roundIndex else { return }
         announcedRound = session.turns.roundIndex
         let notice:() -> Void = { [weak self] in
-            guard let self = self,let text = self.style.commands?.conditions.playerPhase else { return }
-            self.say(text)
+            guard let self = self else { return }
+            // MAIN28139 names the turn and its weather before the side's line.
+            let round = self.session.turns.roundIndex+1,weather = self.session.turns.weatherIndex
+            self.play([.notice(.turn(round:round,weather:Int(weather)))]) { [weak self] in
+                guard let text = self?.style.commands?.conditions.playerPhase else { return }
+                self?.say(text)
+            }
         }
         if session.turns.roundIndex == 0 { showConditions(opening:true,then:notice) } else { notice() }
     }
@@ -577,6 +582,17 @@ final class OriginalBattleView:NSView {
             overlay.show(CanvasNotice(speaker:itemName(item),text:itemRecord(item)?.description ?? "",portrait:nil,onDismiss:again))
         }
     }
+    /// MAIN2E911..2ED02: the line a player's caster reads before choosing.
+    private func strategyIntent(_ ability:Int) -> String? {
+        guard let texts = combatArt?.catalog.texts,let labels = style.commands else { return nil }
+        switch ability {
+        case 0...14:return originalFormat(texts.attackIntent,[labels.familyLabels[ability/5]])
+        case 15...17:return texts.confuseIntent
+        case 18...20:return texts.moraleIntent
+        case 21...29:return originalFormat(texts.healIntent,[kindLabel(ability >= 0x1B ? 3 : ability >= 0x18 ? 1 : 2)])
+        default:return nil
+        }
+    }
     private func strategyTitle(_ id:Int)->String {strategyName?(id) ?? style.commands?.strategyNames[id] ?? "책략 #\(id)"}
     /// Source range owner followed by the dispatcher's nonmutating preflight:
     /// do not duplicate terrain/weather/full-healing rules in this view.
@@ -601,7 +617,7 @@ final class OriginalBattleView:NSView {
             guard !targets.isEmpty else {throw BattleError.illegalAction("현재 선택할 수 있는 대상이 없습니다.")}
             selected = slot
             strategySelection = StrategySelection(abilityID:ability,targetSlot:ability < 30 ? targets.first : nil)
-            message = ability < 30 ? "\(strategyTitle(ability)): 표시된 대상을 클릭하거나 화살표·Tab으로 선택한 뒤 Enter를 누르세요." : "\(strategyTitle(ability)): 표시된 \(targets.count)개 부대에 적용합니다. Enter로 확인하세요."
+            if let line = strategyIntent(ability) { message = line } else { message = ability < 30 ? "\(strategyTitle(ability)): 표시된 대상을 클릭하거나 화살표·Tab으로 선택한 뒤 Enter를 누르세요." : "\(strategyTitle(ability)): 표시된 \(targets.count)개 부대에 적용합니다. Enter로 확인하세요." }
         } catch {message = "\(error)";openCommand(slot)}
     }
     private func cancelStrategy() {
@@ -690,7 +706,7 @@ final class OriginalBattleView:NSView {
         if functionOpen { context.setFillColor(CanvasTheme.selection);context.fill(button) }
         label("기능",in:CGRect(x:button.minX,y:button.minY+1.5,width:button.width,height:14),font:CanvasTheme.font(10,.semibold),color:CanvasTheme.accent,alignment:.center)
         label(session.definition.name ?? session.definition.id,in:CGRect(x:button.maxX,y:1.5,width:map.width-button.width*2,height:14),font:CanvasTheme.font(10,.medium),alignment:.center)
-        label("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(session.turns.weatherIndex)",
+        label("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(weatherName)",
               in:CGRect(x:map.maxX-120,y:1.5,width:114,height:14),font:CanvasTheme.font(10),color:CanvasTheme.muted,alignment:.right)
         CanvasTheme.divider(from:CGPoint(x:map.maxX+0.5,y:0),to:CGPoint(x:map.maxX+0.5,y:400),in:context)
     }
@@ -888,7 +904,7 @@ final class OriginalBattleView:NSView {
     private func drawStatus(_ context:CGContext) {
         let map = layoutFacts.viewportRect,width = map.width-32
         if presentation == .original {
-            CanvasTheme.chip("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(session.turns.weatherIndex)",
+            CanvasTheme.chip("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(weatherName)",
                              at:CGPoint(x:map.minX+8,y:map.minY+18),centered:false,maximumWidth:width,in:context)
         }
         var detail = (inspected ?? selected).flatMap(unitDetails) ?? ""
@@ -917,10 +933,14 @@ final class OriginalBattleView:NSView {
         drawFrame(context);drawField(context);drawList(context);drawMinimap(context);drawStatus(context)
         if combatPlayer != nil { drawCombat(context) }
         if let notice = animator.notice,let catalog = combatArt?.catalog {
-            let area = layoutFacts.viewportRect,text = catalog.text(notice,person:personName,strategy:strategyTitle)
+            let area = layoutFacts.viewportRect,text = catalog.text(notice,person:personName,strategy:strategyTitle,kind:kindLabel)
             CanvasTheme.chip(text,at:CGPoint(x:area.midX,y:area.midY),maximumWidth:area.width-32,in:context)
         }
         context.restoreGState()
+    }
+    private var weatherName:String {
+        let names = combatArt?.catalog.weathers ?? [],index = Int(session.turns.weatherIndex)
+        return names.indices.contains(index) ? names[index] : String(index)
     }
     private func personName(_ id:Int) -> String { (try? session.people.person(id).name) ?? "" }
     /// MAIN2A556 and F752: the scene at (16,32,416,208) and two stat windows.

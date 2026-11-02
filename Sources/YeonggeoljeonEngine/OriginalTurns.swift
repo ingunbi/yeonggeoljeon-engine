@@ -167,6 +167,7 @@ extension OriginalBattleSession {
         let result = try OriginalCombat.recoverCondition2(stats:stats,unitStatus:unit.status,
             conditionFlags:Int(unit.scriptFlags),rng:&rng)
         units[slot]!.scriptFlags = UInt8(result.remainingFlags)
+        if result.recovered { upkeepNotices.append(.recovered(person:unit.person)) }
     }
     private func sourceUpkeep(_ slot:Int) throws {
         let unit = units[slot]

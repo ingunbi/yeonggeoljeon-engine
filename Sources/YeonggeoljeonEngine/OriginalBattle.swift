@@ -45,6 +45,8 @@ final class OriginalBattleSession {
     var scriptValue24:UInt8 = 0 // MAIN27038 initial value; script2B selector4 ->3413C byte store.
     /// Level notices of the closing bonus; the field shows them after the battle.
     var closingNotices:[OriginalBattleNotice] = []
+    /// Upkeep lines waiting for the flow to show them.
+    var upkeepNotices:[OriginalBattleNotice] = []
     var sourceOptionsWord:Int = 0 // MAIN1A423 initial object+4; saved/user settings are separate.
     private(set) var exchanges:[OriginalStrikeExchange] = []
     private(set) var strategyExecutions:[OriginalStrategyExecution] = []

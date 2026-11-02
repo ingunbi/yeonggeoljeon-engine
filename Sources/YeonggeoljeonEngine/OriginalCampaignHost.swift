@@ -59,6 +59,10 @@ struct OriginalCampaignResume:Codable {
 /// Owns native state effects for registered source operations. A VM instruction
 /// is acknowledged only after its handler completed; unregistered effects stop
 /// at the exact original record/offset. The record browser never advances this.
+enum OriginalItemMessage:Equatable {
+    case gained(item:Int),declined(item:Int),gaveUp(item:Int),discarded(item:Int)
+}
+
 final class OriginalCampaignHost {
     let data:DataSet
     let source:OriginalGameData
@@ -108,6 +112,12 @@ final class OriginalCampaignHost {
     private(set) var cityEntry:(city:Int,question:String)?
     private(set) var retirementPresentation:OriginalRetirementPresentation?
     private(set) var retirementText:String?
+    /// MAIN1A6EC: an item offered to a person with eight full slots.
+    private(set) var itemOffer:(person:Int,item:Int)?
+    private(set) var itemMessage:OriginalItemMessage?
+    private var itemInstruction:OriginalCampaignInstruction?
+    /// The window turns this on; verification grants items silently.
+    var announcesItems = false
     private var closingNotices:[OriginalBattleNotice] = []
     func takeClosingNotice() -> OriginalBattleNotice? { closingNotices.isEmpty ? nil : closingNotices.removeFirst() }
     private var retirementPresentationStep:OriginalRetirementStep?
@@ -181,7 +191,7 @@ final class OriginalCampaignHost {
         stage.extraActors = citizens.actors(sprites:exploration.townSprites ?? [])
     }
     func acknowledge() throws {
-        guard failure == nil,choice == nil,saveRequest == nil else { return }
+        guard failure == nil,choice == nil,saveRequest == nil,itemInstruction == nil else { return }
         stage.acknowledge()
         if !started {
             started = true;waiting = vm.waitingState();try controllerAutomaticTick();return
@@ -206,6 +216,43 @@ final class OriginalCampaignHost {
     func choose(_ index:Int) throws {
         guard choice != nil else { throw EngineError.invalid("No original campaign choice is pending") }
         try vm.choose(index:index);choice = nil;try pump()
+    }
+    private func itemRecipient() throws -> Int {
+        guard vm.state.packedMap>>12 == 3 else { return 0 }
+        guard let person = currentEventPerson else { throw BattleError.unsupported("Original battle item recipient has no source event-person identity") }
+        return person
+    }
+    /// True while the grant owns the script: a full person answers first, and
+    /// the window shows the result before the next instruction runs.
+    private func beginItemGrant(_ instruction:OriginalCampaignInstruction) throws -> Bool {
+        guard let item = instruction.arguments.first else { throw EngineError.invalid("Original item grant has no item operand") }
+        let person = try itemRecipient()
+        if try people.person(person).itemIDs.contains(255) {
+            guard announcesItems else { return false }
+            try people.grantScriptItem(person:person,itemID:item)
+            itemMessage = .gained(item:item)
+        } else { itemOffer = (person,item) }
+        itemInstruction = instruction
+        return true
+    }
+    /// A slot replaces that item. Nil keeps the inventory: `declined` is the
+    /// No answer and the other is a cancelled list (MAIN1A86B, MAIN1A81A).
+    func answerItemOffer(slot:Int?,declined:Bool = false) throws {
+        guard let offer = itemOffer else { throw EngineError.invalid("No original item offer is pending") }
+        let grant = try people.grantScriptItem(person:offer.person,itemID:offer.item,replacementChoice:slot ?? 255)
+        itemOffer = nil
+        guard announcesItems else { try finishItemGrant();return }
+        itemMessage = grant.replacedItemID.map { .discarded(item:$0) } ?? (declined ? .declined(item:offer.item) : .gaveUp(item:offer.item))
+    }
+    func acknowledgeItemMessage() throws {
+        guard itemMessage != nil else { throw EngineError.invalid("No original item message is pending") }
+        itemMessage = nil
+        try finishItemGrant()
+    }
+    private func finishItemGrant() throws {
+        guard let instruction = itemInstruction else { throw EngineError.invalid("No original item grant is pending") }
+        itemInstruction = nil
+        try vm.resumeHostAction(opcode:instruction.opcode,sourceOffset:instruction.offset);try pump()
     }
     func completeSaveRequest() throws {
         guard let request = saveRequest else { throw EngineError.invalid("No original save request is pending") }
@@ -602,7 +649,7 @@ final class OriginalCampaignHost {
     }
     func pump() throws {
         guard started,stage.hostWaiting,choice == nil,saveRequest == nil,partySelection == nil,failure == nil,waiting == nil,
-              interpreterReturn == nil,frameworkReturn == nil else {
+              itemInstruction == nil,interpreterReturn == nil,frameworkReturn == nil else {
             if let termination = stage.termination,termination != .sourceBoundary {
                 let record = vm.activeRecord
                 let source = stage.trace.last?.source
@@ -654,6 +701,7 @@ final class OriginalCampaignHost {
                     partySelection = try OriginalParty.prepareSelection(people:people,roster:roster,profile:source.party,combat:source.combat)
                     partyInstruction = instruction;return
                 }
+                if instruction.opcode == 0x1B,try beginItemGrant(instruction) { return }
                 do { try apply(instruction) }
                 catch {
                     failure = CampaignVMFailure(recordID:vm.activeRecord?.id,opcode:instruction.opcode,
@@ -873,13 +921,7 @@ final class OriginalCampaignHost {
         case 0x1C:
             guard let battle = battle else { throw BattleError.unsupported("Original AI-order effect requires its battle context") }
             _ = try battle.applyScriptAttribute(arguments:args)
-        case 0x1B:
-            let recipient:Int
-            if vm.state.packedMap>>12 == 3 {
-                guard let person = currentEventPerson else { throw BattleError.unsupported("Original battle item recipient has no source event-person identity") }
-                recipient = person
-            } else { recipient = 0 }
-            _ = try people.grantScriptItem(person:recipient,itemID:args[0])
+        case 0x1B:_ = try people.grantScriptItem(person:itemRecipient(),itemID:args[0])
         case 0x24:try people.setAffiliation(person:args[0],value:args[1])
         case 0x2F:
             try people.update(args[0]) { $0.sourceRole = args[1] }

@@ -29,7 +29,7 @@ func verifyOriginalCampaignHost(_ data:DataSet,output:URL) throws {
     try capture("title");try host.acknowledge()
     var steps = 0
     while steps < 100_000,host.failure == nil,!host.explorationInputReady,
-          !(host.stage.palette == 3 && host.battleInputReady),host.choice == nil,host.saveRequest == nil,
+          !(host.stage.palette == 3 && host.battleInputReady),host.choice == nil,host.saveRequest == nil,host.itemOffer == nil,
           host.partySelection == nil,host.interpreterReturn == nil,host.frameworkReturn == nil {
         steps += 1
         if host.stage.storyPanel != nil { try capture("original-story-figure") }

@@ -32,15 +32,23 @@ final class OriginalBattleFlow {
     /// MAIN3145E: the view runs while the option word's high nibble is clear.
     /// Around it sit the ambush line (MAIN31926), the map's failure line when
     /// the view is off (MAIN31E49..31E6B) and the level notices.
-    private func holdCombat(_ snapshot:OriginalCombatSnapshot?,ambush:Bool?,experience:OriginalExperienceMutation?) throws -> Bool {
-        guard let snapshot = snapshot else { return false }
-        var cues:[OriginalBattleCue] = ambush == true ? [.notice(.ambush(friendly:snapshot.attackerSlot < 15))] : []
-        if session.sourceOptionsWord&0xF0 == 0 { cues.append(.combat(snapshot)) }
-        else if snapshot.kind == 2,snapshot.damage == 0 { cues.append(.notice(.strategyFailed(person:snapshot.attackerPerson))) }
-        if let experience = experience {
-            cues += try session.levelNotices(person:snapshot.attackerPerson,experience:experience).map { .notice($0) }
+    private func holdCombat(_ snapshot:OriginalCombatSnapshot?,ambush:Bool?,experience:OriginalExperienceMutation?,
+                            then lines:[OriginalBattleNotice] = []) throws -> Bool {
+        var cues:[OriginalBattleCue] = []
+        if let snapshot = snapshot {
+            if ambush == true { cues.append(.notice(.ambush(friendly:snapshot.attackerSlot < 15))) }
+            if session.sourceOptionsWord&0xF0 == 0 { cues.append(.combat(snapshot)) }
+            else if snapshot.kind == 2,snapshot.damage == 0 { cues.append(.notice(.strategyFailed(person:snapshot.attackerPerson))) }
+            if let experience = experience {
+                cues += try session.levelNotices(person:snapshot.attackerPerson,experience:experience).map { .notice($0) }
+            }
         }
-        return hold(cues)
+        return hold(cues+lines.map { .notice($0) })
+    }
+    /// Upkeep lines come before the next phase takes the screen.
+    private func holdUpkeep() -> Bool {
+        defer { session.upkeepNotices = [] }
+        return hold(session.upkeepNotices.map { .notice($0) })
     }
     private func hold(_ cues:[OriginalBattleCue]) -> Bool {
         guard presentsNativeActions,!cues.isEmpty else { return false }
@@ -141,7 +149,7 @@ final class OriginalBattleFlow {
             let step = try operation.advance(in:session);strategyOperation = operation
             switch step {
             case .target(let effect):
-                if try holdCombat(effect.combat,ambush:effect.ambush,experience:effect.experience) { return false }
+                if try holdCombat(effect.combat,ambush:effect.ambush,experience:effect.experience,then:operation.notices(for:effect)) { return false }
             case .retirement(let notice):
                 strategyRetirementAcknowledgement = notice
                 guard try objectives() else { return false }
@@ -227,15 +235,20 @@ final class OriginalBattleFlow {
         while !suspended,session.turns.result == 0 {
             switch session.turns.stage {
             case .unstarted,.roundComplete:
-                guard let value = try session.beginRound() else { return }
+                guard let value = try session.beginRound() else {
+                    // MAIN281A4: the turn limit ran out.
+                    _ = hold([.notice(.delayRetreat)]);return
+                }
                 if try !hook(value) { return }
             case .roundEvent:
                 if try !hook(session.prepareFriendlyRound()) { return }
+                if holdUpkeep() { return }
             case .globalEvent:try session.enterManualFriendly();return
             case .manualFriendly:return
             case .friendlyAI:
                 try nativeActions();if suspended || session.turns.result != 0 { if !suspended { pendingNativeSlot = nil };return }
                 try session.prepareEnemyPhase()
+                if holdUpkeep() { return }
             case .enemyAI:
                 try nativeActions();if suspended || session.turns.result != 0 { if !suspended { pendingNativeSlot = nil };return }
                 try session.completeRound()
@@ -284,7 +297,9 @@ final class OriginalBattleFlow {
             if let strategy = decision.strategyID {
                 strategyOperation = try OriginalStrategyOperation.begin(in:session,casterSlot:slot,abilityID:strategy,target:decision.targetSlot)
                 strategyIsNative = true;lastStrategy = nil
-                if hold(walk+(strategyOperation?.cues(in:session) ?? [])) { return }
+                // MAIN2E8A9: a computer caster announces itself first.
+                let used:[OriginalBattleCue] = [.notice(.strategyUsed(person:unit.person,ability:strategy))]
+                if hold(walk+used+(strategyOperation?.cues(in:session) ?? [])) { return }
                 guard try advanceStrategy() else { return }
             } else {
                 if let target = decision.targetSlot {

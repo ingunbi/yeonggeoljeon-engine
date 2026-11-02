@@ -8,6 +8,9 @@ struct OriginalCombatCatalog:Codable {
     struct Classes:Codable { var prep,run,swing,attack,total,shot:[Int] }
     struct Texts:Codable {
         var ambushFriendly,ambushEnemy,strategyFailed,levelUp,learned:String
+        var strategyUsed,strategyCry,attackIntent,confuseIntent,moraleIntent,healIntent,moraleDown:String
+        var healed,healVerb,raiseVerb,stillConfused,confused,moreConfused,strategyMissed,recovered:String
+        var turn,closingBonus,delayRetreat:String
         var failed,noLoss,loss,moraleLoss,experience,counterFriendly,counterEnemy:String
         var level,attack,defense,troops,morale,exp,terrain,percent:String
     }
@@ -24,6 +27,7 @@ struct OriginalCombatCatalog:Codable {
     var terrainBack:[Int]
     var terrainGround:[Int]
     var strategySounds:[Int]
+    var weathers:[String]
     var texts:Texts
     var source:JSONValue?
     var limitations:[String]?
@@ -91,8 +95,21 @@ struct OriginalCombatPage:Equatable {
 
 /// Printf subset of the source's result strings: %s, %u with a width, %%.
 extension OriginalCombatCatalog {
-    func text(_ notice:OriginalBattleNotice,person:(Int)->String,strategy:(Int)->String) -> String {
+    func text(_ notice:OriginalBattleNotice,person:(Int)->String,strategy:(Int)->String,kind:(Int)->String = { _ in "" }) -> String {
         switch notice {
+        case .strategyUsed(let id,let ability):return originalFormat(texts.strategyUsed,[person(id),strategy(ability)])
+        case .strategyCry(let ability):return originalFormat(texts.strategyCry,[strategy(ability)])
+        case .confused(let id,let again):return originalFormat(again ? texts.moreConfused : texts.confused,[person(id)])
+        case .strategyMissed:return texts.strategyMissed
+        case .moraleDown(let id):return originalFormat(texts.moraleDown,[person(id)])
+        case .healed(let id,let value,let raises):
+            return originalFormat(texts.healed,[person(id),kind(value),raises ? texts.raiseVerb : texts.healVerb])
+        case .stillConfused(let id):return originalFormat(texts.stillConfused,[person(id)])
+        case .recovered(let id):return originalFormat(texts.recovered,[person(id)])
+        case .turn(let round,let weather):
+            return originalFormat(texts.turn,[String(round),weathers.indices.contains(weather) ? weathers[weather] : ""])
+        case .closingBonus(let points):return originalFormat(texts.closingBonus,[String(points)])
+        case .delayRetreat:return texts.delayRetreat
         case .ambush(let friendly):return friendly ? texts.ambushFriendly : texts.ambushEnemy
         case .strategyFailed(let id):return originalFormat(texts.strategyFailed,[person(id)])
         case .level(let id,let level):return originalFormat(texts.levelUp,[person(id),String(level)])

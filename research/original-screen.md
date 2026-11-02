@@ -170,6 +170,28 @@ timer units and close early on input. Mode 1 waits for the button and mode 2 ask
 yes or no. The native view gives mode 0 messages a two-second timeout. The real
 duration depends on a timer rate that was not established.
 
+Eighty-four call sites reach this routine. A static sweep compared each text offset
+with the producers. Battle lines now play as native notices over the map:
+
+| Line | Site | When |
+|---|---|---|
+| Ambush, by side | `0x31926` | A hidden attacker or damage caster shows itself. |
+| Level and learned | `0x1A92F`, `0x1A9A0` | One per level, then mode 1 for that level's strategies. Only the first thirty strategy rows teach. |
+| Strategy used | `0x2E8B8` | A computer caster, before its effect. |
+| Intent lines | `0x2E922`, `0x2EA68`, `0x2EBA4`, `0x2ECFA` | A player's caster. The native view shows them on the status line while choosing. |
+| Confused, worse, missed | `0x2D596`, `0x2D5BF`, `0x2D8E3` | The outcome of a confusion or morale strategy. |
+| Morale down, healed, still confused | `0x2EC92`, `0x2ED61`, `0x2EF7E` | Outcome lines. |
+| Recovered | `0x2B6F7` | The upkeep or morale roll clears confusion. |
+| Failed strategy | `0x31E6B` | A zero-damage strategy with the enlarged view off. |
+| Turn and weather | `0x28139` | Here before the player's phase line, not before round events. |
+| Delay retreat | `0x281AA` | The round reaches the turn limit. |
+| Closing bonus | `0x27FB1` | Over the field after a win with a bonus byte. |
+
+Texts left out are the hidden command mode (`0x23E13`, `0x274B4`..`0x27720`), the
+disk prompts replaced by native slot windows, and a leftover Shift-JIS string at
+`0x33F01`. A counter's ambush line draws over the old scene in the source, and over
+the map here.
+
 ### Unit commands
 
 A click on a unit starts `0x2D9D4`, which owns one unit's whole turn.

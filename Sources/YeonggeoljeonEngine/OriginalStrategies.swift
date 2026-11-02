@@ -17,6 +17,8 @@ struct OriginalStrategyTargetEffect: Codable {
     var combat: OriginalCombatSnapshot? = nil
     /// True when this effect revealed a hidden caster.
     var ambush: Bool? = nil
+    /// The target was confused before this effect (MAIN2D57D).
+    var wasConfused: Bool? = nil
 }
 
 struct OriginalStrategyExecution: Codable {

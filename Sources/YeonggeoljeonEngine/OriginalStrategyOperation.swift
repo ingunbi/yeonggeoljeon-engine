@@ -45,6 +45,24 @@ struct OriginalStrategyOperation:Codable {
         if case .finished(let value) = continuation {return value};return nil
     }
 
+    /// MAIN2EA70..2ED66 and MAIN2D590..2D5BF: what each target's effect says.
+    func notices(for effect:OriginalStrategyTargetEffect) -> [OriginalBattleNotice] {
+        var result:[OriginalBattleNotice] = []
+        switch effect.kind {
+        case "condition2":
+            result.append(effect.success?.success == true ? .confused(person:effect.person,again:effect.wasConfused == true) : .strategyMissed)
+        case "morale":
+            result.append(effect.success?.success == true ? .moraleDown(person:effect.person) : .strategyMissed)
+        case "healing" where (0x15...0x1D).contains(abilityID):
+            // MAIN2ECCA: the three pairs of rows, then the subtype picks the verb.
+            let kind = abilityID >= 0x1B ? 3 : abilityID >= 0x18 ? 1 : 2
+            result.append(.healed(person:effect.person,kind:kind,raises:abilityID >= 0x1B))
+            if let flags = effect.healing?.remainingFlags,flags&2 != 0,effect.healing?.moraleDelta ?? 0 != 0 { result.append(.stillConfused(person:effect.person)) }
+        default:break
+        }
+        if effect.morale?.conditionRecovery?.recovered == true { result.append(.recovered(person:effect.person)) }
+        return result
+    }
     /// MAIN2E836..2EE1C: selection/availability and the branch's source locals
     /// are captured before the first effect. This consumes no gameplay RNG.
     /// MAIN31DE7: the effect of the subtype's high nibble plays on each target
@@ -227,9 +245,10 @@ extension OriginalBattleSession {
         let a = try people.stats(source.person,morale:source.morale),d = try people.stats(target.person,morale:target.morale)
         let success = try OriginalCombat.strategySuccess(caster:a,target:d,denominatorByte:2,rng:&rng)
         var retirement:(person:Int?,notice:OriginalRetirementNotice?) = (nil,nil)
+        let wasConfused = target.scriptFlags&2 != 0
         if success.success {units[targetSlot]!.scriptFlags |= 2;retirement = try strategyRetirement(targetSlot)}
         return OriginalStrategyTargetEffect(runtimeSlot:targetSlot,person:target.person,kind:"condition2",success:success,
-            retiredPerson:retirement.person,retirement:retirement.notice)
+            retiredPerson:retirement.person,retirement:retirement.notice,wasConfused:wasConfused)
     }
     func strategyMoraleEffect(casterSlot:Int,targetSlot:Int,category:Int) throws -> OriginalStrategyTargetEffect {
         guard let source = units[casterSlot],let target = units[targetSlot] else {throw BattleError.unsupported("Original morale strategy slot changed before its producer")}

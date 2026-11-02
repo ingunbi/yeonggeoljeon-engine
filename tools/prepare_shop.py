@@ -27,6 +27,8 @@ TEXTS = {
     "receiverFull": (0x3666C, 0x5589), "noItems": (0x36704, 0x55CD), "giveConfirm": (0x36739, 0x55D9),
     "buyAgain": (0x367B9, 0x55EF), "sellPrompt": (0x367E3, 0x5603), "sellEmpty": (0x368B4, 0x561D),
     "sellItemPrompt": (0x368CA, 0x5646), "saleTail": (0x36A5F, 0x566F), "sellAgain": (0x36B19, 0x5687),
+    "giftFull": (0x1A721, 0x123A), "giftChoose": (0x1A77F, 0x128A), "giftGaveUp": (0x1A81A, 0x12AC),
+    "giftDiscarded": (0x1A854, 0x12C3), "giftDeclined": (0x1A872, 0x12D8), "giftGained": (0x1A87C, 0x12EF),
 }
 # Words read through a pointer variable instead of a direct push.
 INDIRECT_TEXTS = {"confirm": (0x36459, 0x527E), "thanks": (0x367A7, 0x54EE)}

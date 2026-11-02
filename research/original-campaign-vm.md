@@ -165,3 +165,13 @@ and the callers `2C0E2` and `2C126` push person, x, y. So the kind-six word is
 `x<<8|y` (`1DAC1`), and kind eleven reads its high bytes as the x bounds and its
 low bytes as the y bounds (`1DB50..1DBB4`). All 148 such records with a known
 battle size fit their maps this way; only 100 fit the opposite reading.
+
+## Script item grants
+
+Opcode `1B` reaches `CF5:6D9C` (`0x1A6EC`). The first empty slot takes the item and
+says `0x12EF`. A person with eight full slots is asked `0x123A`. No gives up the item
+(`0x12D8`). Yes lists the eight items (`0x128A`): a cancel gives up (`0x12AC`), and a
+choice replaces the first slot holding that id (`0x12C3`). The host stops the script
+for this offer, and the window shows each result before the next instruction. The
+replay driver answers with `{kind:"item-offer",slot}`. A grant inside a battle goes to
+the current event person; elsewhere it goes to person 0.

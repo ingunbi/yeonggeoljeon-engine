@@ -9,6 +9,7 @@ struct OriginalShopCatalog:Codable {
     struct Texts:Codable {
         var greeting,question,farewell,buyPrompt,priceTail,shortMoney,receiverFull,noItems,giveConfirm:String
         var buyAgain,sellPrompt,sellEmpty,sellItemPrompt,saleTail,sellAgain,confirm,thanks:String
+        var giftFull,giftChoose,giftGaveUp,giftDiscarded,giftDeclined,giftGained:String
     }
     struct Top:Codable { var x:Int; var y:Int }
     struct List:Codable { var x:Int; var y:Int; var rows:Int }

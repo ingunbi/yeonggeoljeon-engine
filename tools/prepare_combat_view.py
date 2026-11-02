@@ -8,6 +8,7 @@ import base64
 import hashlib
 import json
 from pathlib import Path
+import re
 import struct
 import sys
 
@@ -23,10 +24,19 @@ CLASS_TABLES = {"prep": 0x4DBC, "run": 0x4DCF, "swing": 0x4DE2, "attack": 0x4DF5
 SLOT_TABLES, TERRAIN_BACK, TERRAIN_GROUND, STRATEGY_SOUNDS = (0x4E2E, 0x4E38), 0x4E42, 0x4E56, 0x4FE2
 CLASS_NAMES = 0x0FD8
 BACK_MEMBERS, GROUND_MEMBERS = range(0, 5), range(5, 9)
+WEATHER_NAMES, WEATHER_COUNT = 0x3A4C, 3
 TEXTS = {"ambushFriendly": 0x4E6B, "ambushEnemy": 0x4E80, "strategyFailed": 0x4F45, "levelUp": 0x1305, "learned": 0x1326,
+         "strategyUsed": 0x4B9E, "strategyCry": 0x4BF3, "attackIntent": 0x4BDA, "confuseIntent": 0x4BF9, "moraleIntent": 0x4C0C,
+         "healIntent": 0x4C3A, "moraleDown": 0x4C22, "healed": 0x4C64, "healVerb": 0x4C4E, "raiseVerb": 0x4C5A,
+         "stillConfused": 0x4C75, "confused": 0x4287, "moreConfused": 0x429D, "strategyMissed": 0x481A, "recovered": 0x4155,
+         "turn": 0x3DC1, "closingBonus": 0x3D66, "delayRetreat": 0x3DA3,
          "failed": 0x4EB7, "noLoss": 0x4ECD, "loss": 0x4EEA, "moraleLoss": 0x4F06, "experience": 0x4F23,
          "counterFriendly": 0x4F5B, "counterEnemy": 0x4F66, "level": 0x4FAA, "attack": 0x4FB3, "defense": 0x4FB8,
          "troops": 0x4FC2, "morale": 0x4FC7, "exp": 0x4FCC, "terrain": 0x4FD1, "percent": 0x4FD6}
+
+
+def word(main: bytes, offset: int) -> int:
+    return struct.unpack_from("<H", main, DATA_SEGMENT + offset)[0]
 
 
 def indexed_tiles(payload: bytes) -> bytes:
@@ -38,8 +48,9 @@ def indexed_tiles(payload: bytes) -> bytes:
 
 
 def text(main: bytes, offset: int) -> str:
+    """The message window's colour escapes and line feeds do not reach the native notice."""
     start = DATA_SEGMENT + offset
-    return main[start:main.index(0, start)].decode("cp949")
+    return re.sub(r"\x1bC.", "", main[start:main.index(0, start)].decode("cp949")).replace("\n", " ").strip()
 
 
 def extract(main: bytes, chr_data: bytes, chp_data: bytes, map_data: bytes) -> dict:
@@ -78,7 +89,8 @@ def extract(main: bytes, chr_data: bytes, chp_data: bytes, map_data: bytes) -> d
             "backs": [encode(value) for value in backs], "grounds": [encode(value) for value in grounds],
             "classes": {key: table(offset, CLASS_COUNT) for key, offset in CLASS_TABLES.items()},
             "classNames": class_names, "slots": slots, "terrainBack": terrain_back, "terrainGround": terrain_ground,
-            "strategySounds": table(STRATEGY_SOUNDS, 3), "texts": {key: text(main, offset) for key, offset in TEXTS.items()},
+            "strategySounds": table(STRATEGY_SOUNDS, 3), "weathers": [text(main, word(main, WEATHER_NAMES + index * 2)) for index in range(WEATHER_COUNT)],
+            "texts": {key: text(main, offset) for key, offset in TEXTS.items()},
             "source": {"methods": ["MAIN.EXE:0x32318..0x3350B", "MAIN.EXE:0x31A06..0x31CF0", "MAIN.EXE:0x2A294"],
                        "method": "static original byte interpretation; DOS program not executed"},
             "limitations": ["Step lengths are source tick floors; no original framebuffer or timing was compared.",

@@ -14,6 +14,7 @@ struct OriginalPlayInput: Codable, Equatable {
         case battleRetreat = "battle-retreat", battleQuit = "battle-quit", fieldQuit = "field-quit"
         case retryChoice = "retry-choice"
         case shopAnswer = "shop-answer", cityEntry = "city-entry", fieldExchange = "field-exchange"
+        case itemOffer = "item-offer"
     }
     var kind: Kind
     var person: Int?
@@ -46,6 +47,7 @@ struct OriginalPlayInput: Codable, Equatable {
         case .townMarker: allowed = ["marker"]
         case .expectBattle: allowed = battleID == nil ? [] : ["battleID"]
         case .saveSkip,.saveNative,.partyConfirm,.fieldQuit: allowed = []
+        case .itemOffer: allowed = slot == nil ? [] : ["slot"]
         case .battleMove: allowed = ["slot","x","y"]
         case .townCell: allowed = ["x","y"]
         case .battleAttack: allowed = ["slot","target"]
@@ -234,7 +236,7 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
             try synchronizeBattle()
             if let source = host.failure { throw EngineError.invalid("Reached unrestored source operation: \(source.reason)") }
             if host.interpreterReturn != nil || host.frameworkReturn != nil { return totalTicks - started }
-            if host.choice != nil || host.saveRequest != nil || host.partySelection != nil || host.shop != nil || host.cityEntry != nil { return totalTicks - started }
+            if host.choice != nil || host.saveRequest != nil || host.itemOffer != nil || host.partySelection != nil || host.shop != nil || host.cityEntry != nil { return totalTicks - started }
             if host.retirementPresentation != nil { try host.acknowledgeRetirement(); continue }
             if host.stage.dialogue != nil { try host.acknowledge(); continue }
             if host.explorationInputReady || (host.stage.palette == 3 && host.battleInputReady) { return totalTicks - started }
@@ -293,6 +295,9 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
             case .townCell: try host.walk(to: GridPoint(x: input.x!, y: input.y!))
             case .partyToggle: try host.toggleParty(person: input.person!)
             case .partyConfirm: try host.confirmParty()
+            case .itemOffer:
+                guard host.itemOffer != nil else { throw EngineError.invalid("Play item-offer has no pending full-inventory offer") }
+                try host.answerItemOffer(slot:input.slot)
             case .expectBattle:
                 guard host.stage.palette == 3, let battle = host.battle,
                       input.battleID.map({ $0 == battle.definition.id }) ?? true else {

@@ -232,6 +232,7 @@ extension OriginalBattleSession {
     /// to active friendlies, then converts every active slot to status1.
     func finishBattleForCarryover() throws -> OriginalPartyCarryover {
         if turns.result == 2 {
+            if scriptValue24 != 0 { closingNotices.append(.closingBonus(points:Int(scriptValue24))) }
             for slot in 0..<45 {
                 guard let unit = units[slot],unit.status == 2 else {continue}
                 if slot < 15 && scriptValue24 != 0 {

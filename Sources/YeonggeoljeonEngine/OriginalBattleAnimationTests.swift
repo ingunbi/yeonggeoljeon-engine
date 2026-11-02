@@ -75,8 +75,11 @@ func originalBattleAnimationSelfTests() throws {
     let catalog = OriginalCombatCatalog(format:1,palette:Array(repeating:[0,0,0],count:16),background:blank,tiles:"",
         frameTiles:Array(repeating:16,count:169)+Array(repeating:9,count:12),backs:[],grounds:[],classes:classes,classNames:Array(repeating:"",count:19),
         slots:[[[10,4],[8,8],[6,6],[4,4],[2,8]],[[14,4],[12,8],[16,6],[20,4],[18,8]]],
-        terrainBack:Array(repeating:4,count:20),terrainGround:Array(repeating:7,count:20),strategySounds:[28,27,29],
-        texts:.init(ambushFriendly:"go",ambushEnemy:"oh",strategyFailed:"%s no",levelUp:"%s L%w",learned:"%s!",failed:"%s failed",noLoss:"%s none",loss:"%s(%4u)",moraleLoss:"m%2u",experience:"%s e%2u",counterFriendly:"c",counterEnemy:"C",
+        terrainBack:Array(repeating:4,count:20),terrainGround:Array(repeating:7,count:20),strategySounds:[28,27,29],weathers:["sun","cloud","rain"],
+        texts:.init(ambushFriendly:"go",ambushEnemy:"oh",strategyFailed:"%s no",levelUp:"%s L%w",learned:"%s!",strategyUsed:"%s used %s",strategyCry:"%s cry",attackIntent:"%s go",
+                    confuseIntent:"ci",moraleIntent:"mi",healIntent:"%s up",moraleDown:"%s down",healed:"%s %s %s",healVerb:"heal",raiseVerb:"raise",
+                    stillConfused:"%s still",confused:"%s dazed",moreConfused:"%s worse",strategyMissed:"miss",recovered:"%s clear",turn:"T%u %s",
+                    closingBonus:"B%w",delayRetreat:"late",failed:"%s failed",noLoss:"%s none",loss:"%s(%4u)",moraleLoss:"m%2u",experience:"%s e%2u",counterFriendly:"c",counterEnemy:"C",
                     level:"Lv%2u %s",attack:"a",defense:"d",troops:"t",morale:"m",exp:"e",terrain:"g",percent:"+%2u%%"),source:nil,limitations:nil)
     func combat(attacker:Int = 0,target:Int = 20,attackerClass:Int = 0,targetClass:Int = 0,kind:Int = 1,subtype:Int = 0,troops:Int = 700,damage:Int = 250) -> OriginalCombatSnapshot {
         OriginalCombatSnapshot(kind:kind,subtype:subtype,attackerSlot:attacker,targetSlot:target,attackerPerson:0,targetPerson:1,attackerClass:attackerClass,
@@ -126,6 +129,12 @@ func originalBattleAnimationSelfTests() throws {
     try check(noticeText(.ambush(friendly:true)) == "go" && noticeText(.ambush(friendly:false)) == "oh","each side has its ambush line")
     try check(noticeText(.strategyFailed(person:4)) == "p4 no" && noticeText(.level(person:4,level:9)) == "p4 L9","notices fill the source formats")
     try check(noticeText(.learned(abilities:[1,2])) == "s1s2!","names join with no separator, as CF5:46D4 appends them")
+    try check(noticeText(.strategyUsed(person:2,ability:3)) == "p2 used s3" && noticeText(.strategyCry(ability:3)) == "s3 cry","a caster's lines name the strategy")
+    try check(noticeText(.confused(person:1,again:false)) == "p1 dazed" && noticeText(.confused(person:1,again:true)) == "p1 worse","confusion has two lines")
+    try check(noticeText(.turn(round:3,weather:2)) == "T3 rain" && noticeText(.turn(round:3,weather:9)) == "T3 ","the banner names its weather")
+    try check(noticeText(.closingBonus(points:40)) == "B40" && noticeText(.delayRetreat) == "late" && noticeText(.strategyMissed) == "miss","bare notices")
+    try check(catalog.text(.healed(person:1,kind:2,raises:true),person:{ "p\($0)" },strategy:{ _ in "" },kind:{ "k\($0)" }) == "p1 k2 raise","a healed line names its kind")
+    try check(OriginalBattleNotice.delayRetreat.waitsForInput && OriginalBattleNotice.closingBonus(points:1).waitsForInput && !OriginalBattleNotice.strategyMissed.waitsForInput,"mode one lines wait")
     var notices = OriginalBattleAnimator()
     notices.play([.notice(.level(person:0,level:2)),.notice(.learned(abilities:[1])),.notice(.ambush(friendly:true))])
     try check(notices.advance(0) == [7],"a level notice sounds seven")

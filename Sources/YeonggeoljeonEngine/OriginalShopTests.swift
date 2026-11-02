@@ -12,7 +12,8 @@ func originalShopSelfTests() throws {
     prices[10] = 30;prices[11] = 5;prices[12] = 255
     let texts = OriginalShopCatalog.Texts(greeting:"hello",question:"what",farewell:"bye",buyPrompt:"buy?",priceTail:" gold\n",shortMoney:"short",
         receiverFull:"full",noItems:"none",giveConfirm:" takes it",buyAgain:" buy more",sellPrompt:"whose",sellEmpty:"empty",
-        sellItemPrompt:"which",saleTail:" paid",sellAgain:" sell more",confirm:"ok?",thanks:"thanks")
+        sellItemPrompt:"which",saleTail:" paid",sellAgain:" sell more",confirm:"ok?",thanks:"thanks",
+        giftFull:"%s full",giftChoose:"choose",giftGaveUp:"%s gone",giftDiscarded:"%s out",giftDeclined:"%s no",giftGained:"%s got")
     let catalog = OriginalShopCatalog(format:1,stock:[[],[10,11],[12]],prices:prices,
         merchant:.init(person:374,x:15,y:11,sourceFacing:4,music:15),townMusic:.init(normal:5,special:1,chapter:3,city:11),menu:["buy","sell"],texts:texts,
         particles:.init(price:Array(repeating:" at ",count:64),receiver:Array(repeating:" for",count:64),sale:Array(repeating:" at ",count:64)),

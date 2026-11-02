@@ -7,12 +7,28 @@ enum OriginalBattleNotice:Equatable {
     case strategyFailed(person:Int)
     case level(person:Int,level:Int)
     case learned(abilities:[Int])
-    var waitsForInput:Bool { if case .learned = self { return true };return false }
+    case strategyUsed(person:Int,ability:Int)
+    case strategyCry(ability:Int)
+    case confused(person:Int,again:Bool)
+    case strategyMissed
+    case moraleDown(person:Int)
+    case healed(person:Int,kind:Int,raises:Bool)
+    case stillConfused(person:Int)
+    case recovered(person:Int)
+    case turn(round:Int,weather:Int)
+    case closingBonus(points:Int)
+    case delayRetreat
+    var waitsForInput:Bool {
+        switch self {
+        case .learned,.closingBonus,.delayRetreat:return true
+        default:return false
+        }
+    }
     /// MAIN1A919 and MAIN1A990.
     var sound:Int? {
         switch self {
         case .level,.learned:return 7
-        case .ambush,.strategyFailed:return nil
+        default:return nil
         }
     }
 }
