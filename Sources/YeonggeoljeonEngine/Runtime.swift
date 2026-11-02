@@ -272,6 +272,18 @@ final class Runtime {
         guard hostWaiting,let actor = actors[person] else { throw EngineError.invalid("Original exploration route requires an idle live actor") }
         return try route(from:actor,to:target,actorGoal:actorGoal)
     }
+    /// A citizen's one frame of wandering (MAIN25845..258CF): the facing and
+    /// walking frame always change, and the cell only if the map allows it.
+    func wander(person:Int,direction:Int,moved:(GridPoint) -> Bool) {
+        guard hostWaiting,var actor = actors[person],let map = currentMap,let width = map.walkWidth,let bytes = map.walkBytes,
+              let neighbors = actor.position.x&1 == 0 ? map.neighborsEven : map.neighborsOdd,
+              let step = neighbors.first(where:{ $0.direction == direction }) else { return }
+        let next = GridPoint(x:actor.position.x+step.dx,y:actor.position.y+step.dy)
+        let index = next.y*width+next.x
+        actor.facing = direction;actor.phase = actor.phase == 0 ? 1 : 0
+        if next.x >= 0,next.x < width,bytes.indices.contains(index),bytes[index] == 0x7F,moved(next) { actor.position = next }
+        actors[person] = actor
+    }
     func setNativeFacing(person:Int,direction:Int) throws {
         guard hostWaiting,var actor = actors[person],(0..<(currentMap?.geometry == "world" ? 8 : 4)).contains(direction) else {
             throw EngineError.invalid("Original input facing requires an idle live actor and native direction")

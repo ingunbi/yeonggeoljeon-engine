@@ -4,6 +4,31 @@ import Foundation
 /// Town and room citizens, exported by tools/prepare_citizens.py. A citizen is
 /// actor class 0x400; the runtime keeps them on ids from `firstActor` so they
 /// cannot collide with the 384 people.
+/// One citizen's wander state (MAIN25801..258CF). The source draws from the
+/// shared generator once per frame in town, so its dice depend on time spent
+/// there; this draws from its own generator so battles and replays stay exact.
+struct OriginalCitizenWander:Equatable {
+    var home:GridPoint
+    var direction = 0
+    var counter = 0
+    var standing = false
+    /// Advances one frame. A true `step` result asks to try that neighbor.
+    mutating func tick(draw:(Int) -> Int) -> Bool {
+        if counter == 0 {
+            standing.toggle()
+            var value:Int
+            if !standing { direction = draw(4);value = draw(16)+1 } else { value = draw(2) }
+            if value&1 == 0 || value == 0 { value += 1 }
+            counter = value
+        }
+        counter -= 1
+        return !standing
+    }
+    /// A blocked step ends the walk; three cells from home is as far as it goes.
+    mutating func blocked() { counter = 0 }
+    func allows(_ cell:GridPoint) -> Bool { abs(cell.x-home.x) <= 3 && abs(cell.y-home.y) <= 3 }
+}
+
 struct OriginalCitizenCatalog:Codable {
     struct Person:Codable { var name:String; var sprite:Int }
     struct Placement:Codable { var key:Int; var ids:[Int] }

@@ -179,5 +179,14 @@ func originalShopSelfTests() throws {
     try check(citizens.say(group:0,citizen:4) == nil,"a citizen without a line stays silent")
     let sheets = citizens.actors(sprites:["a.png","b.png"])
     try check(sheets["1025"]?.image == "b.png" && sheets.count == 256,"each citizen takes its sprite sheet")
+    // Citizens idle, then walk, and stay within three cells of home.
+    var wander = OriginalCitizenWander(home:GridPoint(x:10,y:10))
+    var draws:[Int] = [],script = [1,3,7]
+    let next:(Int) -> Int = { bound in draws.append(bound);return script.removeFirst() }
+    try check(!wander.tick(draw:next) && wander.standing && draws == [2] && wander.counter == 0,"a new citizen first stands for a short draw")
+    try check(wander.tick(draw:next) && draws == [2,4,16] && wander.direction == 3 && wander.counter == 8,"then it picks a direction and an odd walk")
+    try check(wander.allows(GridPoint(x:13,y:7)) && !wander.allows(GridPoint(x:14,y:10)),"home bounds the walk")
+    wander.blocked()
+    try check(wander.counter == 0,"a blocked step ends the walk")
     print("Original shop self-tests passed: \(checks)")
 }

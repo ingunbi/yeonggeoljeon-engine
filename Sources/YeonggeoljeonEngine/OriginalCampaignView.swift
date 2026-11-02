@@ -25,6 +25,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     }
     init(host:OriginalCampaignHost) throws {
         self.host = host
+        host.citizensWander = true
         renderer = try Renderer(host.data)
         super.init(frame:CGRect(x:0,y:0,width:1024,height:640))
         overlay.frame = bounds;overlay.autoresizingMask = [.width,.height];addSubview(overlay)

@@ -191,6 +191,7 @@ final class OriginalCampaignHost {
         }
         guard started,failure == nil else { return }
         stage.advance(microseconds:microseconds);try pump()
+        wanderCitizens(microseconds:microseconds)
         if explorationInput != nil,stage.hostWaiting { try completeExplorationInput() }
         if retirement != nil { _ = try continueRetirement() }
         if pendingTurnHook != nil { _ = try continueTurnHook() }
@@ -282,6 +283,33 @@ final class OriginalCampaignHost {
     private var cityGroup:Int { exploration.chapterMappings.first{$0.chapter == vm.state.chapter}?.cityGroup ?? 0 }
     /// MAIN26298 places the city's citizens once per map: 18E8 finds any class
     /// 0x400 actor already there. The key is the room, or 7D for the town.
+    /// The window turns this on. Verification keeps citizens where they stand.
+    var citizensWander = false
+    private var wanderers:[Int:OriginalCitizenWander] = [:]
+    private var wanderDice = OriginalRNG(state:0x1234)
+    private var wanderTime:Int64 = 0
+    /// MAIN257AC runs per loop frame, six ticks at the normal speed.
+    private func wanderCitizens(microseconds:Int64) {
+        guard citizensWander,explorationInputReady else { return }
+        wanderTime += microseconds
+        guard wanderTime >= 99_488 else { return }
+        wanderTime = 0
+        let present = stage.actors.keys.filter { $0 >= OriginalCitizenCatalog.firstActor }
+        wanderers = wanderers.filter { present.contains($0.key) }
+        for person in present.sorted() {
+            guard let actor = stage.actors[person] else { continue }
+            var state = wanderers[person] ?? OriginalCitizenWander(home:actor.position)
+            var dice = wanderDice
+            let walks = state.tick { (try? dice.next(bound:$0)) ?? 0 }
+            wanderDice = dice
+            if walks {
+                var allowed = false
+                stage.wander(person:person,direction:state.direction) { allowed = state.allows($0);return allowed }
+                if !allowed { state.blocked() }
+            }
+            wanderers[person] = state
+        }
+    }
     private func placeCitizens() throws {
         guard !stage.actors.keys.contains(where:{$0 >= OriginalCitizenCatalog.firstActor}),let city = vm.state.gameCity,
               let map = stage.currentMap,let width = map.walkWidth,let walk = map.walkBytes else { return }
