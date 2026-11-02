@@ -118,9 +118,10 @@ new path to a separately chosen adjacent cell. The planner preserves that
 prefix. At arrival, `25B60..25C04` requires adjacency (or the same tile), and
 `26A48..26A85` faces both participants toward one another before kind3's
 person probe. When that probe finds no record, `26A8D..26A9C` makes the
-person say the DS:`397A` line. Those bytes are not cp949 text and use the
-original font's own codes, so the native host shows an explicit notice instead
-of inventing a rendering. Person374 runs the shop instead of kind3
+person say the DS:`397A` line. Those bytes read as the Shift-JIS string of a
+laugh, left over in the Korean build. What the Korean program draws for them was
+not checked, so the native host shows a short notice instead of inventing a
+rendering. Person374 runs the shop instead of kind3
 ([original-shop.md](original-shop.md)).
 `26AA1..26AAD` restores the target's saved facing after that invocation while
 the player keeps the new facing; the arrival returns that separate after-call

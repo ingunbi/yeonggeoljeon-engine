@@ -46,6 +46,15 @@ func originalShopSelfTests() throws {
     let cast = try people()
     try check(try OriginalShopOperation.customers(cast) == [0,1],"only joined people of the player force are listed")
 
+    // The field lists follow the first person's force, joined people only.
+    try check(try cast.companions() == [0,1],"companions share person zero's force and joined bit")
+    try check(try cast.giveItem(from:1,to:0,item:10) && (try cast.person(0).itemIDs) == [10,11,255,255,255,255,255,255],"an exchange fills the first empty slot")
+    try check((try cast.person(1).itemIDs[0]) == 255,"and clears the giver's first match")
+    try cast.setItem(person:1,slot:0,item:10);try cast.setItem(person:0,slot:0,item:255)
+    let full = try people()
+    for slot in 0..<8 { try full.setItem(person:0,slot:slot,item:11) }
+    try check(try !full.giveItem(from:1,to:0,item:10) && (try full.person(1).itemIDs[0]) == 10,"a full receiver changes nothing")
+
     // Entering and leaving.
     var shop = session(),money = 1000
     try check(try shop.prompt(people:cast) == .init(kind:.say,text:"hello"),"the greeting comes first")

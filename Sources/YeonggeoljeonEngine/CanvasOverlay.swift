@@ -46,6 +46,12 @@ struct CanvasSheet {
         var body = ""
         var list:[String] = []
         var facts:[(label:String,value:String)] = []
+        /// Lays the list and facts out in two columns.
+        var wide = false
+        var portrait:CGImage? = nil
+        /// A map under the text, with dots placed in unit square coordinates.
+        var picture:CGImage? = nil
+        var marks:[(point:CGPoint,strong:Bool)] = []
     }
     struct Row {
         var label:String
@@ -53,6 +59,9 @@ struct CanvasSheet {
         /// Draws the value as a warning; the row can still be chosen.
         var warns = false
         var detail:Detail? = nil
+        var enabled = true
+        /// Non-nil draws a check box.
+        var checked:Bool? = nil
     }
     enum Mode { case list,buttons,timed }
     var portrait:CGImage?
@@ -266,6 +275,13 @@ final class CanvasOverlayView:NSView {
             context.addLine(to:CGPoint(x:x,y:y+dy));context.closePath();context.fillPath()
         }
     }
+    private func drawCheck(_ box:CGRect,checked:Bool,enabled:Bool,context:CGContext) {
+        guard checked else { CanvasTheme.stroke(box,radius:3,in:context);return }
+        CanvasTheme.fill(box,enabled ? CanvasTheme.accentFill : CanvasTheme.hairline,radius:3,in:context)
+        context.setStrokeColor(CanvasTheme.onAccent.cgColor);context.setLineWidth(1.6);context.setLineCap(.round)
+        context.move(to:CGPoint(x:box.minX+3.5,y:box.midY));context.addLine(to:CGPoint(x:box.midX-1,y:box.maxY-4))
+        context.addLine(to:CGPoint(x:box.maxX-3.5,y:box.minY+4));context.strokePath()
+    }
     private func drawMenu(_ value:CanvasMenu,in context:CGContext) {
         let shape = layout(value)
         CanvasTheme.panel(shape.panel,in:context)
@@ -277,13 +293,7 @@ final class CanvasOverlayView:NSView {
             let color = option.enabled ? CanvasTheme.text : CanvasTheme.disabled
             var inset = rect.insetBy(dx:10,dy:3)
             if let checked = option.checked {
-                let box = CGRect(x:inset.minX,y:rect.midY-7,width:14,height:14)
-                if checked {
-                    CanvasTheme.fill(box,option.enabled ? CanvasTheme.accentFill : CanvasTheme.hairline,radius:3,in:context)
-                    context.setStrokeColor(CanvasTheme.onAccent.cgColor);context.setLineWidth(1.6);context.setLineCap(.round)
-                    context.move(to:CGPoint(x:box.minX+3.5,y:box.midY));context.addLine(to:CGPoint(x:box.midX-1,y:box.maxY-4))
-                    context.addLine(to:CGPoint(x:box.maxX-3.5,y:box.minY+4));context.strokePath()
-                } else { CanvasTheme.stroke(box,radius:3,in:context) }
+                drawCheck(CGRect(x:inset.minX,y:rect.midY-7,width:14,height:14),checked:checked,enabled:option.enabled,context:context)
                 inset = inset.offsetBy(dx:22,dy:0);inset.size.width -= 22
             }
             (option.label as NSString).draw(in:inset,withAttributes:attributes(color))
@@ -304,10 +314,11 @@ final class CanvasOverlayView:NSView {
     }
     private static let sheetRows = 8,sheetRow:CGFloat = 24
     private func sheetLayout(_ value:CanvasSheet) -> SheetLayout {
-        let size = CGSize(width:min(viewport.width-16,520),height:min(viewport.height-16,304))
+        let size = CGSize(width:min(viewport.width-16,540),height:min(viewport.height-16,340))
         let panel = CGRect(x:viewport.midX-size.width/2,y:viewport.midY-size.height/2,width:size.width,height:size.height)
-        let header = panel.minY+78,footer = panel.maxY-40
-        let list = CGRect(x:panel.minX+8,y:header+6,width:210,height:Self.sheetRow*CGFloat(Self.sheetRows))
+        // A sheet without a portrait keeps only the rows its text needs.
+        let header = panel.minY+(value.portrait != nil ? 78 : value.line.isEmpty ? 38 : 58),footer = panel.maxY-40
+        let list = CGRect(x:panel.minX+8,y:header+6,width:210,height:min(Self.sheetRow*CGFloat(Self.sheetRows),footer-header-10))
         let detail = CGRect(x:list.maxX+14,y:header+10,width:panel.maxX-list.maxX-30,height:footer-header-18)
         let shown = min(value.rows.count,Self.sheetRows),first = min(firstVisible,max(0,value.rows.count-shown))
         let rows = (0..<shown).map { (index:first+$0,rect:CGRect(x:list.minX,y:list.minY+CGFloat($0)*Self.sheetRow,width:list.width,height:Self.sheetRow-2)) }
@@ -327,28 +338,58 @@ final class CanvasOverlayView:NSView {
     }
     private func drawDetail(_ detail:CanvasSheet.Detail,in rect:CGRect,context:CGContext) {
         var y = rect.minY
+        var textWidth = rect.width
+        if let portrait = detail.portrait {
+            let box = CGRect(x:rect.maxX-47,y:rect.minY,width:47,height:58)
+            context.saveGState();CanvasTheme.rounded(box,5,in:context);context.clip()
+            Renderer.image(portrait,in:box,context:context);context.restoreGState()
+            textWidth -= 57
+        }
         if !detail.heading.isEmpty {
-            (detail.heading as NSString).draw(in:CGRect(x:rect.minX,y:y,width:rect.width,height:22),withAttributes:CanvasTheme.attributes(CanvasTheme.font(15,.semibold),CanvasTheme.text))
+            (detail.heading as NSString).draw(in:CGRect(x:rect.minX,y:y,width:textWidth,height:22),withAttributes:CanvasTheme.attributes(CanvasTheme.font(15,.semibold),CanvasTheme.text))
             y += 26
         }
         if !detail.body.isEmpty {
-            let height = ceil((detail.body as NSString).boundingRect(with:CGSize(width:rect.width,height:200),options:[.usesLineFragmentOrigin],attributes:attributes(CanvasTheme.muted,size:13)).height)
-            (detail.body as NSString).draw(with:CGRect(x:rect.minX,y:y,width:rect.width,height:height+2),options:[.usesLineFragmentOrigin],attributes:attributes(CanvasTheme.muted,size:13))
+            let style = attributes(CanvasTheme.muted,size:13)
+            let height = ceil((detail.body as NSString).boundingRect(with:CGSize(width:textWidth,height:200),options:[.usesLineFragmentOrigin],attributes:style).height)
+            (detail.body as NSString).draw(with:CGRect(x:rect.minX,y:y,width:textWidth,height:height+2),options:[.usesLineFragmentOrigin],attributes:style)
             y += height+8
         }
-        for item in detail.list {
-            (item as NSString).draw(in:CGRect(x:rect.minX,y:y,width:rect.width,height:18),withAttributes:attributes(CanvasTheme.text,size:13))
-            y += 19
+        if detail.portrait != nil { y = max(y,rect.minY+66) }
+        let columns:CGFloat = detail.wide ? 2 : 1
+        let cell = (rect.width-(columns-1)*14)/columns
+        func cellOrigin(_ index:Int,_ top:CGFloat,_ step:CGFloat) -> CGPoint {
+            let column = index%Int(columns),row = index/Int(columns)
+            return CGPoint(x:rect.minX+CGFloat(column)*(cell+14),y:top+CGFloat(row)*step)
         }
+        for (index,item) in detail.list.enumerated() {
+            let at = cellOrigin(index,y,19)
+            (item as NSString).draw(in:CGRect(x:at.x,y:at.y,width:cell,height:18),withAttributes:attributes(CanvasTheme.text,size:13))
+        }
+        y += CGFloat((detail.list.count+Int(columns)-1)/Int(columns))*19
         // Facts close an item's text from below; alone they follow the heading.
         let closing = !detail.body.isEmpty
-        var row = closing ? rect.maxY-CGFloat(detail.facts.count)*20 : y
-        if closing,!detail.facts.isEmpty { CanvasTheme.divider(from:CGPoint(x:rect.minX,y:row-5.5),to:CGPoint(x:rect.maxX,y:row-5.5),in:context) }
-        for fact in detail.facts {
-            let line = CGRect(x:rect.minX,y:row,width:rect.width,height:18)
+        let factRows = (detail.facts.count+Int(columns)-1)/Int(columns)
+        let top = closing ? rect.maxY-CGFloat(factRows)*20 : y
+        if closing,!detail.facts.isEmpty { CanvasTheme.divider(from:CGPoint(x:rect.minX,y:top-5.5),to:CGPoint(x:rect.maxX,y:top-5.5),in:context) }
+        for (index,fact) in detail.facts.enumerated() {
+            let at = cellOrigin(index,top,20),line = CGRect(x:at.x,y:at.y,width:cell,height:18)
             (fact.label as NSString).draw(in:line,withAttributes:attributes(closing ? CanvasTheme.muted : CanvasTheme.text,size:closing ? 12 : 13))
             (fact.value as NSString).draw(in:line,withAttributes:CanvasTheme.attributes(CanvasTheme.number(13,.medium),CanvasTheme.text,alignment:.right))
-            row += 20
+        }
+        if let picture = detail.picture {
+            let area = CGRect(x:rect.minX,y:y,width:rect.width,height:rect.maxY-y)
+            let scale = min(area.width/CGFloat(picture.width),area.height/CGFloat(picture.height))
+            let box = CGRect(x:area.midX-CGFloat(picture.width)*scale/2,y:area.minY,width:CGFloat(picture.width)*scale,height:CGFloat(picture.height)*scale)
+            context.saveGState();context.interpolationQuality = .medium
+            CanvasTheme.rounded(box,4,in:context);context.clip()
+            Renderer.image(picture,in:box,context:context);context.restoreGState()
+            for mark in detail.marks {
+                let center = CGPoint(x:box.minX+mark.point.x*box.width,y:box.minY+mark.point.y*box.height),radius:CGFloat = mark.strong ? 4 : 2
+                let dot = CGRect(x:center.x-radius,y:center.y-radius,width:radius*2,height:radius*2)
+                context.setFillColor(mark.strong ? CanvasTheme.accentFill : CGColor(gray:1,alpha:0.85));context.fillEllipse(in:dot)
+                context.setStrokeColor(CGColor(gray:0,alpha:0.7));context.setLineWidth(1);context.strokeEllipse(in:dot)
+            }
         }
     }
     private func drawSheet(_ value:CanvasSheet,in context:CGContext) {
@@ -374,8 +415,12 @@ final class CanvasOverlayView:NSView {
         for (index,rect) in shape.rows {
             let row = value.rows[index]
             if index == value.selected { CanvasTheme.fill(rect,frozen ? CanvasTheme.inset : CanvasTheme.selection,in:context) }
-            let inset = rect.insetBy(dx:10,dy:3)
-            (row.label as NSString).draw(in:inset,withAttributes:attributes(frozen && index != value.selected ? CanvasTheme.muted : CanvasTheme.text))
+            var inset = rect.insetBy(dx:10,dy:3)
+            if let checked = row.checked {
+                drawCheck(CGRect(x:inset.minX,y:rect.midY-7,width:14,height:14),checked:checked,enabled:row.enabled,context:context)
+                inset = inset.offsetBy(dx:22,dy:0);inset.size.width -= 22
+            }
+            (row.label as NSString).draw(in:inset,withAttributes:attributes(!row.enabled ? CanvasTheme.disabled : frozen && index != value.selected ? CanvasTheme.muted : CanvasTheme.text))
             if !row.value.isEmpty {
                 let color = row.warns ? CanvasTheme.danger : frozen ? CanvasTheme.disabled : CanvasTheme.muted
                 (row.value as NSString).draw(in:inset,withAttributes:CanvasTheme.attributes(CanvasTheme.number(13),color,alignment:.right))
@@ -497,7 +542,7 @@ final class CanvasOverlayView:NSView {
                 guard !value.rows.isEmpty else { return }
                 value.selected = (value.selected+(event.keyCode == 125 ? 1 : value.rows.count-1))%value.rows.count
                 sheet = value;revealSheetRow();needsDisplay = true
-            case 36,49,76:if value.rows.indices.contains(value.selected) { finishSheet(value.selected) }
+            case 36,49,76:chooseSheetRow(value.selected)
             case 53:finishSheet(nil)
             default:break
             }
@@ -509,6 +554,10 @@ final class CanvasOverlayView:NSView {
             default:break
             }
         }
+    }
+    private func chooseSheetRow(_ index:Int) {
+        guard let value = sheet,value.rows.indices.contains(index) else { return }
+        if value.rows[index].enabled { finishSheet(index) } else { NSSound.beep() }
     }
     override func mouseMoved(with event:NSEvent) {
         let point = canvasPoint(event)
@@ -529,7 +578,7 @@ final class CanvasOverlayView:NSView {
             let point = canvasPoint(event),shape = sheetLayout(value)
             switch value.mode {
             case .timed:finishSheet(0)
-            case .list:if let hit = shape.rows.first(where:{ $0.rect.contains(point) }) { finishSheet(hit.index) }
+            case .list:if let hit = shape.rows.first(where:{ $0.rect.contains(point) }) { chooseSheetRow(hit.index) }
             case .buttons:if let hit = shape.buttons.first(where:{ $0.rect.contains(point) }) { finishSheet(hit.index) }
             }
             return

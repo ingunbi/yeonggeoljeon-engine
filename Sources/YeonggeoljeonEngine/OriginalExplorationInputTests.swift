@@ -119,6 +119,9 @@ func originalExplorationInputSelfTests() throws {
     var rng = OriginalRNG(state:5),standing = OriginalRNG(state:5)
     try OriginalExplorationInput.merchantPlacement(rng:&rng);_ = try standing.next(bound:16)
     try check(rng == standing,"merchant placement draws only its standing period")
+    try check(catalog.destinations(chapter:0,flags:[3,1,3]).map(\.id) == [0],"the whole map lists reachable placed cities")
+    try check(catalog.destinations(chapter:0,flags:[3,3,3]).map(\.id) == [0,1],"in city order")
+    try check(catalog.destinations(chapter:1,flags:[3,3,3]).isEmpty,"of the current chapter only")
     let entry = OriginalCityEntry(cityWord:"C",villageWord:"V",questionTail:"?",x:11,y:13)
     func city(_ type:Int?) -> OriginalCity {
         OriginalCity(chapter:0,id:1,name:"N",worldX:0,worldY:0,worldPositionKnown:true,worldMapKey:"w",townMapKey:"t",sourceCityType:type)

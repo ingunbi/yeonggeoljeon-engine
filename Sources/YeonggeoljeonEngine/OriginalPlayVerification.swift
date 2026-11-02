@@ -13,7 +13,7 @@ struct OriginalPlayInput: Codable, Equatable {
         case battleWait = "battle-wait", battleEndTurn = "battle-end-turn"
         case battleRetreat = "battle-retreat", battleQuit = "battle-quit", fieldQuit = "field-quit"
         case retryChoice = "retry-choice"
-        case shopAnswer = "shop-answer", cityEntry = "city-entry"
+        case shopAnswer = "shop-answer", cityEntry = "city-entry", fieldExchange = "field-exchange"
     }
     var kind: Kind
     var person: Int?
@@ -41,6 +41,7 @@ struct OriginalPlayInput: Codable, Equatable {
         case .talk,.partyToggle: allowed = ["person"]
         case .choice,.retryChoice,.cityEntry: allowed = ["index"]
         case .shopAnswer: allowed = index == nil ? [] : ["index"]
+        case .fieldExchange: allowed = ["person","index","item"]
         case .worldCity: allowed = ["city"]
         case .townMarker: allowed = ["marker"]
         case .expectBattle: allowed = battleID == nil ? [] : ["battleID"]
@@ -269,6 +270,10 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
             case .talk: _ = try host.talk(to: input.person!)
             case .shopAnswer: try host.answerShop(input.index)
             case .cityEntry: try host.answerCityEntry(input.index == 1)
+            case .fieldExchange:
+                guard try host.exchangeItem(from:input.person!,to:input.index!,item:input.item!) else {
+                    throw EngineError.invalid("Original item exchange receiver has no empty slot")
+                }
             case .choice: try host.choose(input.index!)
             case .saveSkip:
                 guard host.saveRequest != nil else { throw EngineError.invalid("Play save-skip has no matching source save request") }

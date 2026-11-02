@@ -19,8 +19,17 @@ struct OriginalHUDField:Codable,Equatable {
     var portraitID:Int?
     var source:JSONValue?
 }
+/// Words of the four field icons (MAIN 0x22DB8..0x23DBA).
+struct OriginalFieldTexts:Codable {
+    var personInfo,itemExchange,exchangePrompt,personOne,personTwo,people,storyInfo,wholeMap,notHere,noItems,level:String
+    /// Troops, attack and defense labels of the person screen.
+    var stats:[String]
+}
 struct OriginalFieldScreen:Codable {
     var frameAsset:Int; var viewport:[Int]; var hud:[String:OriginalHUDField]; var source:JSONValue?
+    var texts:OriginalFieldTexts? = nil
+    /// Story, people, whole map and menu, in the order of the DS:3636 handlers.
+    var icons:[[Int]]? = nil
 }
 struct OriginalBattleScreen:Codable {
     var frameAsset:Int; var layout:OriginalBattleLayout; var colors:[[Int]]

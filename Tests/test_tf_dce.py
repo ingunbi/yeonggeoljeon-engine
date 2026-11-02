@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from prepare_story import FIELD_ICON_SITE, FIELD_ICON_SIZE_SITE, FIELD_ICONS, FIELD_STATS, FIELD_STATS_SITE, FIELD_TEXTS, field_facts
 from prepare_story import (BATTLE_FRAME_CALL, BATTLE_SHAPES, CLASS_NAMES, COMMAND_MESSAGES, COMMAND_SHAPES, CONDITION_SHAPES, CONDITION_TEXTS, DATA_PARAGRAPH, DATA_SEGMENT, FAMILY_LABELS,
                            TERRAIN_WINDOW_SHAPES,
                            FIELD_FRAME_CALL, HUD_FIELDS, ITEM_MESSAGES, ITEM_WORDS, KIND_LABELS, PORTRAIT_CALL, TERRAIN_NAMES, TERRAIN_SHAPES, TERRAIN_TABLE,
@@ -205,6 +206,29 @@ class DCEFormatTests(unittest.TestCase):
         main[CONDITION_TEXTS["playerPhase"][0] + 1] = 0x90
         with self.assertRaisesRegex(ResourceError, "playerPhase"):
             battle_commands(bytes(main))
+
+    def test_field_icon_facts_come_from_checked_sites(self):
+        main = bytearray(0x3F000)
+        def put(pointer, text):
+            start = 0x37DA0 + pointer
+            main[start:start + len(text) + 1] = text + b"\0"
+        for index, (name, (site, pointer)) in enumerate(FIELD_TEXTS.items()):
+            main[site:site + 3] = b"\x68" + struct.pack("<H", pointer)
+            put(pointer, b"t%d" % index)
+        main[FIELD_STATS_SITE:FIELD_STATS_SITE + 3] = b"\xbe" + struct.pack("<H", FIELD_STATS)
+        struct.pack_into("<3H", main, 0x37DA0 + FIELD_STATS, 0x3000, 0x3004, 0x3008)
+        for index, pointer in enumerate((0x3000, 0x3004, 0x3008)):
+            put(pointer, b"s%d" % index)
+        main[FIELD_ICON_SITE:FIELD_ICON_SITE + 4] = b"\x8b\xb7" + struct.pack("<H", FIELD_ICONS)
+        main[FIELD_ICON_SIZE_SITE:FIELD_ICON_SIZE_SITE + 4] = b"\x6a\x28\x6a\x30"
+        struct.pack_into("<8H", main, 0x37DA0 + FIELD_ICONS, 1, 2, 3, 4, 5, 6, 7, 8)
+        facts = field_facts(bytes(main))
+        self.assertEqual(facts["texts"]["personInfo"], "t0")
+        self.assertEqual(facts["texts"]["stats"], ["s0", "s1", "s2"])
+        self.assertEqual(facts["icons"][1], [3, 4, 40, 48])
+        main[FIELD_TEXTS["wholeMap"][0]] = 0
+        with self.assertRaises(ResourceError):
+            field_facts(bytes(main))
 
     def test_field_screen_facts_read_hud_writers_and_frame_selectors(self):
         writers = {"caption": hud_writer(8, 300, 200, 12, 3, 2),

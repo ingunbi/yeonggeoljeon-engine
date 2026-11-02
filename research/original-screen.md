@@ -255,8 +255,36 @@ are unchanged.
   given moment differs from the source, and the source's window placement rules
   apply only to the original frames.
 
-The four field icon buttons of the original frame have no modern counterpart yet,
-because their handlers are not restored.
+## Field icons
+
+The original frame has four icon cells at x 544 and 584, y 240 and 288, 40 wide and
+48 high (DS:`3514`). The handlers at DS:`3636` run in that order. The modern layout
+shows them as buttons at the top right, and the original frames accept clicks on
+the cells.
+
+| Cell | Handler | Action |
+|---|---|---|
+| 0 | `0x23A88` | 스토리 정보 shows the scenario's objective text, set by source opcode text. |
+| 1 | `0x23982` | A two-item menu for the person screen and item exchange. |
+| 2 | `0x23AF8` | The whole map on a world map, and a refusal anywhere else (`0x23D7D`). |
+| 3 | `0x22CD2` | The field menu. |
+
+The person screen (`0x23230`) lists the joined people of the first person's force,
+in person order (`0x23289..0x232BC`). Its detail (`0x22DB8`) has the name, class,
+level, troops, attack and defense at morale 100, three rated scalars and the items.
+The native window shows the scalars it can name, and it shows the detail beside the
+list instead of after a choice. Its 경험치, 지력 and 소지품 labels are engine words.
+
+Item exchange (`0x23560`) shows two people and moves a clicked item across. A full
+receiver refuses with sound two (`0x2386F..0x238AC`). Otherwise the receiver takes
+its first empty slot and the giver loses its first match (`0x238CB..0x238F3`). The
+native window takes the same transfer in three steps: who gives, which item, and
+who receives.
+
+The whole map (`0x23B60..0x23D5A`) lists cities with both low flag bits and a
+placed position, in city order, beside a small map. Choosing one starts the same
+walk as clicking it. The source small map is a separate picture; the native window
+scales the world picture instead.
 
 ## Limits
 

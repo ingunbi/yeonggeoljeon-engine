@@ -82,6 +82,34 @@ def screen_facts(main: bytes, battle: dict | None = None) -> dict:
                             "Window frames for dialogue and selectors are drawn by other primitives and are not part of these facts."]}
 
 
+# Field icon routines (MAIN 0x22C56..0x23DBA). Each text carries the offset of
+# the push that selects it.
+FIELD_TEXTS = {"personInfo": (0x23259, 0x356F), "itemExchange": (0x23589, 0x35A2), "exchangePrompt": (0x2359F, 0x35AB),
+               "personOne": (0x2372F, 0x35C8), "personTwo": (0x2374B, 0x35CE), "people": (0x239AE, 0x35FA),
+               "storyInfo": (0x23AB0, 0x35FF), "wholeMap": (0x23B39, 0x360B), "notHere": (0x23DA5, 0x3614),
+               "noItems": (0x2313B, 0x3560), "level": (0x22FD9, 0x354D)}
+FIELD_STATS_SITE, FIELD_STATS = 0x22ED5, 0x3544
+FIELD_ICON_SITE, FIELD_ICON_SIZE_SITE, FIELD_ICONS = 0x22C62, 0x22C77, 0x3514
+
+
+def field_facts(main: bytes) -> dict:
+    """Texts and icon cells of the four field buttons, from checked sites."""
+    texts = {}
+    for name, (site, pointer) in FIELD_TEXTS.items():
+        if main[site:site + 3] != b"\x68" + struct.pack("<H", pointer):
+            raise ResourceError(f"MAIN field text site {name} at {site:#x} does not match the examined profile")
+        texts[name] = data_text(main, pointer)
+    if main[FIELD_STATS_SITE:FIELD_STATS_SITE + 3] != b"\xbe" + struct.pack("<H", FIELD_STATS):
+        raise ResourceError("MAIN person stat labels do not match the examined profile")
+    if main[FIELD_ICON_SITE:FIELD_ICON_SITE + 4] != b"\x8b\xb7" + struct.pack("<H", FIELD_ICONS) or \
+            main[FIELD_ICON_SIZE_SITE:FIELD_ICON_SIZE_SITE + 4] != b"\x6a\x28\x6a\x30":
+        raise ResourceError("MAIN field icon table does not match the examined profile")
+    positions = struct.unpack_from("<8H", main, DATA_SEGMENT + FIELD_ICONS)
+    return {"texts": {**texts, "stats": near_texts(main, FIELD_STATS, 3)},
+            "icons": [[positions[index * 2], positions[index * 2 + 1], 40, 48] for index in range(4)],
+            "iconSource": "MAIN.EXE:0x22C56..0x22CD1, DS:3514; handlers at DS:3636"}
+
+
 # Battle screen writers. Each entry is a file offset and the exact bytes that
 # carry the coordinates exported in `battle_layout`.
 BATTLE_SHAPES = {
@@ -396,6 +424,7 @@ def prepare(game: Path, output: Path) -> dict:
                                   "colors": [list(color) for color in palettes[3]], "texts": battle_texts(main),
                                   "commands": battle_commands(main),
                                   "parts": battle_parts(selected, palettes[3], output)})
+    screens["field"].update(field_facts(main))
     result = {"format": 1, "assets": assets, "portraitAssets": portraits, "choiceButtons": buttons, "layouts": layouts,
               "screens": screens,
               "source": {"inputs": [item[1] for item in selected.values()], "originalHashesPreserved": True,

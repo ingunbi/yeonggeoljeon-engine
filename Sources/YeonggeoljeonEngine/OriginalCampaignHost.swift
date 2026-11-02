@@ -245,10 +245,10 @@ final class OriginalCampaignHost {
             let matched = try dispatch(event,currentPerson:plan.targetPerson)
             if !matched { try restoreInputFacings() }
             // MAIN26A8D..26A9C: an unmatched talk makes the person say the
-            // DS:397A line. Its bytes are not cp949 text and use the original
-            // font's own codes, so the engine states the omission instead.
+            // DS:397A line. Its bytes are a Shift-JIS string left in the Korean
+            // build, so the native host states the omission instead.
             if !matched,plan.kind == .townActor {
-                notice = "원작 기본 대사(MAIN DS:397A)는 원작 글꼴 코드라 아직 표시하지 않습니다."
+                notice = "지금은 나눌 이야기가 없습니다."
             }
             if !matched,plan.kind == .worldCity { try offerCityEntry(arrival.currentCity) }
             if let builtin = arrival.builtin {
@@ -262,6 +262,12 @@ final class OriginalCampaignHost {
                 }
             }
         }
+    }
+    /// MAIN238AF..238F3 gives the receiver's first empty slot, then clears
+    /// the giver's first match. False means the receiver is full (MAIN23896).
+    func exchangeItem(from giver:Int,to receiver:Int,item:Int) throws -> Bool {
+        guard fieldMenuReady else { throw EngineError.invalid("Item exchange is available only at an idle field") }
+        return try people.giveItem(from:giver,to:receiver,item:item)
     }
     /// MAIN23F96..23FE9: an unmatched arrival at a town asks before entering.
     /// The source also skips the question while the cursor is disabled (player

@@ -10,10 +10,11 @@ seed, fixed microsecond step and per-input work bound. Supported operations are
 `talk`, `choice`, `save-skip`, `save-native`, `battle-retreat`, `battle-quit`, `field-quit`, `world-city`, `town-marker`, `town-cell`, `party-toggle`,
 `party-confirm`, `expect-battle`, `battle-move`, `battle-attack`,
 `battle-strategy`, `battle-item`, `battle-wait`, `battle-end-turn`, `retry-choice`,
-`city-entry` and `shop-answer`. `city-entry` answers the arrival question with
+`city-entry`, `shop-answer` and `field-exchange`. `city-entry` answers the arrival question with
 index one or zero. `shop-answer` answers the shop's current blocking call: a row
 or nothing for cancel at a list, one or zero at a question, anything at a timed
-line. See [original-shop.md](original-shop.md).
+line. See [original-shop.md](original-shop.md). `field-exchange` moves `item` from
+`person` to the person in `index`, as the field item exchange does.
 `battle-retreat` and `battle-quit` use the battle system menu entries, and
 `field-quit` uses the field menu's quit. `save-native` also works at an idle
 field, like the field menu's save.

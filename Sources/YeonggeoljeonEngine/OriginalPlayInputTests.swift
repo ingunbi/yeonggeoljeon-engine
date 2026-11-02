@@ -27,6 +27,11 @@ func originalPlayInputSelfTests() throws {
         throw EngineError.invalid("Original play input lost a shop, city entry or item operand")
     }
     checks += 1
+    guard try accepted("{\"format\":1,\"inputs\":[{\"kind\":\"field-exchange\",\"person\":1,\"index\":2,\"item\":40}]}").inputs[0].item == 40 else {
+        throw EngineError.invalid("Original play input lost an item exchange operand")
+    }
+    checks += 1
+    try rejected("{\"format\":1,\"inputs\":[{\"kind\":\"field-exchange\",\"person\":1,\"item\":40}]}")
     try rejected("{\"format\":1,\"inputs\":[{\"kind\":\"city-entry\",\"index\":2}]}")
     try rejected("{\"format\":1,\"inputs\":[{\"kind\":\"city-entry\"}]}")
     try rejected("{\"format\":1,\"inputs\":[{\"kind\":\"shop-answer\",\"person\":1}]}")

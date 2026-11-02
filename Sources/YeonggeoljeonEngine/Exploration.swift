@@ -75,6 +75,12 @@ struct OriginalExplorationCatalog:Codable {
         guard let map = maps.first(where:{$0.key == key}) else { throw EngineError.invalid("Original exploration map key is unavailable") }
         return map
     }
+    /// MAIN23C93..23CD3 lists cities with both low flag bits and a placed
+    /// world position, in city order.
+    func destinations(chapter:Int,flags:[UInt8]) -> [OriginalCity] {
+        cities.filter { $0.chapter == chapter && $0.worldPositionKnown && flags.indices.contains($0.id) && flags[$0.id]&3 == 3 }
+            .sorted { $0.id < $1.id }
+    }
     func configure(stage:Runtime,packed:Int,chapter:Int,people:OriginalPeople) throws {
         let map = try self.map(packed:packed,chapter:chapter)
         let world = map.kind == "world"

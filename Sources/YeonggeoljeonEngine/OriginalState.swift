@@ -130,6 +130,14 @@ final class OriginalPeople {
             person.itemIDs[slot] = 255
         }
     }
+    /// MAIN23289..232BC: joined people of the first person's force, in person order.
+    func companions() throws -> [Int] {
+        let force = try person(0).sourceFlags&31
+        return try (0..<384).filter {
+            let flags = try person($0).sourceFlags
+            return flags&31 == force && flags&0x80 != 0
+        }
+    }
     /// CF5:7590 writes one inventory slot; 255 clears it.
     func setItem(person id:Int,slot:Int,item:Int) throws {
         guard (0..<8).contains(slot),item == 255 || (0..<64).contains(item) else { throw BattleError.invalid("Original inventory write is outside its source range") }

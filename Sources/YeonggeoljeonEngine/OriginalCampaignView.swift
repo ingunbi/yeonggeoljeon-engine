@@ -220,6 +220,124 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             }
         }
     }
+    private var fieldTexts:OriginalFieldTexts? { host.story.screens?.field.texts }
+    private func personPortrait(_ id:Int) -> CGImage? { portrait(id,palette:host.stage.palette) }
+    private func heldNames(_ id:Int) -> [String] {
+        ((try? host.people.person(id).itemIDs) ?? []).filter{$0 != 255}.map(itemName)
+    }
+    /// MAIN22DB8: name, class, level, troops, attack, defense and the items.
+    private func personDetail(_ id:Int) -> CanvasSheet.Detail {
+        guard let person = try? host.people.person(id),let texts = fieldTexts else { return .init() }
+        let classes = host.story.screens?.battle.commands.classNames ?? []
+        let tables = host.source.combat
+        let maximum = (try? OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:tables)) ?? 0
+        let stats = try? host.people.stats(id,morale:100)
+        let attack = stats.flatMap { try? OriginalCombat.attackStat($0,tables:tables) } ?? 0
+        let defense = stats.flatMap { try? OriginalCombat.defenseStat($0,tables:tables) } ?? 0
+        let held = heldNames(id)
+        var facts:[(label:String,value:String)] = [(texts.stats[0],"\(person.rawTroops)/\(maximum)"),("경험치","\(person.experience)"),
+            (texts.stats[1],"\(attack)"),(texts.stats[2],"\(defense)")]
+        facts.append(("지력","\(person.intellectScalar)"))
+        facts.append(("소지품","\(held.count)/8"))
+        return .init(heading:person.name,body:"\(classes.indices.contains(person.classID) ? classes[person.classID] : "") · \(texts.level)\(person.level)",
+                     list:held.isEmpty ? [texts.noItems] : held,facts:facts,wide:true,portrait:personPortrait(id))
+    }
+    private func fieldSheet(title:String,line:String,badge:(label:String,value:String) = ("",""),rows:[CanvasSheet.Row],selected:Int = 0,
+                            hint:String = "↑↓ 이동 · ↩ 선택 · esc 뒤로",_ choose:@escaping (Int?) -> Void) -> CanvasSheet {
+        CanvasSheet(portrait:nil,speaker:title,line:line,badge:badge,rows:rows,selected:selected,mode:.list,hint:hint,onChoose:choose)
+    }
+    /// MAIN23230: every companion, with the person screen beside the list.
+    private func presentPeople(selected:Int = 0) {
+        guard let texts = fieldTexts,let people = try? host.people.companions() else { return }
+        let rows = people.map { id in CanvasSheet.Row(label:(try? host.people.person(id).name) ?? "",
+            value:"\(texts.level)\((try? host.people.person(id).level) ?? 0)",detail:personDetail(id)) }
+        overlay.show(fieldSheet(title:texts.personInfo,line:texts.people,rows:rows,selected:selected,hint:"↑↓ 이동 · esc 닫기") { [weak self] index in
+            if let index = index { self?.presentPeople(selected:index) }
+        })
+    }
+    /// MAIN23560 shows two people side by side. The engine takes the same
+    /// transfer in three steps: who gives, which item, who receives.
+    private func presentExchange(giver:Int? = nil,item:Int? = nil,selected:Int = 0) {
+        guard let texts = fieldTexts,let people = try? host.people.companions() else { return }
+        func owners(except skip:Int?) -> [CanvasSheet.Row] {
+            people.filter{$0 != skip}.map { id in
+                let held = heldNames(id)
+                return .init(label:(try? host.people.person(id).name) ?? "",value:"\(held.count)/8",warns:skip != nil && held.count == 8,
+                             detail:.init(heading:(try? host.people.person(id).name) ?? "",list:held.isEmpty ? [texts.noItems] : held,wide:true,portrait:personPortrait(id)))
+            }
+        }
+        guard let giver = giver else {
+            overlay.show(fieldSheet(title:texts.itemExchange,line:texts.exchangePrompt,rows:owners(except:nil),selected:selected) { [weak self] index in
+                guard let index = index else { return }
+                self?.presentExchange(giver:people[index])
+            })
+            return
+        }
+        let name = (try? host.people.person(giver).name) ?? ""
+        guard let item = item else {
+            let held = ((try? host.people.person(giver).itemIDs) ?? []).filter{$0 != 255}
+            guard !held.isEmpty else { presentExchange();return }
+            let rows = held.map { CanvasSheet.Row(label:itemName($0),detail:itemDetail($0,facts:[])) }
+            overlay.show(fieldSheet(title:texts.itemExchange,line:name,rows:rows,selected:selected) { [weak self] index in
+                guard let self = self else { return }
+                guard let index = index else { self.presentExchange();return }
+                self.presentExchange(giver:giver,item:held[index])
+            })
+            return
+        }
+        let others = people.filter{$0 != giver}
+        overlay.show(fieldSheet(title:texts.itemExchange,line:"\(name) → \(itemName(item))",rows:owners(except:giver),selected:selected) { [weak self] index in
+            guard let self = self else { return }
+            guard let index = index else { self.presentExchange(giver:giver);return }
+            do {
+                if try self.host.exchangeItem(from:giver,to:others[index],item:item) { self.presentExchange(giver:giver) }
+                else { NSSound.beep();self.presentExchange(giver:giver,item:item,selected:index) }
+            } catch { self.recordInputError(error);self.needsDisplay = true }
+        })
+    }
+    /// MAIN23B60..23D5A: the whole world with its reachable cities. Choosing
+    /// one starts the same walk as clicking it. Elsewhere it refuses (MAIN23D7D).
+    private func presentWholeMap(selected:Int = 0) {
+        guard let texts = fieldTexts else { return }
+        let state = host.vm.state
+        guard state.packedMap>>12 == 1,let flags = state.cityFlags,let map = try? host.exploration.map(packed:state.packedMap,chapter:state.chapter) else {
+            overlay.show(CanvasNotice(speaker:"",text:texts.notHere,portrait:nil,timeout:2) {})
+            return
+        }
+        let cities = host.exploration.destinations(chapter:state.chapter,flags:flags),picture = image(map.image)
+        func mark(_ city:OriginalCity) -> CGPoint {
+            CGPoint(x:(CGFloat(city.worldX ?? 0)+0.5)/CGFloat(map.walkWidth),y:(CGFloat(city.worldY ?? 0)+0.5)/CGFloat(map.walkHeight))
+        }
+        let rows = cities.map { city in
+            CanvasSheet.Row(label:city.name,value:city.id == state.currentCity ? "현재" : "",
+                detail:.init(picture:picture,marks:cities.map{(mark($0),$0.id == city.id)}))
+        }
+        overlay.show(fieldSheet(title:texts.wholeMap,line:"",rows:rows,selected:selected,hint:"↑↓ 이동 · ↩ 이동 시작 · esc 닫기") { [weak self] index in
+            guard let self = self,let index = index else { return }
+            do { try self.host.travel(toCity:cities[index].id) } catch { self.recordInputError(error) }
+            self.needsDisplay = true
+        })
+    }
+    /// MAIN23A88: the scenario's current objective text.
+    private func presentStory() {
+        guard let texts = fieldTexts else { return }
+        overlay.show(CanvasNotice(speaker:texts.storyInfo,text:host.vm.state.objectiveText ?? "",portrait:nil) {})
+    }
+    private func presentPeopleMenu(at point:CGPoint) {
+        guard let texts = fieldTexts else { return }
+        overlay.show(CanvasMenu(title:"",options:[.init(label:texts.personInfo),.init(label:texts.itemExchange)],cancellable:true,anchor:point) { [weak self] index in
+            if index == 0 { self?.presentPeople() } else if index == 1 { self?.presentExchange() }
+        })
+    }
+    /// The four handlers of DS:3636, in icon order.
+    private func runFieldAction(_ index:Int,at point:CGPoint) {
+        switch index {
+        case 0:presentStory()
+        case 1:presentPeopleMenu(at:point)
+        case 2:presentWholeMap()
+        default:openFieldMenu(at:point)
+        }
+    }
     private func presentRetirement() {
         guard let text = host.retirementText else { return }
         overlay.show(CanvasNotice(speaker:"",text:text,portrait:nil) { [weak self] in
@@ -232,22 +350,22 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private func presentParty(selected:Int = 0,footer:String? = nil,keepScroll:Bool = false) {
         guard let selection = host.partySelection else { return }
         let chosen = Set(selection.selectedSlots.prefix(selection.capacity)),fixed = Set(selection.selectedSlots.prefix(selection.fixedCount))
-        let rows = selection.candidates.compactMap { id in (try? host.people.person(id)).map { (id,$0) } }
-        var options = rows.map { id,person in
-            CanvasMenu.Option(label:person.name,enabled:!fixed.contains(id),value:"Lv \(person.level)",checked:chosen.contains(id))
+        let people = selection.candidates.compactMap { id in (try? host.people.person(id)).map { (id,$0) } }
+        var rows = people.map { id,person in
+            CanvasSheet.Row(label:person.name,value:"Lv \(person.level)",detail:personDetail(id),enabled:!fixed.contains(id),checked:chosen.contains(id))
         }
-        options.append(.init(label:"출전"))
-        let status = footer ?? "남은 선택 \(selection.remaining) / 최대 \(selection.capacity)"
-        overlay.show(CanvasMenu(title:"출전 부대 선택",options:options,selected:selected,footer:status) { [weak self] index in
-            guard let self = self,let index = index else { return }
-            if index == rows.count { self.act { try self.host.confirmParty() };return }
-            do { try self.host.toggleParty(person:rows[index].0);self.presentParty(selected:index,keepScroll:true) }
+        rows.append(.init(label:"출전"))
+        overlay.show(fieldSheet(title:"출전 부대 선택",line:footer ?? "함께 나갈 장수를 고르세요.",badge:("남은 선택","\(selection.remaining) / \(selection.capacity)"),
+                               rows:rows,selected:selected,hint:"↑↓ 이동 · ↩ 선택") { [weak self] index in
+            guard let self = self,let index = index else { self?.presentParty(selected:selected,keepScroll:true);return }
+            if index == people.count { self.act { try self.host.confirmParty() };return }
+            do { try self.host.toggleParty(person:people[index].0);self.presentParty(selected:index,keepScroll:true) }
             catch {
                 NSSound.beep()
-                let full = self.host.partySelection.map { $0.remaining == 0 && !chosen.contains(rows[index].0) } ?? false
+                let full = self.host.partySelection.map { $0.remaining == 0 && !chosen.contains(people[index].0) } ?? false
                 self.presentParty(selected:index,footer:full ? "남은 선택이 없습니다. 최대 \(selection.capacity)명입니다." : "\(error)",keepScroll:true)
             }
-        },keepScroll:keepScroll)
+        })
     }
     private func present(_ choice:CampaignVMChoice) {
         if choice.kind == "choice-skip" {
@@ -356,7 +474,18 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         guard let window = window else { return }
         stop();window.contentView = next;window.makeFirstResponder(next)
     }
-    static let menuButton = CGRect(x:574,y:12,width:54,height:28)
+    /// Modern field buttons from the right edge, in DS:3636 order.
+    var fieldButtons:[(index:Int,label:String,rect:CGRect)] {
+        guard let texts = fieldTexts else { return [] }
+        var right:CGFloat = 628
+        var result:[(index:Int,label:String,rect:CGRect)] = []
+        for (index,label) in [(3,"메뉴"),(0,texts.storyInfo),(2,texts.wholeMap),(1,texts.people)] {
+            let width = ceil((label as NSString).size(withAttributes:CanvasTheme.attributes(CanvasTheme.font(12,.medium),CanvasTheme.text)).width)+24
+            result.append((index,label,CGRect(x:right-width,y:12,width:width,height:28)))
+            right -= width+6
+        }
+        return result
+    }
     /// Modern field: who leads, where they are, and what they carry, over the map.
     private func drawFieldHUD(_ screen:OriginalFieldScreenState,in context:CGContext) {
         let card = CGRect(x:12,y:12,width:178,height:58)
@@ -375,9 +504,11 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             CanvasTheme.chip(caption,at:CGPoint(x:320,y:26),maximumWidth:300,in:context)
         }
         if host.fieldMenuReady {
-            CanvasTheme.panel(Self.menuButton,in:context)
-            ("메뉴" as NSString).draw(in:CGRect(x:Self.menuButton.minX,y:Self.menuButton.minY+6,width:Self.menuButton.width,height:18),
-                withAttributes:CanvasTheme.attributes(CanvasTheme.font(12,.medium),CanvasTheme.text,alignment:.center))
+            for button in fieldButtons {
+                CanvasTheme.panel(button.rect,in:context)
+                (button.label as NSString).draw(in:CGRect(x:button.rect.minX,y:button.rect.minY+6,width:button.rect.width,height:18),
+                    withAttributes:CanvasTheme.attributes(CanvasTheme.font(12,.medium),CanvasTheme.text,alignment:.center))
+            }
         }
     }
     override func draw(_ dirtyRect:NSRect) {
@@ -420,8 +551,14 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             if host.explorationInputReady,[0,1,2].contains(host.vm.state.packedMap>>12) {
                 var p = CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil))
                 if modernField {
-                    if Self.menuButton.contains(p),host.fieldMenuReady { openFieldMenu(at:CGPoint(x:Self.menuButton.maxX-130,y:Self.menuButton.maxY+6));return }
+                    if host.fieldMenuReady,let button = fieldButtons.first(where:{ $0.rect.contains(p) }) {
+                        runFieldAction(button.index,at:CGPoint(x:button.rect.minX,y:button.rect.maxY+6));return
+                    }
                     p = CanvasFieldMap.mapPoint(canvas:p)
+                } else if host.fieldMenuReady,let icons = host.story.screens?.field.icons,
+                          let index = icons.firstIndex(where:{ OriginalBattleLayout.rect($0).contains(p) }) {
+                    // The original frame's icon cells (DS:3514) open the same handlers.
+                    runFieldAction(index,at:CGPoint(x:CGFloat(icons[index][0])-120,y:CGFloat(icons[index][1])));return
                 }
                 let x = p.x,y = p.y,v = host.stage.viewport
                 if host.vm.state.packedMap>>12 == 1 {
