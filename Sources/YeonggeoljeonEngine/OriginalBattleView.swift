@@ -162,7 +162,7 @@ final class OriginalBattleView:NSView {
     /// handler stay visible and disabled.
     private func openFunctionMenu() {
         guard canInput,phase == .idle,strategySelection == nil else { return }
-        var restored:Set<String> = menuTexts == nil ? ["end-turn"] : ["end-turn","retreat","quit"]
+        var restored:Set<String> = menuTexts == nil ? ["end-turn"] : ["end-turn","retreat","quit","bgm"]
         if objective != nil,style.commands != nil { restored.insert("conditions") }
         let items = menuTexts?.items ?? [OriginalTitleMenuItem(index:0,action:"end-turn",text:"End turn")]
         functionOpen = true;needsDisplay = true
@@ -172,6 +172,7 @@ final class OriginalBattleView:NSView {
             guard let index = index else { return }
             switch items[index].action {
             case "end-turn": do { try self.endTurn() } catch { self.message = "\(error)" }
+            case "bgm": OriginalAudio.musicEnabled.toggle()
             case "retreat": self.requestRetreat()
             case "conditions": self.showConditions(opening:false)
             case "quit": self.requestQuit()

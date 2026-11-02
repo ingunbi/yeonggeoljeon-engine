@@ -12,6 +12,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private let overlay = CanvasOverlayView()
     private var imageCache:[String:CGImage] = [:]
     private var presentationObserver:NSObjectProtocol?
+    private lazy var audio:OriginalAudio? = (try? OriginalMusicCatalog.load(from:host.data.root.appendingPathComponent("music.json"))).map { OriginalAudio(catalog:$0) }
     /// Each shop list remembers its row while the visit moves between them.
     private var shopCursor:[OriginalShopList:Int] = [:]
     override var isFlipped:Bool { true }
@@ -74,8 +75,9 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         return try OriginalCampaignHost.resume(data:data,from:OriginalCampaignResume.read(from:url))
     }
     required init?(coder:NSCoder) { fatalError("init(coder:) is not supported") }
-    func stop() { timer?.invalidate();timer = nil }
+    func stop() { timer?.invalidate();timer = nil;audio?.shutDown() }
     private func tick() {
+        audio?.select(host.ending == nil ? host.vm.state.currentMusic : nil)
         battleView?.externalStatus = errorText ?? inputNotice ?? host.notice ?? host.playerStatus
         guard !overlay.active,errorText == nil else { return }
         do {
@@ -446,7 +448,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private func openFieldMenu(at point:CGPoint) {
         let labels = host.framework?.fieldMenu?.items.map(\.text) ?? OriginalFieldMenuTexts.actions
         let options = labels.enumerated().map { CanvasMenu.Option(label:$0.element,
-            enabled:["quit","load","save"].contains(OriginalFieldMenuTexts.actions[$0.offset])) }
+            enabled:["quit","load","save","bgm"].contains(OriginalFieldMenuTexts.actions[$0.offset]),
+            value:OriginalFieldMenuTexts.actions[$0.offset] == "bgm" ? (OriginalAudio.musicEnabled ? "켜짐" : "꺼짐") : "") }
         overlay.show(CanvasMenu(title:"",options:options,cancellable:true,anchor:point) { [weak self] index in
             guard let self = self,let index = index else { return }
             self.fieldMenuChosen(OriginalFieldMenuTexts.actions[index])
@@ -455,6 +458,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private func fieldMenuChosen(_ action:String) {
         guard host.fieldMenuReady else { return }
         switch action {
+        case "bgm":OriginalAudio.musicEnabled.toggle()
         case "quit":
             yesNo(host.framework?.fieldMenu?.quitConfirm.text ?? "게임을 종료할까요?") { [weak self] yes in
                 guard yes,let self = self else { return }

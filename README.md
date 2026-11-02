@@ -20,6 +20,7 @@ Swift/AppKit 자체 엔진입니다. **0.4.0 연구 개발판**은 원작 전투
 | 원작 책략 | 0~35 명령의 사용 가능 조건, 피해·상태·사기·단일/범위 회복, 확산 순서·비용·경험치. 실제 명령과 AI 예상 점수를 분리. |
 | 전투 도구 | 속성 변경·전직, 공격서, 혼란서, 단일/범위 회복, 폭탄의 조건·대상 범위·난수 순서·소모. 거부와 취소는 도구와 행동을 소모하지 않음. |
 | 필드 기능 | 장수 정보, 장수 간 도구 교환, 세계지도의 전체 지도와 도시 선택 이동, 스토리 정보. 출전 선택은 장수 능력을 함께 보여 주는 창으로 표시. |
+| 음악 | 코에이 드라이버(SBOPL2.COM)의 곡 해석기를 옮기고 OPL2 합성기를 자체 구현해 MUSIC.R3 20곡을 원작 선택 그대로 재생. 필드·전투 메뉴의 BGM으로 켜고 끔. 효과음과 음량, 오프닝·엔딩 음악은 복원하지 않음. |
 | 도구상 | 세계지도 도착 시 입장 질문, 궁전7번 방의 상인 배치와 방 음악, 도시별 재고, 구매·판매 가격, 소지금 상한, 장수별 8칸 소지품, 원작 문구. 원작 효과음과 창 모양은 복원하지 않음. |
 | 원작 이동·AI | 병과별 이동 비용, 진영 점유·ZOC, 원작 공격 패턴, 명령0~4의 목표·영향권·후보 평가, 물리/책략 비교와 후보별 RNG 소비. 미해석 점유 상태에서는 중단. |
 | 원작 턴 | 날씨, 진영별 회복·상태 회복, AI 우선순위, 이동 취소·대기, 원작 턴 제한 결과와 캠페인 이벤트 프로브. 일반 전멸 판정으로 승리를 만들지 않음. |
@@ -119,7 +120,7 @@ swift run yeonggeoljeon-engine --data /path/to/GameData --list-campaign
 - [부대·출전 선택](research/original-party.md) · [퇴장 실행](research/original-retirement.md)
 - [시나리오 지도 반환](research/original-map-return.md) · [입력 재생 검사](research/original-play-verification.md)
 - [바깥 루프·전투 종료·재시작 선택](research/original-framework.md) · [저장·타이틀 메뉴·이어하기](research/native-resume.md)
-- [필드·전투 화면 틀·HUD·화면 안 선택 창](research/original-screen.md) · [전투 도구 사용](research/original-items.md) · [도구상과 도시 입장](research/original-shop.md)
+- [필드·전투 화면 틀·HUD·화면 안 선택 창](research/original-screen.md) · [전투 도구 사용](research/original-items.md) · [도구상과 도시 입장](research/original-shop.md) · [음악](research/original-music.md)
 - [전투 그림](research/original-battle-sprites.md) · [엔딩](research/original-ending.md)
 - [기여 안내](CONTRIBUTING.md)
 
