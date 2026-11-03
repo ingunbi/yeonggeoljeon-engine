@@ -176,8 +176,8 @@ def main() -> None:
         run("xcrun", "swiftc", "-swift-version", "5", "-target", "arm64-apple-macos13.0", "-O", *map(str, sorted(native_stage.glob("*.swift"))),
             "-framework", "AppKit", "-o", str(executable))
         info = {"CFBundleIdentifier": "org.yeonggeoljeon.engine.research",
-                "CFBundleName": "Yeonggeoljeon Engine",
-                "CFBundleDisplayName": "영걸전 자체 엔진 연구",
+                "CFBundleName": "영걸전 엔진",
+                "CFBundleDisplayName": "영걸전 엔진",
                 "CFBundleExecutable": EXECUTABLE, "CFBundlePackageType": "APPL",
                 "CFBundleShortVersionString": "0.4.0", "CFBundleVersion": "4",
                 "LSMinimumSystemVersion": "13.0", "NSHighResolutionCapable": True,

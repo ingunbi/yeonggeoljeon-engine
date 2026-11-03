@@ -1,13 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import AppKit
 
-/// Maps the 640×400 source canvas into a view: fitted and centred.
+/// Maps the 640×400 source canvas into a view: fitted and centred. MAIN draws
+/// that canvas in VGA mode 12h (GRPDRV 0x23DD) from line 40 of 480 (mouse y − 40
+/// at MAIN0x149C5), so its pixels are square on a 4:3 screen.
 struct CanvasGeometry {
     var scale:CGFloat
     var origin:CGPoint
-    init(bounds:CGRect) {
-        scale = max(0.1,min(bounds.width/640,bounds.height/400))
-        origin = CGPoint(x:(bounds.width-640*scale)/2,y:(bounds.height-400*scale)/2)
+    /// Device pixels per point of the screen the game window is on.
+    static var backingScale:CGFloat = NSScreen.main?.backingScaleFactor ?? 2
+    static let scalingChanged = Notification.Name("CanvasScalingChanged")
+    private static let fillKey = "fillsWindow"
+    /// Off by default: each source pixel covers a whole number of device
+    /// pixels, so dithered art stays even. On, the canvas fills the window.
+    static var fillsWindow:Bool {
+        get { UserDefaults.standard.bool(forKey:fillKey) }
+        set { UserDefaults.standard.set(newValue,forKey:fillKey);NotificationCenter.default.post(name:scalingChanged,object:nil) }
+    }
+    /// Canvas units one source pixel covers on the screen now shown: 1.25 for
+    /// the engine field, whose 512×320 map fills the canvas, else 1.
+    static var sourcePixel:CGFloat = 1
+    init(bounds:CGRect) { self.init(bounds:bounds,whole:!Self.fillsWindow,backing:Self.backingScale,sourcePixel:Self.sourcePixel) }
+    init(bounds:CGRect,whole:Bool,backing:CGFloat,sourcePixel:CGFloat = 1) {
+        let fit = max(0.1,min(bounds.width/640,bounds.height/400)),pixels = fit*backing*sourcePixel
+        scale = whole && pixels >= 1 ? floor(pixels+0.001)/(backing*sourcePixel) : fit
+        // The corner lands on a device pixel too.
+        origin = CGPoint(x:((bounds.width-640*scale)/2*backing).rounded()/backing,y:((bounds.height-400*scale)/2*backing).rounded()/backing)
     }
     var rect:CGRect { CGRect(x:origin.x,y:origin.y,width:640*scale,height:400*scale) }
     func canvas(_ point:CGPoint) -> CGPoint { CGPoint(x:(point.x-origin.x)/scale,y:(point.y-origin.y)/scale) }

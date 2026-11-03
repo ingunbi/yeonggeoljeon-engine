@@ -131,33 +131,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         researchWindows.removeAll { $0 === closing }
         if window === closing { window = nil }
     }
+    /// A game's menu bar: the app, the game, the view, then the research tools
+    /// and the window. The campaign window answers game items through the
+    /// responder chain; engine additions are marked in their titles' comments.
     func installMenu() {
-        let menu = NSMenu(), application = NSMenuItem()
-        menu.addItem(application)
-        let appMenu = NSMenu(); application.submenu = appMenu
-        appMenu.addItem(withTitle:"종료",action:#selector(NSApplication.terminate(_:)),keyEquivalent:"q")
-        let research = NSMenuItem(title:"연구",action:nil,keyEquivalent:"")
-        let submenu = NSMenu(title:"연구"); research.submenu = submenu; menu.addItem(research)
-        let play = NSMenuItem(title:"원작 캠페인 실행 연구…",action:#selector(playOriginalCampaign),keyEquivalent:"n");play.target = self;submenu.addItem(play)
-        let resume = NSMenuItem(title:"원작 캠페인 이어하기…",action:#selector(resumeOriginalCampaign),keyEquivalent:"o");resume.target = self;submenu.addItem(resume)
-        let restored = NSMenuItem(title:"원작 전투 복원 검증…",action:#selector(browseRestoredBattles),keyEquivalent:"b"); restored.target = self; submenu.addItem(restored)
-        let battle = NSMenuItem(title:"이전 실험 규칙 연구…",action:#selector(browseBattles),keyEquivalent:""); battle.target = self; submenu.addItem(battle)
-        let campaign = NSMenuItem(title:"캠페인 분석…",action:#selector(browseCampaign),keyEquivalent:"g"); campaign.target = self; submenu.addItem(campaign)
-        let viewing = NSMenuItem(title:"보기",action:nil,keyEquivalent:"")
-        let viewMenu = NSMenu(title:"보기"); viewing.submenu = viewMenu; menu.addItem(viewing)
-        let frames = NSMenuItem(title:"원작 화면 틀",action:#selector(toggleOriginalFrames(_:)),keyEquivalent:"f")
-        frames.keyEquivalentModifierMask = [.command,.shift];frames.target = self
-        frames.state = CanvasPresentation.current == .original ? .on : .off;viewMenu.addItem(frames)
+        let menu = NSMenu()
+        func submenu(_ title:String) -> NSMenu {
+            let item = NSMenuItem(title:title,action:nil,keyEquivalent:""),list = NSMenu(title:title)
+            item.submenu = list;menu.addItem(item);return list
+        }
+        func add(_ list:NSMenu,_ title:String,_ action:Selector,_ key:String = "",_ modifiers:NSEvent.ModifierFlags = .command,target:AnyObject? = nil) -> NSMenuItem {
+            let item = list.addItem(withTitle:title,action:action,keyEquivalent:key)
+            item.keyEquivalentModifierMask = modifiers;item.target = target;return item
+        }
+        let app = submenu("영걸전 엔진")
+        _ = add(app,"영걸전 엔진에 관하여",#selector(NSApplication.orderFrontStandardAboutPanel(_:)))
+        app.addItem(.separator())
+        _ = add(app,"영걸전 엔진 가리기",#selector(NSApplication.hide(_:)),"h")
+        _ = add(app,"기타 가리기",#selector(NSApplication.hideOtherApplications(_:)),"h",[.command,.option])
+        _ = add(app,"모두 보기",#selector(NSApplication.unhideAllApplications(_:)))
+        app.addItem(.separator())
+        _ = add(app,"영걸전 엔진 종료",#selector(NSApplication.terminate(_:)),"q")
         // Engine additions; the campaign window answers them through the responder chain.
-        let game = NSMenuItem(title:"게임",action:nil,keyEquivalent:"")
-        let gameMenu = NSMenu(title:"게임"); game.submenu = gameMenu; menu.addItem(game)
-        gameMenu.addItem(withTitle:"빠른 저장",action:Selector(("quickSave:")),keyEquivalent:"s")
-        gameMenu.addItem(withTitle:"빠른 불러오기",action:Selector(("quickLoad:")),keyEquivalent:"l")
-        gameMenu.addItem(.separator())
-        gameMenu.addItem(withTitle:"대사 기록",action:Selector(("openDialogueLog:")),keyEquivalent:"j")
-        gameMenu.addItem(withTitle:"빨리 감기 고정",action:Selector(("toggleFastForward:")),keyEquivalent:"t")
-        gameMenu.addItem(withTitle:"적 공격 범위",action:Selector(("toggleThreat:")),keyEquivalent:"d")
+        let game = submenu("게임")
+        _ = add(game,"타이틀로 돌아가기…",Selector(("returnToTitle:")))
+        game.addItem(.separator())
+        _ = add(game,"불러오기…",Selector(("openLoad:")),"o")
+        _ = add(game,"저장…",Selector(("openSave:")),"s",[.command,.shift])
+        _ = add(game,"빠른 저장",Selector(("quickSave:")),"s")
+        _ = add(game,"빠른 불러오기",Selector(("quickLoad:")),"l")
+        game.addItem(.separator())
+        _ = add(game,"대사 기록",Selector(("openDialogueLog:")),"j")
+        _ = add(game,"빨리 감기 고정",Selector(("toggleFastForward:")),"t")
+        _ = add(game,"적 공격 범위",Selector(("toggleThreat:")),"d")
+        let view = submenu("보기")
+        let frames = add(view,"원작 화면 틀",#selector(toggleOriginalFrames(_:)),"f",[.command,.shift],target:self)
+        frames.state = CanvasPresentation.current == .original ? .on : .off
+        let fill = add(view,"창 꽉 채우기",#selector(toggleFill(_:)),target:self)
+        fill.state = CanvasGeometry.fillsWindow ? .on : .off
+        view.addItem(.separator())
+        for (index,size) in Self.windowSizes.enumerated() {
+            let item = add(view,"창 크기 \(Int(size.width))×\(Int(size.height))",#selector(setWindowSize(_:)),"\(index+1)",target:self)
+            item.tag = index
+        }
+        view.addItem(.separator())
+        _ = add(view,"전체 화면",#selector(NSWindow.toggleFullScreen(_:)),"f",[.command,.control])
+        let research = submenu("개발")
+        _ = add(research,"원작 캠페인 실행 연구…",#selector(playOriginalCampaign),target:self)
+        _ = add(research,"원작 캠페인 이어하기 파일 열기…",#selector(resumeOriginalCampaign),target:self)
+        _ = add(research,"원작 전투 복원 검증…",#selector(browseRestoredBattles),target:self)
+        _ = add(research,"이전 실험 규칙 연구…",#selector(browseBattles),target:self)
+        _ = add(research,"캠페인 분석…",#selector(browseCampaign),target:self)
+        let windows = submenu("윈도우")
+        _ = add(windows,"최소화",#selector(NSWindow.performMiniaturize(_:)),"m")
+        _ = add(windows,"확대/축소",#selector(NSWindow.performZoom(_:)))
+        windows.addItem(.separator())
+        _ = add(windows,"모두 앞으로 가져오기",#selector(NSApplication.arrangeInFront(_:)))
         NSApplication.shared.mainMenu = menu
+        NSApplication.shared.windowsMenu = windows
+    }
+    /// Whole multiples of the 640×400 canvas on a 2× screen (2, 3 and 4 device pixels).
+    static let windowSizes = [NSSize(width:640,height:400),NSSize(width:960,height:600),NSSize(width:1280,height:800)]
+    /// The largest size that fits the screen beside its menu bar and dock.
+    static func fittingWindowSize(_ screen:NSScreen?) -> NSSize {
+        guard let frame = screen?.visibleFrame else { return windowSizes[1] }
+        return windowSizes.last { $0.width <= frame.width && $0.height+32 <= frame.height } ?? windowSizes[0]
+    }
+    @objc private func setWindowSize(_ sender:NSMenuItem) {
+        guard let window = NSApp.keyWindow ?? window,!window.styleMask.contains(.fullScreen),Self.windowSizes.indices.contains(sender.tag) else { return }
+        let size = Self.windowSizes[sender.tag],old = window.frame
+        var frame = window.frameRect(forContentRect:CGRect(origin:.zero,size:size))
+        frame.origin = CGPoint(x:old.midX-frame.width/2,y:old.maxY-frame.height)
+        window.setFrame(frame,display:true,animate:true)
+    }
+    @objc private func toggleFill(_ sender:NSMenuItem) {
+        CanvasGeometry.fillsWindow.toggle()
+        sender.state = CanvasGeometry.fillsWindow ? .on : .off
     }
     @objc private func toggleOriginalFrames(_ sender:NSMenuItem) {
         CanvasPresentation.current = CanvasPresentation.current == .original ? .modern : .original
@@ -404,9 +453,12 @@ do {
         if options.campaignRecord != nil {
             let preview = try GameView(data:data);preview.runtime.acknowledge();view = preview
         } else { view = try OriginalCampaignView(data:data) }
-        let window = NSWindow(contentRect:view.frame,styleMask:[.titled,.closable,.miniaturizable,.resizable],backing:.buffered,defer:false)
+        let window = NSWindow(contentRect:CGRect(origin:.zero,size:AppDelegate.fittingWindowSize(NSScreen.main)),
+                              styleMask:[.titled,.closable,.miniaturizable,.resizable],backing:.buffered,defer:false)
         window.isReleasedWhenClosed = false; window.delegate = delegate
-        window.title = "영걸전 자체 엔진 · 원작 캠페인"; window.contentView = view; window.contentMinSize = NSSize(width:640,height:440)
+        window.title = "영걸전 엔진"; window.contentView = view; window.contentMinSize = NSSize(width:640,height:400)
+        window.collectionBehavior.insert(.fullScreenPrimary)
+        CanvasGeometry.backingScale = window.backingScaleFactor
         window.center(); delegate.window = window
         window.makeKeyAndOrderFront(nil); window.makeFirstResponder(view); app.activate(ignoringOtherApps:true)
         (view as? OriginalCampaignView)?.playOpening()

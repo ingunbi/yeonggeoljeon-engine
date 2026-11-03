@@ -9,11 +9,19 @@ func originalBattleScreenSelfTests() throws {
         checks += 1
     }
     // The canvas fits the window and centres; a click maps back through the same numbers.
-    let sideBands = CanvasGeometry(bounds:CGRect(x:0,y:0,width:1200,height:600))
+    let sideBands = CanvasGeometry(bounds:CGRect(x:0,y:0,width:1200,height:600),whole:false,backing:2)
     try check(sideBands.scale == 1.5 && sideBands.origin == CGPoint(x:120,y:0),"a wide window bands the sides")
-    let endBands = CanvasGeometry(bounds:CGRect(x:0,y:0,width:640,height:600))
+    let endBands = CanvasGeometry(bounds:CGRect(x:0,y:0,width:640,height:600),whole:false,backing:2)
     try check(endBands.scale == 1 && endBands.origin == CGPoint(x:0,y:100),"a tall window bands the top and bottom")
     try check(sideBands.canvas(CGPoint(x:270,y:150)) == CGPoint(x:100,y:100),"a view point maps to its canvas point")
+    // Whole-pixel scaling: 1024×640 points on a 2× screen gives three device pixels a source pixel.
+    let whole = CanvasGeometry(bounds:CGRect(x:0,y:0,width:1024,height:640),whole:true,backing:2)
+    try check(whole.scale == 1.5 && whole.origin == CGPoint(x:32,y:20),"whole scaling rounds down to device pixels and centres")
+    try check(CanvasGeometry(bounds:CGRect(x:0,y:0,width:1024,height:640),whole:true,backing:1).scale == 1,"a 1× screen keeps one pixel a pixel")
+    try check(CanvasGeometry(bounds:CGRect(x:0,y:0,width:500,height:300),whole:true,backing:2).scale == 0.5,"a small window still gets whole device pixels")
+    try check(CanvasGeometry(bounds:CGRect(x:0,y:0,width:200,height:100),whole:true,backing:1).scale == 0.25,"below one device pixel it falls back to fitting")
+    // The engine field draws its 512×320 map over the canvas, 1.25 canvas units a map pixel.
+    try check(CanvasGeometry(bounds:CGRect(x:0,y:0,width:1024,height:640),whole:true,backing:2,sourcePixel:1.25).scale == 1.6,"the engine field gets four device pixels a map pixel")
     // The modern arrangement keeps every part on the canvas and off the map.
     let modern = OriginalBattleLayout.source.modern()
     let canvas = CGRect(x:0,y:0,width:640,height:400),modernMap = modern.viewportRect

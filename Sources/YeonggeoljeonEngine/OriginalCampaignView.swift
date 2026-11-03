@@ -14,6 +14,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private lazy var combatArt:OriginalCombatArt? = (try? OriginalCombatCatalog.load(from:host.data.root.appendingPathComponent("combat-view.json"))).flatMap { try? OriginalCombatArt(catalog:$0) }
     private var imageCache:[String:CGImage] = [:]
     private var presentationObserver:NSObjectProtocol?
+    private var scalingObserver:NSObjectProtocol?
     private lazy var audio:OriginalAudio? = (try? OriginalMusicCatalog.load(from:host.data.root.appendingPathComponent("music.json"))).map { OriginalAudio(catalog:$0) }
     /// Each shop list remembers its row while the visit moves between them.
     private var shopCursor:[OriginalShopList:Int] = [:]
@@ -47,6 +48,9 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             guard let self = self,event.window === self.window,self.window?.contentView === self else { return event }
             return self.shortcut(event) ? nil : event
         }
+        scalingObserver = NotificationCenter.default.addObserver(forName:CanvasGeometry.scalingChanged,object:nil,queue:.main) { [weak self] _ in
+            self?.redrawAll()
+        }
         presentationObserver = NotificationCenter.default.addObserver(forName:CanvasPresentation.changed,object:nil,queue:.main) { [weak self] _ in
             guard let self = self else { return }
             self.battleView?.presentation = CanvasPresentation.current
@@ -57,7 +61,16 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             self.needsDisplay = true
         }
     }
-    deinit { presentationObserver.map(NotificationCenter.default.removeObserver) }
+    deinit { presentationObserver.map(NotificationCenter.default.removeObserver);scalingObserver.map(NotificationCenter.default.removeObserver) }
+    /// The canvas, the battle view and the overlay all scale through CanvasGeometry.
+    private func redrawAll() {
+        func mark(_ view:NSView) { view.needsDisplay = true;view.subviews.forEach(mark) }
+        mark(self)
+    }
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        if let scale = window?.backingScaleFactor,scale != CanvasGeometry.backingScale { CanvasGeometry.backingScale = scale;redrawAll() }
+    }
     private func image(_ path:String?) -> CGImage? {
         guard let path = path else { return nil }
         if let cached = imageCache[path] { return cached }
@@ -352,8 +365,33 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     /// Exit code4 makes HERO.COM execute MAIN again. The engine replaces this
     /// campaign host with a new one, which opens on MAIN's title menu.
     private func restartMain() {
-        do { replace(with:try OriginalCampaignView(data:host.data)) }
+        do { let next = try OriginalCampaignView(data:host.data);replace(with:next);next.presentTitleMenu() }
         catch { errorText = "\(error)";needsDisplay = true }
+    }
+    /// Engine menu: MAIN's slot list, from the title or an idle field.
+    @objc func openLoad(_ sender:Any?) {
+        guard !overlay.active,screenPlayer == nil,!fading else { return }
+        presentSlots(saving:false) { [weak self] _ in
+            guard let self = self,!self.host.hasStarted else { return }
+            self.presentTitleMenu()
+        }
+    }
+    /// Engine menu: the field menu's save, wherever the field menu could open.
+    @objc func openSave(_ sender:Any?) {
+        guard host.fieldMenuReady,!overlay.active,!fading else { inputNotice = "지금은 저장할 수 없습니다.";needsDisplay = true;return }
+        presentSlots(saving:true) { _ in }
+    }
+    /// Engine menu: leave the game for MAIN's title menu, after a question.
+    @objc func returnToTitle(_ sender:Any?) {
+        guard host.hasStarted,!overlay.active,screenPlayer == nil,!fading else { return }
+        yesNo("진행 중인 게임을 그만두고 타이틀로 돌아갈까요?") { [weak self] yes in
+            guard yes else { return }
+            self?.fadeThrough { [weak self] in
+                guard let self = self else { return }
+                do { let next = try OriginalCampaignView(data:self.host.data);self.replace(with:next);next.fadeIn();next.presentTitleMenu() }
+                catch { self.errorText = "\(error)";self.needsDisplay = true }
+            }
+        }
     }
     private func synchronizeBattle() throws {
         guard host.ending == nil,host.frameworkReturn?.outcome != .quit,host.stage.palette == 3,let session = host.battle else {
@@ -721,7 +759,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     /// native slot, item2 opens the options, and item3
     /// returns to the opening, as exit code0 runs OPEN before MAIN again.
     /// A cancel ends the game through the exit screen (main 0x1E605, 1E3A8).
-    private func presentTitleMenu() {
+    func presentTitleMenu() {
         overlay.viewport = CGRect(x:0,y:0,width:640,height:400)
         overlay.show(titleMenu { [weak self] chosen in
             guard let self = self else { return }
@@ -982,9 +1020,12 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     override func draw(_ dirtyRect:NSRect) {
         NSColor.black.setFill();bounds.fill()
         guard let context = NSGraphicsContext.current?.cgContext else { return }
+        let screen = host.fieldScreenState(),modern = CanvasPresentation.current == .modern && screen != nil
+        // Whole device pixels per source pixel: the engine field's map is 1.25 canvas units.
+        let unit:CGFloat = screenPlayer == nil && modern && host.ending == nil ? 1.25 : 1
+        if unit != CanvasGeometry.sourcePixel { CanvasGeometry.sourcePixel = unit;DispatchQueue.main.async { [weak self] in self?.redrawAll() } }
         let shape = CanvasGeometry(bounds:bounds)
         if let player = screenPlayer,let image = player.image() { Renderer.image(image,in:shape.rect,context:context);return }
-        let screen = host.fieldScreenState(),modern = CanvasPresentation.current == .modern && screen != nil
         // MAIN draws no picture behind its title menu (A7E8 clears to colour 0);
         // the engine layout keeps the opening's title picture there.
         let blankTitle = !host.hasStarted && host.ending == nil && CanvasPresentation.current == .original
