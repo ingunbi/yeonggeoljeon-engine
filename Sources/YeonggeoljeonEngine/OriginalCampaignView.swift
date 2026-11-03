@@ -35,6 +35,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         curtain.frame = bounds;curtain.autoresizingMask = [.width,.height];addSubview(curtain)
         overlay.frame = bounds;overlay.autoresizingMask = [.width,.height];addSubview(overlay)
         overlay.onSound = { [weak self] id in self?.audio?.playEffect(id) }
+        overlay.onLineControl = { [weak self] control in self?.lineControl(control) }
         NotificationCenter.default.addObserver(forName:OriginalSettings.changed,object:nil,queue:.main) { [weak self] _ in self?.applySettings() }
         applySettings()
         overlay.restoreFocus = { [weak self] in
@@ -114,7 +115,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         if let monitor = keyMonitor { NSEvent.removeMonitor(monitor);keyMonitor = nil }
     }
     /// Engine additions. Held Control runs the game four times as fast, L
-    /// opens the dialogue log, and F5 and F9 save and load the quick slot.
+    /// opens the dialogue log, A turns auto advance on or off, S skips to the
+    /// next decision, and F5 and F9 save and load the quick slot.
     private func shortcut(_ event:NSEvent) -> Bool {
         if event.type == .flagsChanged {
             fastForwardHeld = event.modifierFlags.contains(.control);needsDisplay = true
@@ -123,6 +125,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         guard !event.isARepeat,event.modifierFlags.intersection([.command,.control,.option]).isEmpty else { return false }
         switch event.keyCode {
         case 37:return presentLog()
+        case 0:guard host.hasStarted else { return false };lineControl(.auto);return true
+        case 1:guard host.hasStarted else { return false };lineControl(.skip);return true
         case 96:quickSave(nil);return true
         case 101:quickLoad(nil);return true
         default:return false
@@ -133,9 +137,30 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         (sender as? NSMenuItem)?.state = fastForwardLocked ? .on : .off
     }
     @objc func openDialogueLog(_ sender:Any?) { _ = presentLog() }
+    @objc func toggleAutoAdvance(_ sender:Any?) { lineControl(.auto) }
+    @objc func toggleSkip(_ sender:Any?) { if host.hasStarted { lineControl(.skip) } }
+    @objc func validateMenuItem(_ item:NSMenuItem) -> Bool {
+        switch item.action {
+        case Selector(("toggleAutoAdvance:")):item.state = DialoguePace.shared.auto ? .on : .off
+        case Selector(("toggleSkip:")):item.state = DialoguePace.shared.skipping ? .on : .off
+        default:break
+        }
+        return true
+    }
+    /// The reading controls on a line, from a click, a key or the menu.
+    private func lineControl(_ control:CanvasOverlayView.LineControl) {
+        let pace = DialoguePace.shared
+        switch control {
+        case .log:_ = presentLog()
+        case .auto:pace.auto.toggle()
+        case .skip:pace.skipping.toggle()
+        }
+        needsDisplay = true
+    }
     /// Lines the player has read, newest last. The source keeps none.
     private func presentLog() -> Bool {
-        guard host.hasStarted,!overlay.active else { return false }
+        // From an open line, the line comes back when the log closes.
+        guard host.hasStarted,!overlay.active || overlay.notice != nil else { return false }
         let rows = dialogueLog.map { entry in
             CanvasSheet.Row(label:entry.speaker.isEmpty ? "—" : entry.speaker,value:String(entry.text.prefix(14)),
                             detail:.init(heading:entry.speaker,body:entry.text))
@@ -295,11 +320,14 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         // 2CB4:125E plays song 18 for the duel and 1824 restores the one before.
         if host.ending == nil { audio?.select(host.battle?.scriptActions.duel?.active == true ? 18 : host.vm.state.currentMusic) }
         battleView?.externalStatus = errorText ?? inputNotice ?? host.notice ?? host.playerStatus
-        battleView?.fastForward = fastForward
-        // Fast-forward reads a line for a tenth of a second, then moves on.
-        if fastForward,host.hasStarted {
+        let pace = DialoguePace.shared
+        if pace.skipping,skipReachedDecision { pace.skipping = false }
+        battleView?.fastForward = fastForward || pace.skipping
+        // Fast-forward reads a line for a tenth of a second, then moves on;
+        // skip closes every line at once.
+        if fastForward || pace.skipping,host.hasStarted {
             skipTicks += 1
-            if skipTicks >= 6 {
+            if pace.skipping || skipTicks >= 6 {
                 skipTicks = 0
                 if overlay.notice != nil { overlay.skipNotice() }
                 battleView?.skipLines()
@@ -311,7 +339,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             if edgeTicks >= 4 { edgeTicks = 0;scrollWorld(edge.dx,edge.dy) }
         } else { edgeTicks = 0 }
         do {
-            let rate = fastForward ? Double(OriginalBattleView.fastRate) : 1
+            let rate = pace.skipping ? Double(Self.skipRate) : fastForward ? Double(OriginalBattleView.fastRate) : 1
             battleView?.duelStage = host.duelStage
             if let steps = host.duelSteps,let board = battleView,!board.isPlayingDuel {
                 board.playDuel(steps) { [weak self] in self?.host.finishDuelSteps() }
@@ -352,6 +380,16 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             else if host.itemMessage != nil { presentItemMessage() }
             else if host.stage.dialogue != nil { presentDialogue() }
         } catch { errorText = "\(error)";needsDisplay = true }
+    }
+    /// Skip runs the game this many times as fast.
+    static let skipRate = 8
+    /// Skip stops where the player has something to decide: a question or
+    /// list, a battle command, or an idle town or world map.
+    private var skipReachedDecision:Bool {
+        if !host.hasStarted || screenPlayer != nil || host.ending != nil || errorText != nil || fading { return true }
+        if overlay.active,overlay.notice == nil { return true }
+        if let board = battleView,!board.isHidden { return board.awaitsCommand || board.asksPlayer }
+        return host.explorationInputReady && host.stage.dialogue == nil
     }
     private func act(_ body:() throws -> Void) {
         do { try body() } catch { errorText = "\(error)" }
@@ -424,6 +462,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             board.stopSound = { [weak self] in self?.audio?.stopEffect() }
             session.sourceOptionsWord = settings.battleWord
             board.onSound = { [weak self] id in self?.audio?.playEffect(id) }
+            board.onLineControl = { [weak self] control in self?.lineControl(control) }
             board.presentation = CanvasPresentation.current
             board.frame = bounds
             addSubview(board,positioned:.below,relativeTo:curtain);battleView = board
@@ -1063,7 +1102,9 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         if let text = errorText ?? inputNotice ?? host.notice ?? host.playerStatus {
             CanvasTheme.chip(text,at:CGPoint(x:320,y:376),maximumWidth:600,color:errorText == nil ? CanvasTheme.text : CanvasTheme.danger,in:context)
         }
-        if fastForward,host.hasStarted {
+        if DialoguePace.shared.skipping,host.hasStarted {
+            CanvasTheme.chip("건너뛰는 중 · S 멈춤",at:CGPoint(x:560,y:24),maximumWidth:160,color:CanvasTheme.accent,in:context)
+        } else if fastForward,host.hasStarted {
             CanvasTheme.chip("빨리 감기 ×\(OriginalBattleView.fastRate)",at:CGPoint(x:580,y:24),maximumWidth:120,in:context)
         }
         context.restoreGState()

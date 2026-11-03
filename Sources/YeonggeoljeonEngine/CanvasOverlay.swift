@@ -122,11 +122,31 @@ struct CanvasBrief {
     var heading:String
     var lines:[String]
     var turns:String
+    /// MAIN's MARK button in original frames; nil draws the engine's button.
     var button:CGImage?
     var onDismiss:() -> Void
 }
 
 final class CanvasOverlayView:NSView {
+    /// Reading controls along a waiting line (engine additions).
+    enum LineControl:CaseIterable { case log,auto,skip }
+    /// The owner that handles the controls; nil hides them.
+    var onLineControl:((LineControl) -> Void)?
+    var showsLog = true
+    private var hoveredControl:LineControl?
+    /// Auto mode counts its reading pause from when the whole line shows.
+    private var autoStart:Date?
+    private var autoTimer:Timer?
+    private var paceObserver:NSObjectProtocol?
+    override init(frame:NSRect) {
+        super.init(frame:frame)
+        paceObserver = NotificationCenter.default.addObserver(forName:DialoguePace.changed,object:nil,queue:.main) { [weak self] _ in
+            self?.updateAuto();self?.needsDisplay = true
+        }
+    }
+    convenience init() { self.init(frame:.zero) }
+    required init?(coder:NSCoder) { nil }
+    deinit { if let observer = paceObserver { NotificationCenter.default.removeObserver(observer) } }
     private(set) var selector:CanvasMenu?
     private(set) var notice:CanvasNotice?
     private(set) var brief:CanvasBrief?
@@ -142,11 +162,27 @@ final class CanvasOverlayView:NSView {
     /// the battle map window while a battle screen is up.
     static let fieldViewport = CGRect(x:16,y:16,width:512,height:320)
     var viewport = fieldViewport
+    private static let portraitSize = CGSize(width:64,height:80)
+    private func lineAttributes(_ color:NSColor = CanvasTheme.text) -> [NSAttributedString.Key:Any] {
+        var style = CanvasTheme.attributes(CanvasTheme.font(15),color)
+        if let paragraph = (style[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle {
+            paragraph.lineSpacing = 4;style[.paragraphStyle] = paragraph
+        }
+        return style
+    }
+    /// Where a line's text starts and how wide it may run inside its box.
+    private func lineText(_ value:CanvasNotice,width:CGFloat) -> (left:CGFloat,width:CGFloat) {
+        let left:CGFloat = value.portrait == nil ? 20 : 12+Self.portraitSize.width+16
+        return (left,width-left-20)
+    }
     private func noticeRect(_ value:CanvasNotice) -> CGRect {
         guard value.portrait == nil,value.speaker.isEmpty,!value.narration else {
-            let width = min(viewport.width-16,540)
-            let height = value.narration && value.portrait == nil ? max(72,textHeight(value.text,width:width-40)+28) : 104
-            return CGRect(x:viewport.midX-width/2,y:viewport.maxY-8-height,width:width,height:height)
+            let width = min(viewport.width-16,560),text = lineText(value,width:width)
+            let body = value.text.isEmpty ? 0 : ceil((value.text as NSString).boundingRect(with:CGSize(width:text.width,height:600),
+                options:[.usesLineFragmentOrigin],attributes:lineAttributes()).height)
+            // Text from the top inset down, then the control row.
+            let height = max(value.portrait == nil ? 64 : Self.portraitSize.height+24,18+body+30)
+            return CGRect(x:viewport.midX-width/2,y:max(viewport.minY+14,viewport.maxY-8-height),width:width,height:height).integral
         }
         // A plain refusal is a small card in the middle of the map window.
         let style = CanvasTheme.attributes(font,CanvasTheme.text)
@@ -196,9 +232,10 @@ final class CanvasOverlayView:NSView {
             revealTimer = Timer.scheduledTimer(withTimeInterval:1.0/60,repeats:true) { [weak self] _ in
                 guard let self = self else { return }
                 self.needsDisplay = true
-                if !self.revealing { self.stopReveal() }
+                if !self.revealing { self.stopReveal();self.updateAuto() }
             }
         }
+        updateAuto()
         guard let timeout = value.timeout else { return }
         noticeTimer = Timer.scheduledTimer(withTimeInterval:timeout,repeats:false) { [weak self] _ in self?.dismissNotice() }
     }
@@ -216,8 +253,27 @@ final class CanvasOverlayView:NSView {
         isHidden = false;needsDisplay = true
         window?.makeFirstResponder(self)
     }
+    /// Auto mode closes a waiting line after DialoguePace.readingSeconds once
+    /// all of it shows; the bar along the box shows the pause running out.
+    private func updateAuto() {
+        guard let value = notice,value.waitsAsLine,onLineControl != nil,DialoguePace.shared.auto,!revealing else {
+            autoTimer?.invalidate();autoTimer = nil;autoStart = nil;return
+        }
+        if autoStart == nil { autoStart = Date() }
+        guard autoTimer == nil else { return }
+        autoTimer = Timer.scheduledTimer(withTimeInterval:1.0/30,repeats:true) { [weak self] _ in
+            guard let self = self,let start = self.autoStart,let value = self.notice else { return }
+            self.needsDisplay = true
+            if Date().timeIntervalSince(start) >= DialoguePace.readingSeconds(value.text) { self.dismissNotice() }
+        }
+    }
+    private var autoProgress:CGFloat? {
+        guard let start = autoStart,let value = notice else { return nil }
+        return min(1,CGFloat(Date().timeIntervalSince(start)/DialoguePace.readingSeconds(value.text)))
+    }
     private func close() {
         noticeTimer?.invalidate();noticeTimer = nil;stopReveal()
+        autoTimer?.invalidate();autoTimer = nil;autoStart = nil;hoveredControl = nil
         clear();needsDisplay = true
         restoreFocus?()
     }
@@ -232,7 +288,7 @@ final class CanvasOverlayView:NSView {
     }
     private func dismissNotice() {
         guard let value = notice else { return }
-        if revealing { stopReveal();return }
+        if revealing { stopReveal();updateAuto();return }
         close();value.onDismiss()
     }
     /// Fast-forward closes a plain line as a key press would, revealed or not.
@@ -547,23 +603,62 @@ final class CanvasOverlayView:NSView {
         (value.hint as NSString).draw(in:CGRect(x:panel.minX+18,y:shape.footer+12,width:panel.width-200,height:16),withAttributes:attributes(CanvasTheme.muted,size:11))
         for (index,rect) in shape.buttons { drawButton(value.buttons[index],in:rect,focused:index == sheetButton,context:context) }
     }
+    /// Controls along the bottom of a waiting line, right to left before the continue mark.
+    private func lineControls(_ rect:CGRect) -> [(control:LineControl,label:String,rect:CGRect)] {
+        guard onLineControl != nil,notice?.waitsAsLine == true else { return [] }
+        let style = CanvasTheme.attributes(CanvasTheme.font(11,.medium),CanvasTheme.muted)
+        var right = rect.maxX-30,result:[(control:LineControl,label:String,rect:CGRect)] = []
+        for (control,label) in [(LineControl.skip,"건너뛰기 S"),(.auto,"자동 A"),(.log,"기록 L")] where control != .log || showsLog {
+            let width = ceil((label as NSString).size(withAttributes:style).width)+16
+            result.append((control,label,CGRect(x:right-width,y:rect.maxY-25,width:width,height:19)))
+            right -= width+4
+        }
+        return result
+    }
+    private func drawLineControls(_ rect:CGRect,in context:CGContext) {
+        let pace = DialoguePace.shared
+        for item in lineControls(rect) {
+            let on = item.control == .auto ? pace.auto : item.control == .skip ? pace.skipping : false
+            if on { CanvasTheme.fill(item.rect,CanvasTheme.accentFill,radius:item.rect.height/2,in:context) }
+            else if item.control == hoveredControl { CanvasTheme.fill(item.rect,CanvasTheme.selection,radius:item.rect.height/2,in:context) }
+            let color = on ? CanvasTheme.onAccent : item.control == hoveredControl ? CanvasTheme.text : CanvasTheme.muted
+            (item.label as NSString).draw(in:item.rect.insetBy(dx:0,dy:3),withAttributes:CanvasTheme.attributes(CanvasTheme.font(11,.medium),color,alignment:.center))
+        }
+        // The pause auto mode has left before it closes the line.
+        if let progress = autoProgress {
+            let track = CGRect(x:rect.minX+14,y:rect.maxY-4,width:rect.width-28,height:2)
+            CanvasTheme.fill(track,CanvasTheme.inset,radius:1,in:context)
+            CanvasTheme.fill(CGRect(x:track.minX,y:track.minY,width:track.width*progress,height:2),CanvasTheme.accentFill,radius:1,in:context)
+        }
+    }
     private func drawNotice(_ value:CanvasNotice,in context:CGContext) {
         let rect = noticeRect(value)
+        let line = value.portrait != nil || !value.speaker.isEmpty || value.narration
         CanvasTheme.panel(rect,in:context)
         var textX = rect.minX+20
-        if let portrait = value.portrait {
-            let picture = CGRect(x:rect.minX+10,y:rect.minY+10,width:67,height:84)
-            context.saveGState();CanvasTheme.rounded(picture,5,in:context);context.clip()
-            Renderer.image(portrait,in:picture,context:context);context.restoreGState()
-            textX = picture.maxX+14
-        } else if !value.speaker.isEmpty { textX = rect.minX+18 }
-        if !value.speaker.isEmpty {
-            (value.speaker as NSString).draw(in:CGRect(x:textX,y:rect.minY+10,width:rect.maxX-textX-12,height:18),
-                withAttributes:CanvasTheme.attributes(CanvasTheme.font(12,.semibold),CanvasTheme.accent))
+        if line {
+            textX = rect.minX+lineText(value,width:rect.width).left
+            if let portrait = value.portrait {
+                let picture = CGRect(origin:CGPoint(x:rect.minX+12,y:rect.minY+12),size:Self.portraitSize)
+                context.saveGState();CanvasTheme.rounded(picture,4,in:context);context.clip()
+                Renderer.image(portrait,in:picture,context:context);context.restoreGState()
+                CanvasTheme.stroke(picture,radius:4,in:context)
+            }
+            // The speaker's name sits on a tag over the box's top edge.
+            if !value.speaker.isEmpty {
+                let style = CanvasTheme.attributes(CanvasTheme.font(12,.semibold),CanvasTheme.onAccent,alignment:.center)
+                let width = ceil((value.speaker as NSString).size(withAttributes:style).width)+22
+                let tag = CGRect(x:textX-4,y:rect.minY-11,width:width,height:22)
+                context.saveGState()
+                context.setShadow(offset:CGSize(width:0,height:2),blur:6,color:CGColor(gray:0,alpha:0.45))
+                CanvasTheme.fill(tag,CanvasTheme.accentFill,radius:11,in:context)
+                context.restoreGState()
+                (value.speaker as NSString).draw(in:tag.insetBy(dx:0,dy:3),withAttributes:style)
+            }
         }
-        let top = value.speaker.isEmpty ? (value.portrait == nil ? rect.minY+14 : rect.minY+18) : rect.minY+30
+        let top = line ? rect.minY+18 : rect.minY+14
         // Unrevealed characters are laid out but clear, so lines never re-wrap.
-        let text = NSMutableAttributedString(string:value.text,attributes:attributes())
+        let text = NSMutableAttributedString(string:value.text,attributes:line ? lineAttributes() : attributes())
         let shown = revealed(value.text)
         if shown < value.text.count {
             let start = value.text.index(value.text.startIndex,offsetBy:shown)
@@ -571,8 +666,9 @@ final class CanvasOverlayView:NSView {
         }
         text.draw(with:CGRect(x:textX,y:top,width:rect.maxX-textX-18,height:rect.maxY-top-6),options:[.usesLineFragmentOrigin])
         if value.waitsAsLine,shown >= value.text.count {
-            CanvasTheme.continueMark(at:CGPoint(x:rect.maxX-16,y:rect.maxY-13),in:context)
+            CanvasTheme.continueMark(at:CGPoint(x:rect.maxX-16,y:rect.maxY-15),in:context)
         }
+        if value.waitsAsLine { drawLineControls(rect,in:context) }
     }
     private func drawTerrain(_ value:CanvasTerrain,in context:CGContext) {
         let facts = value.layout,x = Int(value.origin.x),y = Int(value.origin.y)
@@ -602,6 +698,7 @@ final class CanvasOverlayView:NSView {
         for (index,text) in value.lines.enumerated() { line(text,facts.textColumn,facts.textY+index*facts.lineStep) }
         line(value.turns,facts.turnColumn,facts.turnY)
         if let picture = value.button { Renderer.image(picture,in:OriginalBattleLayout.rect(facts.button),context:context) }
+        else { drawButton("확인",in:OriginalBattleLayout.rect(facts.button).insetBy(dx:-6,dy:-2),focused:true,context:context) }
     }
     override func draw(_ dirtyRect:NSRect) {
         guard active,let context = NSGraphicsContext.current?.cgContext else { return }
@@ -689,6 +786,9 @@ final class CanvasOverlayView:NSView {
         } else if var value = selector,let hit = layout(value).options.first(where:{ $0.rect.contains(point) }),
                   value.options[hit.index].enabled,hit.index != value.selected {
             value.selected = hit.index;selector = value;needsDisplay = true
+        } else if let value = notice {
+            let hit = lineControls(noticeRect(value)).first(where:{ $0.rect.contains(point) })?.control
+            if hit != hoveredControl { hoveredControl = hit;needsDisplay = true }
         }
     }
     override func mouseDown(with event:NSEvent) {
@@ -701,7 +801,12 @@ final class CanvasOverlayView:NSView {
             }
             return
         }
-        if notice != nil { dismissNotice();return }
+        if let value = notice {
+            if let hit = lineControls(noticeRect(value)).first(where:{ $0.rect.contains(canvasPoint(event)) }) {
+                onLineControl?(hit.control);needsDisplay = true;return
+            }
+            dismissNotice();return
+        }
         if brief != nil { dismissBrief();return }
         if terrain != nil { dismissTerrain();return }
         guard let value = selector else { return }

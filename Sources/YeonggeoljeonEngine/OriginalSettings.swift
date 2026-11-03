@@ -21,8 +21,10 @@ struct OriginalSettings:Codable,Equatable {
     /// MAIN22832; the new-game template holds 1).
     var scroll = 1
     static let scrollSteps = [1,2,4,8]
+    /// Engine addition: a shown line closes by itself (see DialoguePace).
+    var autoAdvance = false
 
-    private enum CodingKeys:String,CodingKey { case speed,moveSpeed,unitCombat,enemyMove,monochrome,volume,scroll }
+    private enum CodingKeys:String,CodingKey { case speed,moveSpeed,unitCombat,enemyMove,monochrome,volume,scroll,autoAdvance }
     init() {}
     /// Settings stored by an older build keep their values; a missing key takes its default.
     init(from decoder:Decoder) throws {
@@ -34,6 +36,7 @@ struct OriginalSettings:Codable,Equatable {
         monochrome = try values.decodeIfPresent(Bool.self,forKey:.monochrome) ?? blank.monochrome
         volume = try values.decodeIfPresent(Float.self,forKey:.volume) ?? blank.volume
         scroll = try values.decodeIfPresent(Int.self,forKey:.scroll).flatMap { Self.scrollSteps.contains($0) ? $0 : nil } ?? blank.scroll
+        autoAdvance = try values.decodeIfPresent(Bool.self,forKey:.autoAdvance) ?? blank.autoAdvance
     }
 
     private static let key = "originalSettings"
@@ -52,6 +55,28 @@ struct OriginalSettings:Codable,Equatable {
     /// Field time runs at the source's step over the chosen one. 노웨이트
     /// has no wait at all, so it takes a short frame of the window's own.
     var timeScale:Double { speed == 0 ? 6 : 2/Double(speed) }
+}
+
+/// Engine additions for reading pace. The source waits for a key on every
+/// line; auto advance and skip only decide when the window sends that key,
+/// so neither changes game state.
+final class DialoguePace {
+    static let shared = DialoguePace()
+    static let changed = Notification.Name("DialoguePaceChanged")
+    /// A fully shown line closes by itself after a reading pause. Kept with
+    /// the player's settings.
+    var auto = OriginalSettings.current.autoAdvance {
+        didSet {
+            guard auto != oldValue else { return }
+            var value = OriginalSettings.current;value.autoAdvance = auto;OriginalSettings.current = value;post()
+        }
+    }
+    /// Lines close at once and time runs fast until the player has
+    /// something to decide; the window turns it off there.
+    var skipping = false { didSet { if skipping != oldValue { post() } } }
+    private func post() { NotificationCenter.default.post(name:Self.changed,object:nil) }
+    /// How long auto mode leaves a shown line up: a second and a bit per character.
+    static func readingSeconds(_ text:String) -> Double { min(7,max(1.5,1+Double(text.count)*0.055)) }
 }
 
 /// Five native slots, as the original has five MSAVE files. They hold

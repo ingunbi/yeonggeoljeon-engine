@@ -29,6 +29,12 @@ final class OriginalBattleView:NSView {
     var animatesActions = false { didSet { flow.presentsNativeActions = animatesActions } }
     /// A battle effect starts. The id is the source sound number.
     var onSound:((Int)->Void)? { didSet { overlay.onSound = onSound } }
+    /// Auto, skip and log controls on battle lines; the campaign owns them.
+    var onLineControl:((CanvasOverlayView.LineControl)->Void)? { didSet { overlay.onLineControl = onLineControl } }
+    /// The player's turn waits for a command, with no line or menu open.
+    var awaitsCommand:Bool { canInput && !overlay.active && animator.notice == nil && duelPlayer == nil }
+    /// A battle window waits for an answer or a look (menus, the conditions).
+    var asksPlayer:Bool { overlay.active && overlay.notice == nil }
     private var animator = OriginalBattleAnimator()
     var isAnimating:Bool { !animator.isIdle }
     private var afterCues:(()->Void)?
@@ -327,7 +333,7 @@ final class OriginalBattleView:NSView {
             OriginalBattleConditions.numbered(texts.currentTurn,[session.turns.roundIndex+1,session.header.turnLimit])
         overlay.show(CanvasBrief(layout:facts,title:OriginalBattleConditions.title(texts.titleFormat,chapter:chapter,name:session.definition.name ?? session.definition.id),
             heading:texts.heading,lines:OriginalBattleConditions.lines(state.text ?? "",width:facts.lineWidth,count:(facts.lineEnd-facts.textY)/facts.lineStep),
-            turns:turns,button:style.ok,onDismiss:done))
+            turns:turns,button:presentation == .original ? style.ok : nil,onDismiss:done))
     }
     /// MAIN27AC6..27AE8: the first friendly phase opens with the conditions,
     /// and every friendly phase with the side notice.
@@ -793,11 +799,11 @@ final class OriginalBattleView:NSView {
         // The function button reads as a button: a pill that lights while its menu is open.
         let pill = button.insetBy(dx:5,dy:2)
         CanvasTheme.fill(pill,functionOpen ? CanvasTheme.accentFill : CanvasTheme.selection,radius:pill.height/2,in:context)
-        label("기능",in:CGRect(x:pill.minX,y:pill.minY,width:pill.width,height:pill.height),font:CanvasTheme.font(9,.semibold),
+        label("기능",in:CGRect(x:pill.minX,y:pill.minY,width:pill.width,height:pill.height),font:CanvasTheme.font(10,.semibold),
               color:functionOpen ? CanvasTheme.onAccent : CanvasTheme.accent,alignment:.center)
-        label(session.definition.name ?? session.definition.id,in:CGRect(x:button.maxX,y:1.5,width:map.width-button.width*2,height:14),font:CanvasTheme.font(10,.medium),alignment:.center)
+        label(session.definition.name ?? session.definition.id,in:CGRect(x:button.maxX,y:0.5,width:map.width-button.width*2,height:15),font:CanvasTheme.font(11,.semibold),alignment:.center)
         label("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(weatherName)",
-              in:CGRect(x:map.maxX-120,y:1.5,width:114,height:14),font:CanvasTheme.font(10),color:CanvasTheme.muted,alignment:.right)
+              in:CGRect(x:map.maxX-136,y:0.5,width:130,height:15),font:CanvasTheme.font(11),color:CanvasTheme.muted,alignment:.right)
         CanvasTheme.divider(from:CGPoint(x:map.maxX+0.5,y:0),to:CGPoint(x:map.maxX+0.5,y:400),in:context)
     }
     /// The force, the two list tabs, the units and the small map, top to bottom.
@@ -1067,7 +1073,9 @@ final class OriginalBattleView:NSView {
         if combatPlayer != nil { drawCombat(context) }
         let area = layoutFacts.viewportRect
         var corner = area.minY+16
-        if fastForward {
+        if DialoguePace.shared.skipping {
+            CanvasTheme.chip("건너뛰는 중",at:CGPoint(x:area.maxX-50,y:corner),maximumWidth:120,color:CanvasTheme.accent,in:context);corner += 24
+        } else if fastForward {
             CanvasTheme.chip("빨리 감기 ×\(OriginalBattleView.fastRate)",at:CGPoint(x:area.maxX-56,y:corner),maximumWidth:120,in:context);corner += 24
         }
         if showsThreat,combatPlayer == nil {
@@ -1181,6 +1189,13 @@ final class OriginalBattleView:NSView {
     }
     /// MAIN28806: the bar turns at seven and three tenths of the maximum.
     private func drawCombatGauge(_ context:CGContext,x:Int,y:Int,width:Int,value:Int,maximum:Int,text:String) {
+        if presentation == .modern {
+            // A rounded track with the number beside it.
+            drawStatBar(context,CGRect(x:CGFloat(x),y:CGFloat(y)+1,width:CGFloat(width)-44,height:6),value:value,maximum:maximum)
+            (text as NSString).draw(in:CGRect(x:CGFloat(x+width)-40,y:CGFloat(y)-5,width:40,height:16),
+                withAttributes:CanvasTheme.attributes(CanvasTheme.number(12,.semibold),CanvasTheme.text,alignment:.right))
+            return
+        }
         let box = CGRect(x:x,y:y-1,width:width,height:10)
         context.setFillColor(CGColor(gray:0,alpha:0.85));context.fill(box)
         if maximum > 0 {
@@ -1204,6 +1219,25 @@ final class OriginalBattleView:NSView {
         let textX = side == 0 ? 104 : 240,gaugeX = textX+40,texts = art.catalog.texts
         let className = art.catalog.classNames.indices.contains(classID) ? art.catalog.classNames[classID] : ""
         (originalFormat(texts.level,[String(level),className]) as NSString).draw(at:CGPoint(x:CGFloat(textX),y:254),withAttributes:plain)
+        if presentation == .modern {
+            // Label and number on a row, a thin bar under them.
+            let right = CGFloat(side == 0 ? Int(window.maxX)-12 : portraitX-12)
+            func row(_ label:String,_ y:CGFloat,_ shown:String,_ share:(value:Int,maximum:Int)?) {
+                (label as NSString).draw(at:CGPoint(x:CGFloat(textX),y:y),withAttributes:CanvasTheme.attributes(CanvasTheme.font(11),CanvasTheme.muted))
+                (shown as NSString).draw(in:CGRect(x:CGFloat(textX),y:y-1,width:right-CGFloat(textX),height:16),
+                    withAttributes:CanvasTheme.attributes(CanvasTheme.number(12,.semibold),CanvasTheme.text,alignment:.right))
+                guard let share = share else { return }
+                drawStatBar(context,CGRect(x:CGFloat(textX),y:y+16,width:right-CGFloat(textX),height:3),value:share.value,maximum:share.maximum)
+            }
+            row(valueLabel,274,"\(value)",(value,2000))
+            row(texts.troops,298,"\(troops) / \(maximum)",(troops,maximum))
+            row(texts.morale,322,"\(morale)",(morale,100))
+            if let last = last {
+                if let shown = last.value { row(last.label,346,"\(shown)",(shown,last.maximum)) }
+                else { row(last.label,346,originalFormat(texts.percent,[String(last.maximum)]),nil) }
+            }
+            return
+        }
         (valueLabel as NSString).draw(at:CGPoint(x:CGFloat(textX),y:278),withAttributes:faint)
         drawCombatGauge(context,x:gaugeX,y:284,width:64,value:value,maximum:2000,text:"\(value)")
         (texts.troops as NSString).draw(at:CGPoint(x:CGFloat(textX),y:302),withAttributes:faint)
@@ -1214,6 +1248,14 @@ final class OriginalBattleView:NSView {
         (last.label as NSString).draw(at:CGPoint(x:CGFloat(textX),y:350),withAttributes:faint)
         if let shown = last.value { drawCombatGauge(context,x:gaugeX,y:356,width:64,value:shown,maximum:last.maximum,text:"\(shown)") }
         else { (originalFormat(texts.percent,[String(last.maximum)]) as NSString).draw(at:CGPoint(x:CGFloat(gaugeX),y:350),withAttributes:plain) }
+    }
+    /// The modern combat card's bar, coloured at MAIN28806's seven and three tenths.
+    private func drawStatBar(_ context:CGContext,_ track:CGRect,value:Int,maximum:Int) {
+        CanvasTheme.fill(track,CGColor(gray:1,alpha:0.10),radius:track.height/2,in:context)
+        guard maximum > 0,value > 0 else { return }
+        let share = value*10/maximum
+        let color = share >= 7 ? CGColor(red:0.46,green:0.76,blue:0.54,alpha:1) : share >= 3 ? CanvasTheme.accentFill : CGColor(red:0.9,green:0.42,blue:0.36,alpha:1)
+        CanvasTheme.fill(CGRect(x:track.minX,y:track.minY,width:max(track.height,track.width*CGFloat(min(value,maximum))/CGFloat(maximum)),height:track.height),color,radius:track.height/2,in:context)
     }
     private func clickPanel(_ point:CGPoint) -> Bool {
         let facts = layoutFacts

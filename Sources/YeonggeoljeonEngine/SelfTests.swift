@@ -108,6 +108,9 @@ func selfTests() throws {
     let uneven = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"scroll":3}"#.utf8))
     try check(older.speed == 3 && older.monochrome && older.scroll == 1 && stepped.scroll == 4 && uneven.scroll == 1,
               "stored settings without a scroll step keep their values; only 1, 2, 4 and 8 are steps")
+    let reading = DialoguePace.readingSeconds(String(repeating:"가",count:20))
+    try check(!older.autoAdvance && DialoguePace.readingSeconds("") == 1.5 && abs(reading-2.1) < 0.001 &&
+              DialoguePace.readingSeconds(String(repeating:"가",count:400)) == 7,"auto advance is off by default and reads a line for 1.5 to 7 seconds")
     // MAIN24BD6 places the merchant by palace room type (DS:3838), not by index.
     var merchant = OriginalShopCatalog.Merchant(person:374,x:15,y:11,sourceFacing:4,music:15)
     try check(!merchant.hosts(palaceIndex:10),"without the type table no room hosts the merchant")

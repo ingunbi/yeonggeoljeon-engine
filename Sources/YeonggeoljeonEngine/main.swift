@@ -162,6 +162,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         _ = add(game,"빠른 불러오기",Selector(("quickLoad:")),"l")
         game.addItem(.separator())
         _ = add(game,"대사 기록",Selector(("openDialogueLog:")),"j")
+        _ = add(game,"대사 자동 넘기기",Selector(("toggleAutoAdvance:")),"e")
+        _ = add(game,"다음 선택까지 건너뛰기",Selector(("toggleSkip:")),"k")
         _ = add(game,"빨리 감기 고정",Selector(("toggleFastForward:")),"t")
         _ = add(game,"적 공격 범위",Selector(("toggleThreat:")),"d")
         let view = submenu("보기")
