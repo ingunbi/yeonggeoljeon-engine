@@ -911,22 +911,29 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         return result
     }
     /// Modern field: who leads, where they are, and what they carry, over the map.
+    /// The card carries the source caption (the chapter title, DS:DB4C) above
+    /// the territory, so a long title never runs under the field buttons.
     private func drawFieldHUD(_ screen:OriginalFieldScreenState,in context:CGContext) {
-        let card = CGRect(x:12,y:12,width:178,height:58)
+        let caption = host.stage.caption ?? "",captionStyle = CanvasTheme.attributes(CanvasTheme.font(11,.medium),CanvasTheme.accent)
+        let captionWidth = caption.isEmpty ? 0 : ceil((caption as NSString).size(withAttributes:captionStyle).width)
+        let top:CGFloat = caption.isEmpty ? 0 : 16
+        let card = CGRect(x:12,y:12,width:min(300,max(178,captionWidth+64)),height:58+top)
         CanvasTheme.panel(card,in:context)
         if let picture = image(screen.portraitImage) {
-            let box = CGRect(x:card.minX+7,y:card.minY+6,width:37,height:46)
+            let box = CGRect(x:card.minX+7,y:card.midY-23,width:37,height:46)
             context.saveGState();CanvasTheme.rounded(box,4,in:context);context.clip()
             Renderer.image(picture,in:box,context:context);context.restoreGState()
         }
         let textX = card.minX+52
-        ((screen.territory ?? "") as NSString).draw(in:CGRect(x:textX,y:card.minY+8,width:card.width-58,height:20),
-            withAttributes:CanvasTheme.attributes(CanvasTheme.font(14,.semibold),CanvasTheme.text))
-        ("돈 \(screen.money ?? 0) · 레벨 \(screen.level ?? 0)" as NSString).draw(in:CGRect(x:textX,y:card.minY+31,width:card.width-58,height:18),
-            withAttributes:CanvasTheme.attributes(CanvasTheme.number(11.5),CanvasTheme.muted))
-        if let caption = host.stage.caption,!caption.isEmpty {
-            CanvasTheme.chip(caption,at:CGPoint(x:320,y:26),maximumWidth:300,in:context)
+        if !caption.isEmpty {
+            let paragraph = NSMutableParagraphStyle();paragraph.lineBreakMode = .byTruncatingTail
+            var style = captionStyle;style[.paragraphStyle] = paragraph
+            (caption as NSString).draw(in:CGRect(x:textX,y:card.minY+8,width:card.width-58,height:16),withAttributes:style)
         }
+        ((screen.territory ?? "") as NSString).draw(in:CGRect(x:textX,y:card.minY+8+top,width:card.width-58,height:20),
+            withAttributes:CanvasTheme.attributes(CanvasTheme.font(14,.semibold),CanvasTheme.text))
+        ("돈 \(screen.money ?? 0) · 레벨 \(screen.level ?? 0)" as NSString).draw(in:CGRect(x:textX,y:card.minY+31+top,width:card.width-58,height:18),
+            withAttributes:CanvasTheme.attributes(CanvasTheme.number(11.5),CanvasTheme.muted))
         if host.fieldMenuReady {
             for button in fieldButtons {
                 CanvasTheme.panel(button.rect,in:context)
