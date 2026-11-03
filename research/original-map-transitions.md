@@ -55,6 +55,11 @@ The host-driven stage now does the following:
 - **Leaving a battle:** a map selected from a battle starts black.
 - **World maps:** the first placement centres the camera by the rule above.
 - **Story pictures:** a closed mode-0 panel stays until the next map or `2C`.
+- **Battles:** the window fades with a black curtain over the stage and the battle view,
+  and the host waits meanwhile. From the field: fade out, 0.53 s black, the battle, fade
+  in, a 0.53 s hold. A chained or restarted battle skips the black hold. Leaving: fade
+  out, then 0.53 s black, and the field stays black until its `05`. New game and loads
+  use the same curtain.
 
 Replays reach the same states and draw the same random numbers. Their simulated time
 grows, and the final world camera follows the new rule. Each replay observation now
@@ -62,8 +67,8 @@ records the random state.
 
 ## Not restored
 
-- The story-picture dissolve, the battle entry and exit fades, the black-to-black holds
-  after loads and battles, and the default-entry music table (song 5 on the world,
+- The story-picture dissolve, the black-to-black hold after a load, and the
+  default-entry music table (song 5 on the world,
   1 or 5 in towns, 15 in two palaces). Town and the merchant room already set theirs.
 - A script palace shown by `05` fades to palette slot 2, while a default entry uses
   DS:`382A`; whether scripts correct this was not checked.
