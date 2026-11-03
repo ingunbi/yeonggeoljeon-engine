@@ -416,7 +416,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             guard let self = self else { return }
             self.act { try self.host.acknowledge() }
         }
-        line.narration = dialogue.closesAfter == nil
+        line.narration = dialogue.closesAfter == nil && dialogue.speaker.isEmpty && line.portrait == nil
         overlay.show(line)
     }
     /// A visit stays in one window. Each blocking call of the source routine

@@ -37,14 +37,21 @@ struct OriginalBattleLayout:Codable,Equatable {
                               turnColumn:11,turnY:248),
         terrain:Terrain(size:[128,80],tile:[8,16,32,32],textX:48,headingY:16,percentY:36,nameY:56,percentWidth:64),followMargin:6)
     /// The engine's own arrangement of the same parts: a slim top bar, fifteen
-    /// by twelve cells, and a sidebar. Only the map window's size differs in play.
-    func modern() -> Self {
+    /// by twelve cells, and a sidebar with seven list rows, a unit card and the
+    /// small map. Only the map window's size differs in play.
+    func modern(mapWidth:Int? = nil,mapHeight:Int? = nil) -> Self {
         var value = self
         value.viewport = [0,16,480,384];value.functionButton = [0,0,56,16]
         value.sideButtons = [[488,32,72,20],[560,32,72,20]]
-        value.list = UnitList(rect:[484,58,152,200],rowHeight:20,rows:10,nameColumn:61,statusColumn:69,textY:60,
-                              gauge:[490,74,140,3],track:[633,58,3,200],hover:[484,152])
-        value.minimap = Minimap(panel:[484,264,152,128],base:[500,292],span:[40,24],cellPixels:3)
+        value.list = UnitList(rect:[484,58,152,140],rowHeight:20,rows:7,nameColumn:61,statusColumn:69,textY:60,
+                              gauge:[490,74,140,3],track:[633,58,3,140],hover:[484,152])
+        value.minimap = Minimap(panel:[484,314,152,80],base:[500,318],span:[40,24],cellPixels:3)
+        // With the map's size known, the small map takes the largest whole cell
+        // size that fits its panel and sits in the panel's centre.
+        if let width = mapWidth,let height = mapHeight,width > 0,height > 0 {
+            let cell = max(2,min(5,min(136/width,72/height)))
+            value.minimap = Minimap(panel:[484,314,152,80],base:[484+(152-width*cell)/2,314+(80-height*cell)/2],span:[width,height],cellPixels:cell)
+        }
         return value
     }
     static func rect(_ value:[Int]) -> CGRect { CGRect(x:value[0],y:value[1],width:value[2],height:value[3]) }

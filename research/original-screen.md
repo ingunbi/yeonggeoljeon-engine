@@ -300,8 +300,10 @@ are unchanged.
   the money. Pictures such as illustrations and the title keep the 640×400 canvas.
 - A battle uses `OriginalBattleLayout.modern()`: a slim bar with the function
   button, title and turn over a map of fifteen by twelve cells instead of the
-  source's thirteen by eleven, and a sidebar with the force, list tabs, unit list
-  and small map. Command and terrain windows open right next to their cell. The
+  source's thirteen by eleven, and a sidebar with the force, list tabs, seven unit
+  rows, a card for the inspected, selected or hovered unit (portrait, class, level,
+  troops, MP, morale and experience) and the small map, which takes the largest
+  whole cell size that fits its panel. The card replaces the unit chip over the map. Command and terrain windows open right next to their cell. The
   same scroll and follow rules run on the larger window, so what is on screen at a
   given moment differs from the source, and the source's window placement rules
   apply only to the original frames.

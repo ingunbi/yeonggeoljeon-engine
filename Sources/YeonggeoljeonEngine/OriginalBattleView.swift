@@ -66,7 +66,7 @@ final class OriginalBattleView:NSView {
     var presentation = CanvasPresentation.original {
         didSet {
             guard presentation != oldValue else { return }
-            layoutFacts = presentation == .modern ? style.layout.modern() : style.layout
+            layoutFacts = presentation == .modern ? style.layout.modern(mapWidth:session.width,mapHeight:session.height) : style.layout
             let focus = (selected ?? inspected).flatMap { session.units[$0]?.position }
             camera = OriginalBattleCamera(width:session.width,height:session.height,layout:layoutFacts)
             if let focus = focus { camera.center(on:focus) }
@@ -790,8 +790,11 @@ final class OriginalBattleView:NSView {
         let facts = layoutFacts,map = facts.viewportRect,button = OriginalBattleLayout.rect(facts.functionButton)
         context.setFillColor(CanvasTheme.background);context.fill(CGRect(x:0,y:0,width:640,height:400))
         context.setFillColor(CGColor(gray:0,alpha:1));context.fill(map)
-        if functionOpen { context.setFillColor(CanvasTheme.selection);context.fill(button) }
-        label("기능",in:CGRect(x:button.minX,y:button.minY+1.5,width:button.width,height:14),font:CanvasTheme.font(10,.semibold),color:CanvasTheme.accent,alignment:.center)
+        // The function button reads as a button: a pill that lights while its menu is open.
+        let pill = button.insetBy(dx:5,dy:2)
+        CanvasTheme.fill(pill,functionOpen ? CanvasTheme.accentFill : CanvasTheme.selection,radius:pill.height/2,in:context)
+        label("기능",in:CGRect(x:pill.minX,y:pill.minY,width:pill.width,height:pill.height),font:CanvasTheme.font(9,.semibold),
+              color:functionOpen ? CanvasTheme.onAccent : CanvasTheme.accent,alignment:.center)
         label(session.definition.name ?? session.definition.id,in:CGRect(x:button.maxX,y:1.5,width:map.width-button.width*2,height:14),font:CanvasTheme.font(10,.medium),alignment:.center)
         label("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(weatherName)",
               in:CGRect(x:map.maxX-120,y:1.5,width:114,height:14),font:CanvasTheme.font(10),color:CanvasTheme.muted,alignment:.right)
@@ -832,6 +835,42 @@ final class OriginalBattleView:NSView {
         if listTopLimit > 0 {
             let track = OriginalBattleLayout.rect(facts.track),height = track.height*CGFloat(facts.rows)/CGFloat(rows.count)
             CanvasTheme.fill(CGRect(x:track.minX,y:track.minY+(track.height-height)*CGFloat(listTop)/CGFloat(listTopLimit),width:track.width,height:height),CanvasTheme.hairline,radius:1.5,in:context)
+        }
+        drawUnitCard(CGRect(x:CGFloat(facts.rect[0]),y:CGFloat(facts.rect[1]+facts.rect[3])+6,width:CGFloat(facts.rect[2]),height:104),context)
+    }
+    private static let troopTint = CGColor(red:0.40,green:0.80,blue:0.55,alpha:1)
+    /// The engine sidebar's card for the inspected, selected or hovered unit:
+    /// portrait, name, class and level, then troops, MP, morale and experience.
+    private func drawUnitCard(_ card:CGRect,_ context:CGContext) {
+        CanvasTheme.fill(card,CanvasTheme.inset,radius:CanvasTheme.radius,in:context)
+        guard let slot = inspected ?? selected ?? hovered,let unit = session.units[slot],let person = try? session.people.person(unit.person) else {
+            label("부대를 고르거나 가리키면\n능력이 여기에 보입니다.",in:card.insetBy(dx:12,dy:34),font:CanvasTheme.font(10.5),color:CanvasTheme.muted,alignment:.center)
+            return
+        }
+        let face = CGRect(x:card.minX+6,y:card.minY+6,width:34,height:42)
+        if let picture = portraitImage?(unit.person) {
+            context.saveGState();CanvasTheme.rounded(face,4,in:context);context.clip()
+            Renderer.image(picture,in:face,context:context);context.restoreGState()
+        } else { CanvasTheme.fill(face,CanvasTheme.hairline,radius:4,in:context) }
+        let textX = face.maxX+8,textWidth = card.maxX-textX-6
+        label(person.name,in:CGRect(x:textX,y:card.minY+7,width:textWidth,height:17),font:CanvasTheme.font(12.5,.semibold),
+              color:unit.status == 2 ? color(OriginalBattleRoster.nameColor(unit)) : CanvasTheme.disabled)
+        label("\(className(person.classID)) · Lv \(person.level)",in:CGRect(x:textX,y:card.minY+26,width:textWidth,height:15),font:CanvasTheme.font(10),color:CanvasTheme.muted)
+        let troops = (try? OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:session.combat)) ?? 0
+        let mp = (try? OriginalCombat.maxMP(stats:session.people.stats(unit.person,morale:100))) ?? 0
+        let gauge = OriginalBattleGauge(current:person.rawTroops,maximum:troops,width:100)
+        let troopTint = gauge.tile == "high" ? Self.troopTint : gauge.tile == "middle" ? CanvasTheme.accentFill : CanvasTheme.danger.cgColor
+        let rows:[(String,Int,Int,CGColor)] = [("병력",person.rawTroops,troops,troopTint),("MP",Int(unit.mp),mp,CGColor(red:0.45,green:0.66,blue:0.98,alpha:1)),
+                                              ("사기",Int(unit.morale),100,CanvasTheme.accentFill),("경험",person.experience,100,CGColor(red:0.72,green:0.58,blue:0.96,alpha:1))]
+        for (index,row) in rows.enumerated() {
+            let y = card.minY+54+CGFloat(index)*12.5
+            label(row.0,in:CGRect(x:card.minX+8,y:y,width:30,height:12),font:CanvasTheme.font(9.5,.medium),color:CanvasTheme.muted)
+            let bar = CGRect(x:card.minX+38,y:y+5,width:card.width-88,height:3.5)
+            CanvasTheme.fill(bar,CanvasTheme.hairline,radius:1.75,in:context)
+            let part = row.2 > 0 ? min(1,CGFloat(row.1)/CGFloat(row.2)) : 0
+            if part > 0 { CanvasTheme.fill(CGRect(x:bar.minX,y:bar.minY,width:max(3.5,bar.width*part),height:bar.height),row.3,radius:1.75,in:context) }
+            label(row.0 == "사기" || row.0 == "경험" ? "\(row.1)" : "\(row.1)/\(row.2)",in:CGRect(x:bar.maxX+4,y:y,width:card.maxX-bar.maxX-10,height:12),
+                  font:CanvasTheme.number(9),color:CanvasTheme.text,alignment:.right)
         }
     }
     private func drawFrame(_ context:CGContext) {
@@ -999,7 +1038,8 @@ final class OriginalBattleView:NSView {
             CanvasTheme.chip("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(weatherName)",
                              at:CGPoint(x:map.minX+8,y:map.minY+18),centered:false,maximumWidth:width,in:context)
         }
-        var detail = (inspected ?? selected ?? hovered).flatMap(unitDetails) ?? ""
+        // The engine sidebar has a unit card; the original frames keep the chip.
+        var detail = presentation == .modern ? "" : (inspected ?? selected ?? hovered).flatMap(unitDetails) ?? ""
         if let choice = strategySelection {
             if choice.abilityID >= 30 {detail = "범위 대상 · Enter: 확인 · Esc: 취소"}
             else if let slot = choice.targetSlot,let unit = session.units[slot],let person = try? session.people.person(unit.person) {

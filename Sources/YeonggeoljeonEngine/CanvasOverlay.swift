@@ -143,7 +143,7 @@ final class CanvasOverlayView:NSView {
     private func noticeRect(_ value:CanvasNotice) -> CGRect {
         guard value.portrait == nil,value.speaker.isEmpty,!value.narration else {
             let width = min(viewport.width-16,540)
-            let height = value.narration ? max(72,textHeight(value.text,width:width-40)+28) : 104
+            let height = value.narration && value.portrait == nil ? max(72,textHeight(value.text,width:width-40)+28) : 104
             return CGRect(x:viewport.midX-width/2,y:viewport.maxY-8-height,width:width,height:height)
         }
         // A plain refusal is a small card in the middle of the map window.
