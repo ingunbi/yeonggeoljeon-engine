@@ -98,6 +98,8 @@ struct OriginalSettingsTexts: Codable, Equatable {
     var listen: [String]
     var songs: [String]
     var effects: [String]
+    /// 소, 중, 대, 극대 (DS:2FEC); absent in data exported before it.
+    var scroll: [String]? = nil
 }
 
 struct OriginalFrameworkPrompts: Codable, Equatable {

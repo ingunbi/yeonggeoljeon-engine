@@ -221,6 +221,11 @@ final class OriginalCampaignHost {
         if pendingTurnHook != nil { _ = try continueTurnHook() }
         try controllerAutomaticTick()
     }
+    /// Engine input: look around an idle world map (MAIN's scroll unit steps).
+    @discardableResult func scrollWorld(dx:Int,dy:Int,step:Int) -> Bool {
+        guard explorationInputReady,vm.state.packedMap>>12 == 1 else { return false }
+        return stage.scrollWorld(dx:dx,dy:dy,step:step)
+    }
     func choose(_ index:Int) throws {
         guard choice != nil else { throw EngineError.invalid("No original campaign choice is pending") }
         try vm.choose(index:index);choice = nil;try pump()

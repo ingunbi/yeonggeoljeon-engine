@@ -306,6 +306,10 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             }
         }
         guard !overlay.active,errorText == nil else { return }
+        if let edge = edgeScroll {
+            edgeTicks += 1
+            if edgeTicks >= 4 { edgeTicks = 0;scrollWorld(edge.dx,edge.dy) }
+        } else { edgeTicks = 0 }
         do {
             let rate = fastForward ? Double(OriginalBattleView.fastRate) : 1
             battleView?.duelStage = host.duelStage
@@ -792,9 +796,9 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     }
     private func openFieldMenu(at point:CGPoint) {
         let labels = host.framework?.fieldMenu?.items.map(\.text) ?? OriginalFieldMenuTexts.actions
-        // Scroll sets the mouse's edge-scroll step, which the engine's maps do not use.
+        // Scroll sets the world map's edge-scroll step (see edgeScroll).
         let options = labels.enumerated().map { CanvasMenu.Option(label:$0.element,
-            enabled:OriginalFieldMenuTexts.actions[$0.offset] != "scroll" && (host.framework?.settings != nil || ["quit","load","save"].contains(OriginalFieldMenuTexts.actions[$0.offset]))) }
+            enabled:host.framework?.settings != nil || ["quit","load","save"].contains(OriginalFieldMenuTexts.actions[$0.offset])) }
         overlay.show(CanvasMenu(title:"",options:options,cancellable:true,anchor:point) { [weak self] index in
             guard let self = self,let index = index else { return }
             self.fieldMenuChosen(OriginalFieldMenuTexts.actions[index])
@@ -803,7 +807,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private func fieldMenuChosen(_ action:String) {
         guard host.fieldMenuReady else { return }
         switch action {
-        case "speed","monitor","bgm","sound","volume","music-time":openSetting(action) { }
+        case "scroll","speed","monitor","bgm","sound","volume","music-time":openSetting(action) { }
         case "quit":
             yesNo(host.framework?.fieldMenu?.quitConfirm.text ?? "게임을 종료할까요?") { [weak self] yes in
                 guard yes,let self = self else { return }
@@ -823,6 +827,10 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         let labels:[String],current:Int,apply:(Int) -> Void
         switch action {
         case "speed":labels = texts.speed;current = value.speed;apply = { value.speed = $0 }
+        case "scroll":
+            // MAIN22832: 소 to 극대 move the world view 1, 2, 4 or 8 tiles a step.
+            let steps = OriginalSettings.scrollSteps
+            labels = texts.scroll ?? steps.map { "\($0)" };current = steps.firstIndex(of:value.scroll) ?? 0;apply = { value.scroll = steps[$0] }
         case "monitor":labels = texts.monitor;current = value.monochrome ? 1 : 0;apply = { value.monochrome = $0 == 1 }
         case "bgm":labels = texts.onOff;current = OriginalAudio.musicEnabled ? 0 : 1;apply = { OriginalAudio.musicEnabled = $0 == 0 }
         case "sound":labels = texts.onOff;current = OriginalAudio.effectsEnabled ? 0 : 1;apply = { OriginalAudio.effectsEnabled = $0 == 0 }
@@ -1064,6 +1072,8 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         if screenPlayer != nil { screenInput(escape:event.keyCode == 53);return }
         if fading { return }
         if event.keyCode == 53 || host.frameworkReturn?.outcome == .quit { window?.performClose(nil);return }
+        let arrows:[UInt16:(Int,Int)] = [123:(-1,0),124:(1,0),125:(0,1),126:(0,-1)]
+        if let step = arrows[event.keyCode],host.vm.state.packedMap>>12 == 1,host.explorationInputReady,!overlay.active { scrollWorld(step.0,step.1);return }
         if [36,49,76].contains(event.keyCode),!event.isARepeat {
             inputNotice = nil
             if !host.hasStarted { presentTitleMenu();needsDisplay = true;return }
@@ -1096,13 +1106,31 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect:bounds,options:[.mouseMoved,.mouseEnteredAndExited,.activeInKeyWindow,.inVisibleRect],owner:self))
     }
+    /// The world map scrolls while the pointer rests at the map window's edge
+    /// (MAIN's eight scroll directions, seg0:4F8E); arrows scroll a step too.
+    private var edgeScroll:(dx:Int,dy:Int)?
+    private var edgeTicks = 0
+    private func edgeDirection(_ p:CGPoint) -> (dx:Int,dy:Int)? {
+        // The modern map fills the canvas, so the letterbox beyond it counts as
+        // edge; in original frames only the map window does, not the side panel.
+        let area = modernField ? CGRect(x:0,y:0,width:640,height:400) : CanvasFieldMap.viewport,margin:CGFloat = 12
+        guard modernField || area.contains(p) else { return nil }
+        let dx = p.x < area.minX+margin ? -1 : p.x > area.maxX-margin ? 1 : 0
+        let dy = p.y < area.minY+margin ? -1 : p.y > area.maxY-margin ? 1 : 0
+        return dx == 0 && dy == 0 ? nil : (dx,dy)
+    }
+    private func scrollWorld(_ dx:Int,_ dy:Int) {
+        if host.scrollWorld(dx:dx,dy:dy,step:settings.scroll) { needsDisplay = true }
+    }
     override func mouseMoved(with event:NSEvent) {
+        let world = host.explorationInputReady && host.vm.state.packedMap>>12 == 1 && !overlay.active && !fading
+        edgeScroll = world ? edgeDirection(CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil))) : nil
         guard host.explorationInputReady,[0,2].contains(host.vm.state.packedMap>>12),!overlay.active,!fading else { hoveredPerson = nil;return }
         var p = CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil))
         if modernField { p = CanvasFieldMap.mapPoint(canvas:p) }
         hoveredPerson = talkTarget(at:p).map(\.person)
     }
-    override func mouseExited(with event:NSEvent) { hoveredPerson = nil }
+    override func mouseExited(with event:NSEvent) { hoveredPerson = nil;edgeScroll = nil }
     private func drawHoverTag(in context:CGContext) {
         guard let person = hoveredPerson,host.explorationInputReady,!overlay.active,let actor = host.stage.actors[person],
               (0..<384).contains(person),let name = try? host.people.person(person).name,!name.isEmpty else { return }

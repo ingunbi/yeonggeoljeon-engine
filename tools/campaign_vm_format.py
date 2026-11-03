@@ -170,6 +170,7 @@ def field_menu(main: bytes) -> dict:
 
 # Selector tables of far pointers, in DS (MAIN22832..22C54, 27DC4..27E7B).
 SETTINGS_TABLES = {"speed": (0x3464, 4), "monitor": (0x303A, 2), "onOff": (0x3008, 2), "show": (0x3B44, 2),
+                   "scroll": (0x2FEC, 4),
                    "moveSpeed": (0x3B64, 5), "listen": (0x343C, 2), "songs": (0x312E, 20), "effects": (0x3364, 43)}
 
 

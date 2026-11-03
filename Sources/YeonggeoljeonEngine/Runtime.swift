@@ -349,6 +349,15 @@ final class Runtime {
         followPerson = nil
         var command = Command("world-camera",x:x,y:y);command.source = source;record(cursor,command)
     }
+    /// Engine input over MAIN's world scroll (seg0:4F8E): the view moves `step`
+    /// tiles in each axis toward (dx, dy) and stops at the map's edge. Only an
+    /// idle world stage scrolls; the next followed move recentres it.
+    @discardableResult func scrollWorld(dx:Int,dy:Int,step:Int) -> Bool {
+        guard hostWaiting,let map = currentMap,map.geometry == "world",map.width/16 >= 32,map.height/16 >= 20 else { return false }
+        let x = min(max(0,camera[0]/16+dx*step),map.width/16-32),y = min(max(0,camera[1]/16+dy*step),map.height/16-20)
+        guard [x*16,y*16] != camera else { return false }
+        camera = [x*16,y*16];return true
+    }
     func worldFollow(person:Int,source:JSONValue?) throws {
         guard hostDriven,currentMap?.geometry == "world" else { throw EngineError.invalid("Original world follow requires its world map") }
         // MAIN2259C leaves the previous follow identity unchanged on lookup failure.

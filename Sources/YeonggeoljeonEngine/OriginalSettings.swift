@@ -17,6 +17,24 @@ struct OriginalSettings:Codable,Equatable {
     var monochrome = false
     /// Engine addition: one output level for the single chip.
     var volume:Float = 1
+    /// 소 to 극대: tiles the world map moves a scroll step (player +11,
+    /// MAIN22832; the new-game template holds 1).
+    var scroll = 1
+    static let scrollSteps = [1,2,4,8]
+
+    private enum CodingKeys:String,CodingKey { case speed,moveSpeed,unitCombat,enemyMove,monochrome,volume,scroll }
+    init() {}
+    /// Settings stored by an older build keep their values; a missing key takes its default.
+    init(from decoder:Decoder) throws {
+        let values = try decoder.container(keyedBy:CodingKeys.self),blank = OriginalSettings()
+        speed = try values.decodeIfPresent(Int.self,forKey:.speed) ?? blank.speed
+        moveSpeed = try values.decodeIfPresent(Int.self,forKey:.moveSpeed) ?? blank.moveSpeed
+        unitCombat = try values.decodeIfPresent(Int.self,forKey:.unitCombat) ?? blank.unitCombat
+        enemyMove = try values.decodeIfPresent(Bool.self,forKey:.enemyMove) ?? blank.enemyMove
+        monochrome = try values.decodeIfPresent(Bool.self,forKey:.monochrome) ?? blank.monochrome
+        volume = try values.decodeIfPresent(Float.self,forKey:.volume) ?? blank.volume
+        scroll = try values.decodeIfPresent(Int.self,forKey:.scroll).flatMap { Self.scrollSteps.contains($0) ? $0 : nil } ?? blank.scroll
+    }
 
     private static let key = "originalSettings"
     static var current:OriginalSettings {

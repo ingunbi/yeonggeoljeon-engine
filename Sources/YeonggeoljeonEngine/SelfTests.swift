@@ -90,6 +90,24 @@ func selfTests() throws {
     try check(fading.trace.contains { $0.operation == "caption" && $0.textSource != nil },"caption provenance survives the runtime")
     fading.advance(microseconds:100_000)
     try check(fading.verifiedBoundary && fading.blackAlpha == 1,"fade completes at the exact boundary")
+    // seg0:4F8E moves the world view by the scroll step and clamps it to the map.
+    var world = map
+    world.width = 1024;world.height = 640;world.geometry = "world"
+    let scrolling = Runtime(try data([]),hostDriven:true)
+    scrolling.acknowledge()
+    try scrolling.configureMap(4097,resource:world,actors:nil)
+    try check(!scrolling.scrollWorld(dx:1,dy:0,step:1),"a stage without a world map does not scroll")
+    try scrolling.enqueue([Command("map",map:4097)])
+    scrolling.advance(microseconds:Runtime.screenFadeMicroseconds)
+    try check(scrolling.scrollWorld(dx:1,dy:1,step:8) && scrolling.camera == [128,128],"a step moves the view that many tiles")
+    try check(scrolling.scrollWorld(dx:1,dy:1,step:64) && scrolling.camera == [512,320],"the view stops at the map's far edge")
+    try check(!scrolling.scrollWorld(dx:1,dy:0,step:1) && scrolling.scrollWorld(dx:-1,dy:-1,step:64) && scrolling.camera == [0,0],
+              "a clamped step reports no move, and the near edge clamps too")
+    let older = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"speed":3,"monochrome":true}"#.utf8))
+    let stepped = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"scroll":4}"#.utf8))
+    let uneven = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"scroll":3}"#.utf8))
+    try check(older.speed == 3 && older.monochrome && older.scroll == 1 && stepped.scroll == 4 && uneven.scroll == 1,
+              "stored settings without a scroll step keep their values; only 1, 2, 4 and 8 are steps")
     // MAIN24BD6 places the merchant by palace room type (DS:3838), not by index.
     var merchant = OriginalShopCatalog.Merchant(person:374,x:15,y:11,sourceFacing:4,music:15)
     try check(!merchant.hosts(palaceIndex:10),"without the type table no room hosts the merchant")
