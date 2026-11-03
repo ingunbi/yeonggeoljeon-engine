@@ -40,15 +40,23 @@ PARTICLES = {
     "sale": {"switch": 0x369BD, "table": 0x369C2, "final": (0x36A3F, 0x36A45, 0x565D), "open": (0x36A34, 0x36A3A, 0x5666)},
 }
 SWITCH_FIRST, SWITCH_COUNT = 6, 57
+MAIN_DATA = 0x37DA0
+# DS:3838: the type of each of the 23 palace maps (0x2000..0x2016).
+ROOM_TYPES, ROOM_COUNT = 0x3838, 23
 CODE_CHECKS = {
     "stock base": (0x36B5D, b"\x81\xc6\xa2\x56"),
     "merchant placement": (0x24BE6, b"\x6a\x04\xb8\x76\x03\xb2\x0f\xb3\x0b"),
     "shop music": (0x24BDC, b"\x6a\x0f\x68\xee\x66"),
     "room key": (0x24BD6, b"\x80\x7e\xff\x07"),
+    # 0x24A4E..0x24A63: [bp-1] = DS:3838[CF5:ACE8(game)], the room *type* of
+    # palace index game+6; the key above compares that type, not the index.
+    "room type": (0x24A56, b"\x9a\xe8\xac\xf5\x0c\x8a\xd8\x2a\xff\x8a\x87\x38\x38\x88\x46\xff"),
     "town chapter": (0x24BFE, b"\x3c\x03"),
     "town city": (0x24C0A, b"\x3c\x0b"),
     "special town music": (0x24C0E, b"\xb9\x01\x00"),
     "town music": (0x24C13, b"\xb9\x05\x00"),
+    # 0x20F01: a default world entry starts song 5 before the default spawn.
+    "world music": (0x20F01, b"\x6a\x05\x68\xee\x66\x9a\x0a\x60\xf5\x0c"),
     "top menu": (0x36BCF, b"\xb8\xe8\x00\xba\x80\x00\x8d\x1e\x1c\x59"),
     "item menu": (0x36337, b"\x6a\x08\x50\x50\x50\x50\xb8\xa0\x01\xba\x60\x00"),
     "description window": (0x362BB, b"\x68\x80\x00"),
@@ -138,8 +146,10 @@ def extract(main: bytes, bak: bytes) -> dict:
         "format": 1,
         "stock": stock_rows(main),
         "prices": [bak[ITEM_BASE + i * ITEM_STRIDE + PRICE_BYTE] for i in range(ITEM_COUNT)],
-        "merchant": {"person": 374, "x": 0x0F, "y": 0x0B, "sourceFacing": 4, "music": 0x0F},
+        "merchant": {"person": 374, "x": 0x0F, "y": 0x0B, "sourceFacing": 4, "music": 0x0F,
+                     "roomType": 7, "roomTypes": list(main[MAIN_DATA + ROOM_TYPES:MAIN_DATA + ROOM_TYPES + ROOM_COUNT])},
         "townMusic": {"normal": 5, "special": 1, "chapter": 3, "city": 0x0B},
+        "worldMusic": 5,
         "menu": menu,
         "texts": texts,
         "particles": particles,

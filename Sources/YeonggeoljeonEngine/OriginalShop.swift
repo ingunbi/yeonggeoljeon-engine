@@ -3,7 +3,16 @@ import Foundation
 
 /// Local shop facts exported by tools/prepare_shop.py from MAIN and BAKDATA.
 struct OriginalShopCatalog:Codable {
-    struct Merchant:Codable { var person:Int; var x:Int; var y:Int; var sourceFacing:Int; var music:Int }
+    /// MAIN24BD6 spawns the merchant and starts its song in a palace map whose
+    /// type DS:3838[index] equals `roomType` (indices 10 and 11).
+    struct Merchant:Codable {
+        var person:Int; var x:Int; var y:Int; var sourceFacing:Int; var music:Int
+        var roomType:Int? = nil; var roomTypes:[Int]? = nil
+        func hosts(palaceIndex index:Int) -> Bool {
+            guard let key = roomType,let types = roomTypes,types.indices.contains(index) else { return false }
+            return types[index] == key
+        }
+    }
     struct TownMusic:Codable { var normal:Int; var special:Int; var chapter:Int; var city:Int }
     struct Particles:Codable { var price:[String]; var receiver:[String]; var sale:[String] }
     struct Texts:Codable {
@@ -24,6 +33,8 @@ struct OriginalShopCatalog:Codable {
     var prices:[Int]
     var merchant:Merchant
     var townMusic:TownMusic
+    /// MAIN20F01: a default world entry starts this song.
+    var worldMusic:Int? = nil
     var menu:[String]
     var texts:Texts
     var particles:Particles

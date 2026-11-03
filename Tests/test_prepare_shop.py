@@ -98,6 +98,12 @@ class OriginalShopConformanceTests(unittest.TestCase):
             self.assertEqual(len(result["stock"]), STOCK_ROWS)
             self.assertEqual(len(result["prices"]), 64)
             self.assertEqual(result["merchant"]["person"], 374)
+            # MAIN24BD6 compares the room type DS:3838[index], so the merchant
+            # stands in palace rooms 10 and 11 only.
+            types = result["merchant"]["roomTypes"]
+            self.assertEqual(len(types), 23)
+            self.assertEqual([i for i, t in enumerate(types) if t == result["merchant"]["roomType"]], [10, 11])
+            self.assertEqual(result["worldMusic"], 5)
             self.assertEqual({len(words) for words in result["particles"].values()}, {64})
             self.assertTrue(all(item not in (0xFF,) for row in result["stock"] for item in row))
             self.assertTrue(result["source"]["originalFilesPreserved"])

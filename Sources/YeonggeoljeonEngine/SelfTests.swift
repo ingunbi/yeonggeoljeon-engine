@@ -90,6 +90,12 @@ func selfTests() throws {
     try check(fading.trace.contains { $0.operation == "caption" && $0.textSource != nil },"caption provenance survives the runtime")
     fading.advance(microseconds:100_000)
     try check(fading.verifiedBoundary && fading.blackAlpha == 1,"fade completes at the exact boundary")
+    // MAIN24BD6 places the merchant by palace room type (DS:3838), not by index.
+    var merchant = OriginalShopCatalog.Merchant(person:374,x:15,y:11,sourceFacing:4,music:15)
+    try check(!merchant.hosts(palaceIndex:10),"without the type table no room hosts the merchant")
+    merchant.roomType = 7;merchant.roomTypes = [0,0,1,1,1,1,3,3,5,5,7,7,8]
+    try check(merchant.hosts(palaceIndex:10) && merchant.hosts(palaceIndex:11) && !merchant.hosts(palaceIndex:7) && !merchant.hosts(palaceIndex:40),
+              "type seven rooms host the merchant, room seven does not")
     // MAIN's glyphs (CF5:0A2E, 0D44): a syllable is two columns of 14 rows, a byte one of 16.
     var hangul = Data(count:3478*30),ascii = Data(count:96*16)
     hangul[1128*30+2] = 0x80;hangul[1128*30+3] = 0x01

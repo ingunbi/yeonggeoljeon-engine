@@ -459,8 +459,7 @@ final class OriginalCampaignHost {
     /// player at the current city (MAIN20B46); settlement entry places player
     /// 0200 at the game position (MAIN2464A..24691), then replays the cache
     /// (MAIN24C6A). Between them MAIN24BD6..24C1A selects the entry music and
-    /// puts the merchant in palace room seven.
-    private static let shopRoom = 0x2007
+    /// puts the merchant in a palace whose type is seven (DS:3838, rooms 10 and 11).
     private func enterNativeMap(packedMap:Int,spawn:GridPoint?,sourceFacing:Int) throws {
         let kind = packedMap>>12
         guard [0,1,2].contains(kind),(0...0xFFFF).contains(packedMap) else {
@@ -476,6 +475,7 @@ final class OriginalCampaignHost {
         } else { throw EngineError.invalid("Original room/palace map \(packedMap) is unavailable") }
         try stage.enqueue([Command("map",map:packedMap)])
         if kind == 1 {
+            if let music = shopCatalog.worldMusic { try vm.setSourceMusic(selection:music) }
             let boot = try OriginalExplorationInput.worldBootstrap(catalog:exploration,state:vm.state,entry:.nativeCityDefault,rng:rng)
             try stage.enqueue(boot.commands);rng = boot.rngAfter
         } else {
@@ -486,7 +486,7 @@ final class OriginalCampaignHost {
             if kind == 0 {
                 let music = shopCatalog.townMusic
                 try vm.setSourceMusic(selection:vm.state.chapter == music.chapter && vm.state.currentCity == music.city ? music.special : music.normal)
-            } else if packedMap == Self.shopRoom {
+            } else if shopCatalog.merchant.hosts(palaceIndex:packedMap&0xFF) {
                 let merchant = shopCatalog.merchant
                 try vm.setSourceMusic(selection:merchant.music)
                 if try people.person(merchant.person).sourceFlags&0x80 != 0 {
