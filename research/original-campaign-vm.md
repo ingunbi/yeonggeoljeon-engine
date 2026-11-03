@@ -1,177 +1,173 @@
-# Original campaign execution
+# 원작 캠페인 실행
 
-The native `CampaignVM` is separate from the explicit-record research browser.
-Its producer is `campaign_vm_format.py`, called by `prepare_campaign.py`.
-Only the producer reads original operands, text, condition descriptors and skip
-tables. Local `campaign.json` includes its typed `vmProgram`; it is not public
-engine content.
+네이티브 `CampaignVM`은 명시적 레코드 연구 브라우저와 분리되어 있다.
+생성기는 `campaign_vm_format.py`이며 `prepare_campaign.py`가 호출한다.
+원작 피연산자, 텍스트, 조건 기술자, 건너뛰기 표는 생성기만 읽는다. 로컬
+`campaign.json`에는 타입이 지정된 `vmProgram`이 들어 있으며, 이는 공개 엔진
+콘텐츠가 아니다.
 
-Static observations from the examined Korean DOS/V MAIN profile establish:
+검토한 한국어 DOS/V MAIN 프로파일의 정적 관찰로 다음을 확인했다.
 
-- A context begins at chapter/member/block/phase zero with 32 zero flag bytes
-  (`0x1B56C..0x1B5BE`). Flags are MSB first (`0x1D934..0x1D966`).
-- Descriptor byte one starts a phase. Its first high bit marks a repeating
-  phase; later descriptors join only when their complete byte equals the first
-  byte masked with `0x7F` (`0x1B37A..0x1B3D3`).
-- Event wrappers scan only the current phase in source descriptor order.
-  Descriptor byte zero's high bit inverts its event predicate. Raw kind one is
-  the wrapper fallback (`0x1BB4E..0x1BBB5`).
-- A repeated automatic phase can consume its leading conditional instruction
-  in predicate-only mode before selecting a record (`0x1D9D8..0x1DA20`).
-- `FF` advances a nonrepeating phase and retains a repeating phase. Phase EOF
-  advances block then member; it does not invent a next chapter or an ending
+- 컨텍스트는 장/멤버/블록/페이즈 0에서 시작하며 32개의 0 플래그 바이트를
+  가진다(`0x1B56C..0x1B5BE`). 플래그는 MSB 우선이다(`0x1D934..0x1D966`).
+- 기술자 바이트 1이 페이즈를 시작한다. 첫 기술자의 최상위 비트는 반복
+  페이즈를 표시한다. 이후 기술자는 바이트 전체가 첫 바이트를 `0x7F`로 마스크한
+  값과 같을 때에만 합류한다(`0x1B37A..0x1B3D3`).
+- 이벤트 래퍼는 현재 페이즈만 원작 기술자 순서대로 탐색한다. 기술자 바이트
+  0의 최상위 비트는 이벤트 술어를 반전한다. 원시 종류 1은 래퍼의 대체
+  경로다(`0x1BB4E..0x1BBB5`).
+- 반복되는 자동 페이즈는 레코드를 선택하기 전에 앞머리의 조건 명령어를 술어
+  전용 모드로 소비할 수 있다(`0x1D9D8..0x1DA20`).
+- `FF`는 비반복 페이즈를 진행시키고 반복 페이즈는 유지한다. 페이즈 EOF는
+  블록을, 그다음 멤버를 진행시킨다. 다음 장이나 엔딩을 지어내지 않는다
   (`0x1D0C4..0x1D0EB`, `0x1D8B8..0x1D8FA`, `0x1DC98..0x1DCC6`).
-- `0F` selects a block, `12` advances chapter and resets member/block/phase,
-  `13` explicitly advances phase, and `14` sets or clears a flag from two
-  separate bytes. Selector zero sets a flag; nonzero clears it.
-- `15` compares the source selector result and conditionally skips subsequent
-  instructions. `21` requires all positive flags and no negative flags. `25`
-  selects descriptor `phaseBase + choiceIndex + 1`, keeping the phase base.
-- `00` followed immediately by `15` defers its dialogue to the selector UI;
-  it does not first speak the same question. Consecutive `01` movements are
-  queued as one actor batch before the source waits for movement completion.
-- Execution framing and the original instruction-skip walker are different.
-  The narrower skipped `1D` and the skipped `21` length handling are retained.
-  A skip landing inside an execution operand is an explicit unsupported
-  boundary, only when that path is actually taken.
-- `24` writes person byte `1C` as `(old & E0) | (value & 1F)`
-  (`0x15AE6..0x15B01`, `0x15B78..0x15B8D`). `2F` writes person byte `2B`
-  (`0x204DC..0x20503`, `0x209F6..0x20A03`). The native person-state owner
-  applies these effects; the VM does not infer a faction from a display label.
-- `3D` invokes the original save confirmation flow (`0x22A62..0x22AA1`).
-  `0E` retains the last selector character in ASCII `30..41`, rather than
-  parsing a decimal number (`0x18106..0x181D0`).
-- `36` captures a retry checkpoint: script context and placements, referenced
-  person state, and player state (`0x1D00C..0x1D026`, `0x1B79A..0x1B93A`,
-  `0x1E6AA..0x1E700`, `0x1AC60..0x1AD08`). The current source cursor already
-  follows opcode `36` when that context is saved. `1E` clears only the script
-  actor cache and its dirty marker (`0x1DBDC..0x1DBFF`); that helper does not
-  directly remove the currently displayed runtime actors.
+- `0F`는 블록을 선택하고, `12`는 장을 진행시키며 멤버/블록/페이즈를
+  초기화하고, `13`은 명시적으로 페이즈를 진행시키며, `14`는 별개의 두 바이트로
+  플래그를 설정하거나 해제한다. 선택자가 0이면 플래그를 설정하고, 0이 아니면
+  해제한다.
+- `15`는 원작 선택자 결과를 비교해 조건에 따라 이후 명령어를 건너뛴다. `21`은
+  모든 긍정 플래그가 켜져 있고 부정 플래그는 하나도 켜져 있지 않을 것을
+  요구한다. `25`는 페이즈 기준값을 유지한 채 기술자
+  `phaseBase + choiceIndex + 1`을 선택한다.
+- 바로 뒤에 `15`가 오는 `00`은 대사를 선택자 UI로 미룬다. 같은 질문을 먼저
+  말하지 않는다. 연속된 `01` 이동은 하나의 액터 묶음으로 대기열에 들어가고,
+  그다음 원작이 이동 완료를 기다린다.
+- 실행 프레이밍과 원작의 명령어 건너뛰기 순회기는 서로 다르다. 건너뛸 때 더
+  좁게 처리되는 `1D`와 건너뛸 때의 `21` 길이 처리를 유지한다. 건너뛰기가 실행
+  피연산자 내부에 떨어지는 경우는 명시적인 미지원 경계이며, 그 경로가 실제로
+  실행될 때에만 그렇다.
+- `24`는 인물 바이트 `1C`에 `(old & E0) | (value & 1F)`를 쓴다
+  (`0x15AE6..0x15B01`, `0x15B78..0x15B8D`). `2F`는 인물 바이트 `2B`를 쓴다
+  (`0x204DC..0x20503`, `0x209F6..0x20A03`). 이 효과는 네이티브 인물 상태
+  소유자가 적용한다. VM은 표시 라벨에서 세력을 추정하지 않는다.
+- `3D`는 원작의 저장 확인 흐름을 호출한다(`0x22A62..0x22AA1`). `0E`는 10진수를
+  해석하지 않고, ASCII `30..41` 범위의 마지막 선택자 문자를 유지한다
+  (`0x18106..0x181D0`).
+- `36`은 재도전 체크포인트를 기록한다. 스크립트 컨텍스트와 배치, 참조된 인물
+  상태, 플레이어 상태가 그 대상이다(`0x1D00C..0x1D026`, `0x1B79A..0x1B93A`,
+  `0x1E6AA..0x1E700`, `0x1AC60..0x1AD08`). 이 컨텍스트가 저장될 때 현재 원작
+  커서는 이미 명령 `36` 뒤에 있다. `1E`는 스크립트 액터 캐시와 그 더티 표시만
+  지운다(`0x1DBDC..0x1DBFF`). 이 보조 함수는 현재 표시 중인 런타임 액터를 직접
+  제거하지 않는다.
 
-Event numbers remain source identities until call sites establish their host
-meaning. The town actor dispatcher passes a clicked person as kind-three's
-argument (`0x26465..0x26469`). Battle's defeated-person dispatcher compares the
-two enabled objective pairs and routes the first match to kind seven, the
-second to kind eight (`0x1C008..0x1C03D`, `0x2BB2C..0x2BBB1`). No synthetic
-victory flag is inserted by this VM.
+이벤트 번호는 호출 지점이 호스트에서의 의미를 확정할 때까지 원작 식별값으로
+남는다. 마을 액터 디스패처는 클릭한 인물을 종류 3의 인수로 전달한다
+(`0x26465..0x26469`). 전투의 격파 인물 디스패처는 활성화된 두 목표 쌍을
+비교해, 첫 번째 일치는 종류 7로, 두 번째 일치는 종류 8로 보낸다
+(`0x1C008..0x1C03D`, `0x2BB2C..0x2BBB1`). 이 VM은 합성 승리 플래그를 삽입하지
+않는다.
 
-Town actor interaction reaches kind three after approaching the actor and
-setting the participants' facing (`0x26A79..0x26A85`). A town destination
-arrival reads the walk-cell key under the player and calls the settlement
-wrapper with selector two and `[destinationKey,gameCity]` after matching the
-selected destination (`0x25255..0x25288`). World destination arrival first
-writes the new current city and then calls the world wrapper with selector two
-and `[255,newCurrentCity]` (`0x23F3C..0x23F83`, `0x2222B..0x2223C`). Selector
-two reaches `CF5:8346`, which swaps its two arguments before predicate
-`0x1DA24..0x1DA6C`: record kind two matches `[key,city]`, and record kind five
-matches `[city]` only on a world map. Earlier native code dispatched record
-kind four here; kind four is the battle adjacency probe (`CF5:82D6`, called
-from `0x2C1A2`). A click alone does not establish that arrival. The VM exposes
-corresponding typed event constructors.
+마을 액터 상호작용은 액터에게 다가가 참여자들의 방향을 정한 뒤에 종류 3에
+도달한다(`0x26A79..0x26A85`). 마을 목적지 도착은 플레이어 아래의 보행 칸 키를
+읽고, 선택된 목적지와 일치하는지 확인한 뒤 선택자 2와
+`[destinationKey,gameCity]`로 거점 래퍼를 호출한다(`0x25255..0x25288`).
+세계지도 목적지 도착은 먼저 새 현재 도시를 쓰고, 그다음 선택자 2와
+`[255,newCurrentCity]`로 세계지도 래퍼를 호출한다(`0x23F3C..0x23F83`,
+`0x2222B..0x2223C`). 선택자 2는 `CF5:8346`에 도달하며, 이 함수는 술어
+`0x1DA24..0x1DA6C` 전에 두 인수를 맞바꾼다. 레코드 종류 2는 `[key,city]`와
+일치하고, 레코드 종류 5는 세계지도에서만 `[city]`와 일치한다. 이전 네이티브
+코드는 여기서 레코드 종류 4를 디스패치했지만, 종류 4는 전투 인접 조회다
+(`CF5:82D6`, `0x2C1A2`에서 호출). 클릭만으로는 그 도착이 성립하지 않는다. VM은
+이에 대응하는 타입 지정 이벤트 생성자를 제공한다.
 
-The source `15` chooser displays two MARK bitmap buttons, Yes first and No
-second. Their result values are one and zero respectively, independent of
-display order (`0x164A9..0x165C4`). Native options are indexed by result value
-and include presentation order `[1,0]`; `choose(index:)` consumes that source
-result. Original 48×20 button pixels come from MARK member zero offsets
-`1BD0` and `1DB0`. These pixels remain local exported assets.
+원작의 `15` 선택기는 MARK 비트맵 버튼 두 개를 표시하며, Yes가 첫 번째, No가
+두 번째다. 결과 값은 각각 1과 0이며 표시 순서와 무관하다
+(`0x164A9..0x165C4`). 네이티브 선택지는 결과 값으로 인덱싱되며 표시 순서
+`[1,0]`을 포함한다. `choose(index:)`는 그 원작 결과를 소비한다. 원작의 48×20
+버튼 픽셀은 MARK 멤버 0의 오프셋 `1BD0`과 `1DB0`에서 가져온다. 이 픽셀은
+로컬로 내보낸 에셋으로 남는다.
 
-The host preserves one scene runtime across command batches. It completes map
-selections with `acknowledgeMapSelection`, enters actual map contexts with
-`enterMapContext`, presents source choice indices with `choose`, and can
-acknowledge a host action only if that opcode was registered with an actual
-implementation. Original person state, battle placement, inventory and combat
-effects belong to their own parsed models. Program digests bind saved contexts
-to the same original source file set.
+호스트는 커맨드 묶음 사이에서 하나의 장면 런타임을 유지한다. 맵 선택은
+`acknowledgeMapSelection`으로 완료하고, 실제 맵 컨텍스트에는 `enterMapContext`로
+진입하며, 원작 선택 인덱스는 `choose`로 제시한다. 호스트 동작은 그 명령이 실제
+구현과 함께 등록된 경우에만 확인할 수 있다. 원작 인물 상태, 전투 배치, 소지품,
+전투 효과는 각자의 파싱된 모델에 속한다. 프로그램 다이제스트는 저장된
+컨텍스트를 같은 원작 파일 집합에 묶는다.
 
-`cacheActor` is a separate 62-slot source cache operation. Both original place
-and move wrappers update this cache using a matching person or the first free
-physical slot (`0x1D2D4`, `0x1D3D8`, `0x1DC02`). Move sets cache flag bit two;
-the interpreter clears that bit after the actor stops (`0x1C0F7..0x1C14F`).
-The host records a completed movement with `completedMovement: true` and the
-source facing value, which is the script facing multiplied by two. Removal
-invalidates the cached person without compacting slots. Successful native
-execution and source cache ownership remain distinct from on-screen lifetime.
+`cacheActor`는 62슬롯짜리 별도의 원작 캐시 연산이다. 원작의 배치 래퍼와 이동
+래퍼는 모두 일치하는 인물 또는 첫 번째 빈 물리 슬롯을 사용해 이 캐시를
+갱신한다(`0x1D2D4`, `0x1D3D8`, `0x1DC02`). 이동은 캐시 플래그 비트 2를
+설정하고, 인터프리터는 액터가 멈춘 뒤 그 비트를 지운다(`0x1C0F7..0x1C14F`).
+호스트는 완료된 이동을 `completedMovement: true`와 원작 방향 값으로 기록하며,
+이 값은 스크립트 방향에 2를 곱한 것이다. 제거는 슬롯을 압축하지 않고 캐시된
+인물을 무효화한다. 네이티브 실행 성공과 원작 캐시 소유는 화면상의 수명과 계속
+별개다.
 
-Unknown host effects, original text substitutions, native selector input behavior and
-several battle event call sites remain explicit limitations. The original last
-chapter requests an ending with `2A`; exhausting a member is never considered
-campaign completion. Synthetic interpreter tests and complete source framing
-do not establish complete original-runtime or full-campaign parity. Original
-DOS programs are not executed for these checks.
+알려지지 않은 호스트 효과, 원작 텍스트 치환, 네이티브 선택자 입력 동작, 여러
+전투 이벤트 호출 지점은 명시적 한계로 남는다. 원작의 마지막 장은 `2A`로 엔딩을
+요청한다. 멤버를 다 소진한 것은 결코 캠페인 완료로 간주하지 않는다. 합성
+인터프리터 테스트와 완전한 원작 프레이밍은 원작 런타임 전체나 캠페인 전체의
+동등성을 확립하지 않는다. 이 검사를 위해 원작 DOS 프로그램을 실행하지 않는다.
 
-Message seeks now follow the examined reader directly (`0x1B480..0x1B4F8`).
-The two literal base exceptions receive an additional 64KiB epoch, and the
-relative word is added with 32-bit carry. A descending directory value alone
-does not authorize an inferred wrap. This replaces the earlier monotonic-span
-derivation while preserving the same actual source member spans.
+메시지 시크는 이제 검토한 읽기 함수를 그대로 따른다(`0x1B480..0x1B4F8`). 두
+리터럴 기준값 예외에는 64KiB 에포크가 추가로 붙고, 상대 워드는 32비트
+자리올림으로 더한다. 디렉터리 값이 감소한다는 사실만으로 추정된 랩어라운드를
+허용하지 않는다. 이는 실제 원작 멤버 범위를 그대로 유지하면서 이전의 단조 범위
+유도를 대체한다.
 
-City identities have three source owners: `currentCity` is player7A80+10,
-`gameCity` is Game7A6C+4, and `city` is script context+8. Source2E/CBB4 and world
-arrival write the first two together. The script map selector can change only
-Game+4; `enterMapContext` copies Game+4 into context+8. Native built-in direct
-map-kind/index writes have a different selector contract and retain Game+4.
-`setReturnContext` stores the original7A76 map/coordinate tuple only when its
-producing instruction or room entry does so. World arrival preserves7A76.
-Runtime owns actual arrived coordinates; arrival returns its exact source event
-without skipping the event dispatcher or automatically entering another map.
+도시 식별값에는 원작 소유자가 셋 있다. `currentCity`는 player7A80+10,
+`gameCity`는 Game7A6C+4, `city`는 스크립트 context+8이다. 원작 2E/CBB4와
+세계지도 도착은 앞의 둘을 함께 쓴다. 스크립트 맵 선택자는 Game+4만 바꿀 수
+있다. `enterMapContext`는 Game+4를 context+8로 복사한다. 네이티브 내장 직접 맵
+종류/인덱스 쓰기는 선택자 계약이 다르며 Game+4를 유지한다.
+`setReturnContext`는 그것을 생성하는 명령어나 방 진입이 그렇게 할 때에만 원작
+7A76 맵/좌표 튜플을 저장한다. 세계지도 도착은 7A76을 보존한다. 실제 도착
+좌표는 Runtime이 소유한다. 도착은 이벤트 디스패처를 건너뛰거나 다른 맵에
+자동으로 진입하지 않고 정확한 원작 이벤트를 반환한다.
 
-`11` changes the script's packed map and calls the battle return helper with
-mode zero, or mode one only when the immediate following opcode is `29`
-(`MAIN 0x1C768`). The helper changes no battle result unless the active game
-palette is three. Under that palette it writes raw result two for mode zero,
-raw result three for modes one/three (`0x336FA..0x33735`). `29` calls mode
-three, selects music four, and immediately returns interpreter status seven
-(`0x1D15E..0x1D176`). These raw values are retained without assigning an
-unverified victory/defeat name.
+`11`은 스크립트의 패킹된 맵을 바꾸고 전투 복귀 보조 함수를 모드 0으로
+호출하며, 바로 다음 명령이 `29`일 때에만 모드 1로 호출한다(`MAIN 0x1C768`). 이
+보조 함수는 활성 게임 팔레트가 3이 아니면 전투 결과를 바꾸지 않는다. 그
+팔레트에서는 모드 0이면 원시 결과 2를, 모드 1/3이면 원시 결과 3을 쓴다
+(`0x336FA..0x33735`). `29`는 모드 3을 호출하고, 음악 4를 선택하고, 곧바로
+인터프리터 상태 7을 반환한다(`0x1D15E..0x1D176`). 이 원시 값들은 검증되지 않은
+승리/패배 이름을 붙이지 않고 그대로 유지한다.
 
-An acknowledged `29` or `2A` produces a persistent VM interpreter-return
-boundary. The next source instruction, including `FF`, is not consumed.
-Original world/town callers translate status seven to map-loop flag `20`,
-status eight to flag four (`0x22250..0x22285`, `0x26491..0x264CA`). The main
-loop routes flag `20` to its retry selector and selects framework return four
-only if accepted (`0x1E556..0x1E605`). Retrying/restarting is an outer program
-operation; a list ending or continuing the abandoned record is not a substitute.
+확인된 `29` 또는 `2A`는 지속되는 VM 인터프리터 반환 경계를 만든다. `FF`를
+포함해 다음 원작 명령어는 소비하지 않는다. 원작의 세계지도/마을 호출자는 상태
+7을 맵 루프 플래그 `20`으로, 상태 8을 플래그 4로 변환한다(`0x22250..0x22285`,
+`0x26491..0x264CA`). 메인 루프는 플래그 `20`을 재도전 선택자로 보내고, 수락된
+경우에만 프레임워크 반환 4를 선택한다(`0x1E556..0x1E605`). 재도전/재시작은
+바깥 프로그램의 동작이다. 목록 종료나 포기한 레코드의 계속 실행은 그 대체물이
+아니다.
 
-Nested source callers can use `queryInvocation` instead of the legacy research
-loop. `.invocationReturn` preserves raw zero/one/two/five statuses without
-running a subsequent automatic record. Movement returns five after batching;
-the pending movement entry may return six in the original wait loop. Native
-asynchronous movement waits are collapsed until the actual movement finishes.
-The next query then resumes the same source cursor. Normal opcode `17` only
-updates automatic mode and continues; the nonzero save-prompt opcode `3D`
-provides the source zero-return continuation. These are distinct producers.
+중첩된 원작 호출자는 기존 연구용 루프 대신 `queryInvocation`을 쓸 수 있다.
+`.invocationReturn`은 이어지는 자동 레코드를 실행하지 않고 원시 상태값
+0/1/2/5를 보존한다. 이동은 묶음 처리 후 5를 반환한다. 대기 중인 이동 항목은
+원작의 대기 루프에서 6을 반환할 수 있다. 네이티브의 비동기 이동 대기는 실제
+이동이 끝날 때까지 하나로 합쳐진다. 그다음 질의는 같은 원작 커서에서 재개한다.
+일반 명령 `17`은 자동 모드만 갱신하고 계속한다. 0이 아닌 저장 질문 명령 `3D`가
+원작의 0 반환 이어가기를 제공한다. 이 둘은 서로 다른 생성기다.
 
-Opcode `20` was initially labeled as an item operation but its host effect was
-unregistered. Source `0x2028E..0x202D7` establishes a city-object flag operation:
-optional list-wide OR one, then clear one for each listed city. The producer
-now emits `city-availability`; no inventory is changed. The city constructor
-or loader supplies the current chapter's flag array via `setCityFlags` and the
-VM owns the subsequent bit operation. Missing city ownership stays an error.
-The optional OR pass covers only the constructed count (`CF5:778E`). The clear
-pass uses lookup `CF5:2118` (`0x15A68..0x15A78`), which indexes the fixed
-32-object array at DS:`CC98` (constructed by `0x1B0B6`) without the chapter
-count. Chapter-one lists name slots up to 31 while that chapter constructs 22
-cities. Those slots are not selectable cities, and each chapter constructor
-rewrites its constructed flags (`0x1B04D`). The VM accepts identities below
-`0x20` and changes only constructed entries. Identities at or above `0x20`
-would use a null object and stay unsupported.
+명령 `20`은 처음에 도구 연산으로 표시되었지만 호스트 효과가 등록되지 않았다.
+원작 `0x2028E..0x202D7`은 이것이 도시 객체 플래그 연산임을 확정한다. 선택적으로
+목록 전체에 1을 OR한 뒤, 나열된 각 도시마다 1을 지운다. 생성기는 이제
+`city-availability`를 내보내며 소지품은 바뀌지 않는다. 도시 생성자나 로더가
+`setCityFlags`로 현재 장의 플래그 배열을 공급하고, 이후의 비트 연산은 VM이
+소유한다. 도시 소유자가 없으면 여전히 오류다. 선택적 OR 단계는 생성된 개수만
+다룬다(`CF5:778E`). 해제 단계는 조회 함수 `CF5:2118`(`0x15A68..0x15A78`)을
+쓰며, 이 함수는 장의 개수 없이 DS:`CC98`의 고정 32객체 배열(`0x1B0B6`이
+생성)을 인덱싱한다. 1장 목록은 슬롯 31까지 이름을 대지만 그 장은 도시 22개를
+생성한다. 그 슬롯들은 선택할 수 있는 도시가 아니며, 각 장의 생성자는 자신이
+생성한 플래그를 다시 쓴다(`0x1B04D`). VM은 `0x20` 미만의 식별값을 받아들이고
+생성된 항목만 바꾼다. `0x20` 이상의 식별값은 널 객체를 사용하게 되므로 미지원으로
+남는다.
 
-## Cell and region predicates
+## 칸과 영역 술어
 
-Kinds six and eleven compare a unit's cell with packed words. Units hold x at
-`+3` and y at `+4` (`1CB6:8422`, `2B982..2BA25`, bounded by DS:`E194`/`E195`),
-and the callers `2C0E2` and `2C126` push person, x, y. So the kind-six word is
-`x<<8|y` (`1DAC1`), and kind eleven reads its high bytes as the x bounds and its
-low bytes as the y bounds (`1DB50..1DBB4`). All 148 such records with a known
-battle size fit their maps this way; only 100 fit the opposite reading.
+종류 6과 11은 부대의 칸을 패킹된 워드와 비교한다. 부대는 x를 `+3`에, y를
+`+4`에 둔다(`1CB6:8422`, `2B982..2BA25`, DS:`E194`/`E195`로 범위 제한). 호출자
+`2C0E2`와 `2C126`은 인물, x, y를 푸시한다. 따라서 종류 6의 워드는 `x<<8|y`이고
+(`1DAC1`), 종류 11은 상위 바이트를 x 범위로, 하위 바이트를 y 범위로 읽는다
+(`1DB50..1DBB4`). 전투 크기가 알려진 이런 레코드 148개는 모두 이 해석으로 맵
+안에 들어맞는다. 반대 해석으로는 100개만 들어맞는다.
 
-## Script item grants
+## 스크립트 도구 지급
 
-Opcode `1B` reaches `CF5:6D9C` (`0x1A6EC`). The first empty slot takes the item and
-says `0x12EF`. A person with eight full slots is asked `0x123A`. No gives up the item
-(`0x12D8`). Yes lists the eight items (`0x128A`): a cancel gives up (`0x12AC`), and a
-choice replaces the first slot holding that id (`0x12C3`). The host stops the script
-for this offer, and the window shows each result before the next instruction. The
-replay driver answers with `{kind:"item-offer",slot}`. A grant inside a battle goes to
-the current event person; elsewhere it goes to person 0.
+명령 `1B`는 `CF5:6D9C`(`0x1A6EC`)에 도달한다. 첫 번째 빈 슬롯이 도구를 받고
+`0x12EF`를 말한다. 슬롯 여덟 개가 모두 찬 인물에게는 `0x123A`를 묻는다. No는
+도구를 포기한다(`0x12D8`). Yes는 도구 여덟 개를 나열한다(`0x128A`). 취소하면
+포기하고(`0x12AC`), 선택하면 그 id를 가진 첫 번째 슬롯을 교체한다(`0x12C3`).
+호스트는 이 제안을 위해 스크립트를 멈추고, 창은 다음 명령어 전에 각 결과를
+보여 준다. 입력 재생 드라이버는 `{kind:"item-offer",slot}`으로 응답한다. 전투
+중의 지급은 현재 이벤트 인물에게 가고, 그 밖에서는 인물 0에게 간다.

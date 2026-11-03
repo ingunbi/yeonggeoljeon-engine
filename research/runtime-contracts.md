@@ -1,48 +1,46 @@
-# Battle and campaign runtime contracts
+# 전투와 캠페인 런타임 계약
 
-The Python exporters own original binary formats. Swift consumes their typed
-facts without reinterpreting original byte offsets. All original-derived data
-and pictures are local build outputs, excluded from the public source tree.
+Python 내보내기 도구가 원작 바이너리 형식을 담당한다. Swift는 원작 바이트
+오프셋을 다시 해석하지 않고 그 타입 지정 사실을 소비한다. 원작에서 도출한
+데이터와 그림은 모두 로컬 빌드 출력이며 공개 소스 트리에서 제외한다.
 
-## Battles
+## 전투
 
-`prepare_battles.py` writes `battles.json`. `BattleCatalog` and `BattleDefinition`
-preserve unknown fields rather than supplying guessed original values. Source
-picture-cell grids, logical battle-cell grids, native placement identities,
-literal person IDs and unknown DOS runtime slots are different representations.
-Conditional roster eligibility stays unresolved in a separate collection.
+`prepare_battles.py`는 `battles.json`을 쓴다. `BattleCatalog`와
+`BattleDefinition`은 원작 값을 추측해 채우지 않고 알려지지 않은 필드를 그대로
+보존한다. 원작 그림 칸 격자, 논리 전투 칸 격자, 네이티브 배치 식별값, 리터럴
+인물 ID, 알려지지 않은 DOS 런타임 슬롯은 서로 다른 표현이다. 조건부 명단 자격은
+별도 컬렉션에 미해결로 남긴다.
 
-`BattleSession` requires an explicit policy. The current `experimentalV1`
-policy uses separate uniform effective stats, unit-cost orthogonal movement,
-prototype damage, deterministic decisions and elimination objectives. None is
-advertised as original combat behavior. The original policy is unsupported.
+`BattleSession`은 명시적 정책을 요구한다. 현재 `experimentalV1` 정책은 별도의
+균일한 유효 능력치, 칸당 비용이 1인 직교 이동, 시제품 피해, 결정적 판단, 섬멸
+목표를 쓴다. 이 중 어느 것도 원작 전투 동작이라고 내세우지 않는다. 원작 정책은
+지원하지 않는다.
 
-The UI renders locally exported source backgrounds with generated unit marks.
-It validates the source32px logical-cell geometry and keeps original image
-paths contained in the chosen data directory. Conditional units are not
-silently treated as absent from the original battle.
+UI는 로컬에서 내보낸 원작 배경에 생성한 부대 표식을 얹어 그린다. 원작의 32px
+논리 칸 기하를 검증하고, 원작 이미지 경로를 선택한 데이터 디렉터리 안에 머물게
+한다. 조건부 부대를 원작 전투에 없는 것으로 조용히 취급하지 않는다.
 
-## Campaigns
+## 캠페인
 
-`scenario_format.py` owns instruction framing and source record directories.
-`prepare_campaign.py` owns the catalog of records and source transitions.
-`prepare_scene.py` owns translation of the currently supported native scene
-effects. A record is an entry point into a block stream; the next record entry
-is not automatically its execution boundary.
+`scenario_format.py`는 명령 프레이밍과 원작 레코드 디렉터리를 담당한다.
+`prepare_campaign.py`는 레코드와 원작 전이의 카탈로그를 담당한다.
+`prepare_scene.py`는 현재 지원하는 네이티브 장면 효과로의 번역을 담당한다.
+레코드는 블록 스트림으로 들어가는 진입점이며, 다음 레코드 진입점이 자동으로 그
+실행 경계가 되지는 않는다.
 
-`CampaignSession` owns explicit research preview selection. Unknown conditions
-block automatic selection; an explicit conditional preview retains a different
-origin. Completing a record does not choose a successor or invent flags.
-Battle requests keep their source identity. Experimental outcomes are retained
-separately and do not become original campaign progress.
+`CampaignSession`은 명시적인 연구용 미리보기 선택을 담당한다. 알려지지 않은
+조건은 자동 선택을 막는다. 명시적인 조건부 미리보기는 다른 출처 표시를 유지한다.
+레코드를 끝내도 후속 레코드를 고르거나 플래그를 지어내지 않는다. 전투 요청은 원작
+식별값을 유지한다. 실험적 결과는 따로 보관하며 원작 캠페인 진행이 되지 않는다.
 
-## Verification
+## 검증
 
-Native reports use the same state machines and renderers as interactive views.
-They distinguish a supported source boundary, a declared unsupported boundary,
-a runtime failure and an unexpected end of stream. Diagnostics use separate
-output directories and do not modify source data or user progress.
+네이티브 보고서는 대화형 화면과 같은 상태 기계와 렌더러를 쓴다. 보고서는 지원하는
+원작 경계, 미지원으로 선언한 경계, 런타임 실패, 예기치 않은 스트림 끝을
+구분한다. 진단은 별도 출력 디렉터리를 쓰며 원작 데이터나 사용자 진행을 수정하지
+않는다.
 
-Coverage counts for framed records, translated previews and native execution
-are separate. A complete directory catalog does not establish full campaign
-playback, original battle parity, or every source branch's reachability.
+프레이밍한 레코드, 번역한 미리보기, 네이티브 실행의 커버리지 수는 따로 센다.
+디렉터리 카탈로그가 완전하다고 해서 캠페인 전체 재생, 원작 전투와의 동등성, 모든
+원작 분기의 도달 가능성이 확인되는 것은 아니다.

@@ -1,83 +1,75 @@
-# Original party selection and preserved deployment
+# 원작 출전 편성과 보존 배치
 
-These are static derivations from the examined original `MAIN.EXE`, not an
-original-runtime comparison. The new code is in `OriginalParty.swift` and uses
-typed people, roster, movement and combat facts. Original table bytes and
-disassembly remain local ignored research outputs.
+이 내용은 조사한 원작 `MAIN.EXE`의 정적 분석이며, 원작 런타임과 비교한 것이
+아니다. 새 코드는 `OriginalParty.swift`에 있으며 타입이 지정된 인물, 명단, 이동,
+전투 사실을 사용한다. 원작 테이블 바이트와 역어셈블 결과는 무시되는 로컬 연구
+출력으로만 남는다.
 
-The battle-header first byte is normalized to a boolean by
-`0x1C427..0x1C42D`. Its native name is `preserveFriendlySlots`: it controls live
-unit carryover, rather than requesting the separate party-selection UI.
-Original setup state contains 45 dense eleven-byte rows. A cleared person word
-does not erase that row's coordinates or other fields.
+전투 헤더의 첫 바이트는 `0x1C427..0x1C42D`에서 불리언으로 정규화된다. 네이티브
+이름은 `preserveFriendlySlots`이다. 이 값은 별도의 출전 편성 UI를 요청하는 것이
+아니라 런타임 부대의 이월을 제어한다. 원작 설정 상태는 빈틈없이 이어진 11바이트
+행 45개로 이루어진다. 인물 워드를 지워도 그 행의 좌표나 다른 필드는 지워지지
+않는다.
 
-Opcode23 enters the party UI at `0x36122..0x36243`. Selection uses fifteen word
-slots, a fixed prefix and a capacity derived from friendly named/manual people
-plus dynamic setup placeholders. Eligible candidates share person0's
-affiliation and have person-flag128. The ascending person scan stops after 66
-appends; it refills eligible people's troops even when they are not selected.
-Named setup rows also refill troops, including enemy rows. Candidate ordering
-fixes index0, swapping person0 into it when present, then performs the original
-nested swaps by imported class rank and descending level
-(`0x34EB6..0x34FAE`).
+명령23은 `0x36122..0x36243`에서 출전 편성 UI로 들어간다. 선택에는 워드 슬롯
+15개, 고정 접두부, 그리고 이름이 지정된/수동 아군 인물에 동적 설정 자리표시자를
+더해 얻은 정원이 쓰인다. 자격이 있는 후보는 person0과 소속이 같고
+person-flag128을 가진다. 인물 오름차순 탐색은 66개를 추가한 뒤 멈추며, 자격이
+있는 인물은 선택되지 않아도 병력을 다시 채운다. 이름이 지정된 설정 행도 적 행을
+포함해 병력을 다시 채운다. 후보 정렬은 index0을 고정하고, person0이 있으면 그
+자리로 교환한 뒤, 가져온 병과 순위와 레벨 내림차순으로 원작의 중첩 교환을
+수행한다(`0x34EB6..0x34FAE`).
 
-Toggling retains holes and fills the first empty selection slot; the fixed
-prefix cannot be removed (`0x356D4..0x35843`). Confirmation compacts selection
-slots in their source order. It changes only placeholder person words, retaining
-coordinates and flags (`0x3500A..0x350A1`). Signed and unsigned placeholder tests
-differ in the original producers: confirmation's signed comparison excludes
-FFFF, while preserved deployment's unsigned comparison includes it. The native
-code retains these differences, the literal person0-default-word behavior and
-the source cleanup bound instead of replacing them with a generic party list.
-The optional inventory-management phase preceding deployment selection remains
-a separate operation; this kernel prepares the deployment phase.
+선택 전환은 빈자리를 그대로 두고 첫 번째 빈 선택 슬롯을 채운다. 고정 접두부는
+제거할 수 없다(`0x356D4..0x35843`). 확정은 선택 슬롯을 원작 순서대로 압축한다.
+확정은 자리표시자 인물 워드만 바꾸고 좌표와 플래그는 유지한다
+(`0x3500A..0x350A1`). 원작 생성기들에서 자리표시자 판정은 부호 있는 비교와 부호
+없는 비교로 갈린다. 확정의 부호 있는 비교는 FFFF를 제외하고, 보존 배치의 부호
+없는 비교는 이를 포함한다. 네이티브 코드는 이 차이, person0 기본 워드의 문자
+그대로의 동작, 원작 정리 범위를 일반적인 파티 목록으로 대체하지 않고 유지한다.
+배치 선택에 앞서는 선택적 도구 관리 단계는 별도 동작으로 남으며, 이 커널은 배치
+단계를 준비한다.
 
-For preserved entry (`0x27016..0x2726B`), friendly runtime slots retain identity,
-HP, MP and morale. Enemies are rebuilt by the normal enemy initializer. The
-header's third byte can reset the round index, while weather remains preserved.
-Inactive friendly slots clear the original condition/action mask and consume
-matching named rows or an unsigned placeholder from the first fifteen setup
-slots. All matching named rows run, so a later row can relocate the same unit.
-An all-FF fallback row is consumed even though its coordinate255 makes the
-activation return without placing the unit.
+보존 진입(`0x27016..0x2726B`)에서 아군 런타임 슬롯은 식별 정보, HP, MP, 사기를
+유지한다. 적은 일반 적 초기화 루틴이 다시 만든다. 헤더의 세 번째 바이트는 라운드
+번호를 초기화할 수 있으며, 날씨는 보존된다. 비활성 아군 슬롯은 원작의 상태/행동
+마스크를 지우고, 처음 15개 설정 슬롯에서 일치하는 이름 지정 행이나 부호 없는
+자리표시자를 소비한다. 일치하는 이름 지정 행은 모두 실행되므로 뒤의 행이 같은
+부대를 다시 옮길 수 있다. 전부 FF인 대체 행은 coordinate255 때문에 활성화가
+부대를 놓지 않고 반환되더라도 소비된다.
 
-Activation (`0x2B982..0x2BA60`) applies sprite flip only when changing status1
-to status2. Flip is flag16 in the live flags byte; live byte8 remains AI
-priority. The spawn-marker search (`0x2B068..0x2B0ED`) is depth-first in imported
-cardinal order with depth5 and no visited set. Occupied and blocked nodes still
-recurse. It is not replaced with a breadth-first nearest-free search. A source
-marker that remains FF has unresolved raw-coordinate behavior and produces an
-explicit unsupported result in the native kernel.
+활성화(`0x2B982..0x2BA60`)는 status1을 status2로 바꿀 때만 스프라이트 반전을
+적용한다. 반전은 런타임 플래그 바이트의 flag16이며, 런타임 byte8은 계속 AI
+우선순위다. 출현 표식 탐색(`0x2B068..0x2B0ED`)은 가져온 상하좌우 순서를 따르는
+깊이 5의 깊이 우선 탐색이며 방문 집합이 없다. 점유되었거나 막힌 노드에서도
+재귀한다. 이를 너비 우선의 가장 가까운 빈칸 탐색으로 대체하지 않는다. FF로 남은
+원작 표식은 원시 좌표 동작이 해명되지 않았으므로 네이티브 커널에서 명시적인 미지원
+결과를 낸다.
 
-On victory result2, `0x27F90..0x28019` awards the battle's byte24 EXP bonus to
-active friendly slots, then changes every active slot to status1. It does not
-refill HP, MP or morale. Other result values skip this operation. The returned
-carryover snapshot retains all original live slot identities, round and
-weather; it is not a compact list of surviving people. Preserved entry keeps
-old enemy identities until each is overwritten by a new enemy or cleared by
-the initializer's final unused-slot reset. Enemy target setters run at their
-source point during this sequence, so they can reference an old slot that is
-cleared later.
+승리 result2에서 `0x27F90..0x28019`는 전투의 byte24 경험치 보너스를 활성 아군
+슬롯에 주고, 이어서 모든 활성 슬롯을 status1로 바꾼다. HP, MP, 사기는 다시 채우지
+않는다. 다른 결과 값은 이 동작을 건너뛴다. 반환되는 이월 스냅숏은 원작 런타임
+슬롯의 식별 정보 전부와 라운드, 날씨를 유지하며, 살아남은 인물의 압축 목록이
+아니다. 보존 진입은 이전 적 식별 정보를 각각 새 적이 덮어쓰거나 초기화 루틴
+마지막의 미사용 슬롯 초기화가 지울 때까지 유지한다. 적 목표 설정 루틴은 이 과정
+중 원작 시점에 실행되므로, 나중에 지워질 이전 슬롯을 참조할 수 있다.
 
-The native battle constructor uses the same activation kernel for fresh and
-preserved deployment. Hidden/reserve units retain FF coordinates until a
-successful activation. Fresh enemy class/level assignment precedes MP/HP
-production; friendly MP/HP resets follow their activation. The caller owns one
-canonical setup table and receives its fallback mutations through an inout
-argument. Shared-person updates use a transaction: any unsupported producer or
-failed board validation restores person values and leaves the caller's roster
-unchanged. The session stores no second roster copy.
+네이티브 전투 생성자는 새 배치와 보존 배치에 같은 활성화 커널을 쓴다. 숨겨진/예비
+부대는 활성화에 성공할 때까지 FF 좌표를 유지한다. 새 적의 병과/레벨 지정은 MP/HP
+생성보다 먼저 일어나고, 아군의 MP/HP 초기화는 활성화 뒤에 일어난다. 호출자는 정규
+설정 테이블 하나를 소유하며, 그 대체 변경을 inout 인수로 받는다. 공유 인물 갱신은
+트랜잭션을 쓴다. 지원하지 않는 생성기가 있거나 보드 검증이 실패하면 인물 값을
+복원하고 호출자의 명단을 바꾸지 않는다. 세션은 명단의 두 번째 사본을 저장하지
+않는다.
 
-A preserved friendly status2 slot would outlive the source occupancy-grid clear
-without a reactivation. That path needs occupancy state independent of live
-status/position and remains explicitly unsupported by this constructor.
-Ordinary victory carryover converts active slots to status1 before entry.
+보존된 아군 status2 슬롯은 재활성화 없이 원작의 점유 격자 초기화 이후에도 남게
+된다. 이 경로에는 런타임 상태/위치와 독립된 점유 상태가 필요하며, 이 생성자에서는
+명시적으로 지원하지 않는 상태로 남는다. 일반 승리 이월은 진입 전에 활성 슬롯을
+status1로 바꾼다.
 
-`prepare_party.py` imports the class-rank byte lookup window and person0 default
-word into local `party.json`, with examined-source identity and preservation
-checks. Public tests contain synthetic people, tables and setup rows. They
-cover eligibility/order, selection holes and bounds, row preservation, source
-comparison quirks, DFS placement, flags/priority aliasing, carryover and victory
-EXP. An opt-in original-file importer check verifies local bytes and source
-preservation; it does not establish original GUI behavior or a full campaign
-playthrough.
+`prepare_party.py`는 병과 순위 바이트 조회 구간과 person0 기본 워드를, 조사한
+원작의 식별 확인 및 보존 검사와 함께 로컬 `party.json`으로 가져온다. 공개
+테스트에는 합성 인물, 테이블, 설정 행이 들어 있다. 이 테스트는 자격/순서, 선택
+빈자리와 경계, 행 보존, 원작 비교의 특이점, DFS 배치, 플래그/우선순위 별칭, 이월,
+승리 경험치를 다룬다. 선택적으로 실행하는 원작 파일 가져오기 검사는 로컬 바이트와
+원작 보존을 확인하지만, 원작 GUI 동작이나 캠페인 전체 진행을 입증하지는 않는다.

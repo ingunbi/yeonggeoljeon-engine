@@ -1,44 +1,41 @@
-# Source graphics ownership and scope
+# 원작 그래픽 소유권과 범위
 
-The resource reader supports the examined Korean DOS/V executable digest in
-`research/README.md`. It does not assume the same offsets apply to other builds.
+리소스 리더는 `research/README.md`에 기록된, 검토한 한국어 DOS/V 실행 파일
+다이제스트를 지원한다. 같은 오프셋이 다른 빌드에도 적용된다고 가정하지 않는다.
 
-## Palace maps
+## 궁전 맵
 
-PMAP LS11 members contain 640 background-cell bytes, 620 walk-cell bytes, then
-an object count and three-byte object records. The native room is 512×320, with
-32×20 background cells and a separate 31×20 staggered walk grid. The extractor
-retains both representations; a background cell is not a walk-cell identity.
+PMAP LS11 멤버에는 배경 칸 바이트 640개, 보행 칸 바이트 620개, 그다음 객체
+개수와 3바이트 객체 레코드가 들어 있다. 네이티브 방은 512×320이며, 32×20 배경
+칸과 별도의 31×20 엇갈린 보행 격자를 가진다. 추출기는 두 표현을 모두 유지한다.
+배경 칸은 보행 칸 식별값이 아니다.
 
-All 23 members are exported. The background comes from SMAPBGPL member 1.
-MAIN file0x245FE..0x24628 selects that member for palace map kind2.
+멤버 23개를 모두 내보낸다. 배경은 SMAPBGPL 멤버 1에서 온다. MAIN 파일
+0x245FE..0x24628이 궁전 맵 kind2에 대해 그 멤버를 선택한다.
 
-Prop-bank selection is two-stage: MAIN0x246BB..0x246C7 reads DS:3838 using the
-local palace index, then DS:37FA using that result. The extractor reads the
-actual original table values and records both offsets. A prop instance keeps
-its original ordinal separately from the bank/pattern identity. It is not
-reconstructed by parsing a display string.
+소품 뱅크 선택은 두 단계다. MAIN0x246BB..0x246C7은 로컬 궁전 인덱스로 DS:3838을
+읽고, 그 결과로 DS:37FA를 읽는다. 추출기는 실제 원작 표 값을 읽고 두 오프셋을
+모두 기록한다. 소품 인스턴스는 뱅크/패턴 식별값과 별도로 원작 서수를 유지한다.
+이는 표시 문자열을 파싱해 재구성하지 않는다.
 
-## Palette selection
+## 팔레트 선택
 
-The default color palace initializer MAIN0x261F6..0x26237 passes2 at0x26207
-to CF5:ACD8. MAIN0x1E628..0x1E635 stores that argument at game-state+5.
-The palette caller at0x18346/0x18360 reads it through CF5:21EA
-(MAIN0x15B3A..0x15B44), masks the low nibble, and the helper
-MAIN0x182CE..0x18372 reads DS:1050 plus48 times that index. This establishes
-palace slot2 on the examined default color path. Grayscale configuration and
-dynamic palette changes are separate, unsupported behaviors.
+기본 컬러 궁전 초기화 MAIN0x261F6..0x26237은 0x26207에서 CF5:ACD8에 2를
+전달한다. MAIN0x1E628..0x1E635는 그 인수를 game-state+5에 저장한다.
+0x18346/0x18360의 팔레트 호출자는 CF5:21EA(MAIN0x15B3A..0x15B44)를 통해 그 값을
+읽고 하위 니블을 마스크하며, 보조 함수 MAIN0x182CE..0x18372는 DS:1050에 그
+인덱스의 48배를 더한 위치를 읽는다. 이로써 검토한 기본 컬러 경로에서 궁전
+slot2가 확정된다. 그레이스케일 설정과 동적 팔레트 변경은 별개의 미지원 동작이다.
 
-This is static source derivation, not an original DOS framebuffer comparison.
-Local output reports preserve actual palette byte offsets and input digests.
+이는 원작의 정적 분석이며, 원작 DOS 프레임버퍼 비교가 아니다. 로컬 출력 보고서는
+실제 팔레트 바이트 오프셋과 입력 다이제스트를 보존한다.
 
-## Battle backgrounds
+## 전투 배경
 
-The battle extractor owns its original tile-bank and palette selection, decoded
-image references and the logical battle-cell dimensions. Native loading verifies
-the exported 32px logical-cell geometry before displaying a background. The
-experimental board's unit circles, movement costs and combat rules do not imply
-original battle-sprite or rule parity.
+전투 추출기는 원작 타일 뱅크와 팔레트 선택, 디코딩된 이미지 참조, 논리 전투 칸
+크기를 소유한다. 네이티브 로딩은 배경을 표시하기 전에 내보낸 32px 논리 칸 기하를
+검증한다. 실험용 보드의 부대 원, 이동 비용, 전투 규칙은 원작 전투 스프라이트나
+규칙과의 동등성을 뜻하지 않는다.
 
-Original pixels, maps, object records and palette values are local output data;
-none are part of the public source distribution.
+원작 픽셀, 맵, 객체 레코드, 팔레트 값은 로컬 출력 데이터이며, 어느 것도 공개 소스
+배포본에 포함되지 않는다.

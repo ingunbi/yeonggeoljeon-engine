@@ -1,114 +1,115 @@
-# Original save slots
+# 원작 세이브 슬롯
 
-Static derivation from the MAIN loader and saver, checked against five local
-slots. The import was exercised natively. It was never compared with a running
-original.
+MAIN의 불러오기·저장 루틴에서 얻은 정적 분석이며, 로컬 슬롯 다섯 개로
+확인했다. 가져오기는 네이티브에서 실행해 보았다. 실행 중인 원작과는 한 번도
+비교하지 않았다.
 
-`tools/prepare_saves.py` reads `MSAVEn.R3S` and `ESAVEn.R3S` into a local
-`saves.json`. `OriginalSaveImport.swift` turns one row into an
-`OriginalCampaignResume`, which `OriginalCampaignHost.importOriginal` loads
-through the native resume path. Nothing writes to an original file, and the
-engine never opens one at run time.
+`tools/prepare_saves.py`는 `MSAVEn.R3S`와 `ESAVEn.R3S`를 읽어 로컬
+`saves.json`으로 만든다. `OriginalSaveImport.swift`는 한 행을
+`OriginalCampaignResume`로 바꾸고, `OriginalCampaignHost.importOriginal`이 이를
+네이티브 이어하기 경로로 불러온다. 원작 파일에 쓰는 것은 없으며, 엔진은 런타임에
+원작 파일을 절대 열지 않는다.
 
-## Files
+## 파일
 
-| File | Size | Role |
+| 파일 | 크기 | 역할 |
 |---|---|---|
-| `MSAVEn.R3S` | `0x2255` | Slot body. A slot whose first five bytes are zero is unused (`0x1EEC6`). |
-| `ESAVEn.R3S` | `0x559` | Script context. MAIN does not check that it opened (`0x1ED77..0x1ED83`); the producer refuses a slot without it. |
-| `MSAVE.R3` | `0x49` | New-game template only. |
+| `MSAVEn.R3S` | `0x2255` | 슬롯 본문. 처음 다섯 바이트가 0인 슬롯은 비어 있다(`0x1EEC6`). |
+| `ESAVEn.R3S` | `0x559` | 스크립트 문맥. MAIN은 이 파일이 열렸는지 확인하지 않는다(`0x1ED77..0x1ED83`). 생성기는 이 파일이 없는 슬롯을 거부한다. |
+| `MSAVE.R3` | `0x49` | 새 게임 템플릿 전용. |
 
-The saver is `CF5:AE98` (`0x1E7E8..0x1E968`) and the loader is `CF5:B34E`
-(`0x1EC9E..0x1EE84`). Both route through `CF5:F0CE`, so a field-menu save and a
-`3D` save have the same layout.
+저장 루틴은 `CF5:AE98`(`0x1E7E8..0x1E968`), 불러오기 루틴은
+`CF5:B34E`(`0x1EC9E..0x1EE84`)이다. 둘 다 `CF5:F0CE`를 거치므로 필드 메뉴 저장과
+`3D` 저장은 배치가 같다.
 
-The load reads `0x2235` bytes (`0x1ECFE`), 32 short of the file, so city rows from
-26 up hold person constants left in the work buffer. No chapter has more than 26
-cities. The importer reads only `cityCount` rows.
+불러오기는 `0x2235` 바이트를 읽으므로(`0x1ECFE`) 파일보다 32바이트 짧다. 따라서
+26번 이상의 도시 행에는 작업 버퍼에 남은 인물 상수가 들어 있다. 도시가 26개를
+넘는 장은 없다. 가져오기 도구는 `cityCount`개 행만 읽는다.
 
 ## MSAVE
 
-| Offset | Size | Contents |
+| 오프셋 | 크기 | 내용 |
 |---|---|---|
-| `0x0000` | 5 | Date: BCD year, month in the high nibble in binary, BCD day, hour and minute (`0x1F08B..0x1F133`). |
-| `0x0005` | 30 | Title, CP949: the HUD caption DS:`DB4C` (`0x1E80B`, read back at `0x1ED38`). |
-| `0x0023` | 20 | Player: `+0` money, `+4` battle options, `+A` sound word, `+C` input enable, `+E` current music (FFFF none), `+10` current city, `+11` scroll, `+12` map chapter, `+13` speed. |
-| `0x0037` | 9 | Game: `+0,+1` x and y, `+4` city selector, `+5` map kind, `+6` map index, `+7` entry mode. |
-| `0x0040` | 9 | Return block, same layout, with the real return cell. |
-| `0x0049` | 62 x 26 | Actors: `+6` word, `+8,+9` x and y, `+F` flags, `+15` facing. The word's `& 0xE00` is `0x200` for a person and `0x400` for a citizen; `& 0x1FF` is the identity. |
-| `0x0695` | 384 x 18 | Person state: flags, role raw (field `+2B` less two), context 2 and 3, personal scalar, troop word, class, level, experience, eight items. Constants come from BAKDATA. |
-| `0x2195` | 32 x 6 | City state; `+5` is the city flag byte. |
+| `0x0000` | 5 | 날짜: BCD 연도, 상위 니블에 이진수로 든 월, BCD 일, 시, 분(`0x1F08B..0x1F133`). |
+| `0x0005` | 30 | 제목, CP949: HUD 캡션 DS:`DB4C`(`0x1E80B`, `0x1ED38`에서 다시 읽음). |
+| `0x0023` | 20 | 플레이어: `+0` 금전, `+4` 전투 옵션, `+A` 사운드 워드, `+C` 입력 활성, `+E` 현재 음악(FFFF는 없음), `+10` 현재 도시, `+11` 스크롤, `+12` 맵 장, `+13` 속도. |
+| `0x0037` | 9 | 게임: `+0,+1` x와 y, `+4` 도시 선택자, `+5` 맵 종류, `+6` 맵 인덱스, `+7` 진입 모드. |
+| `0x0040` | 9 | 복귀 블록. 배치는 같으며 실제 복귀 칸을 담는다. |
+| `0x0049` | 62 x 26 | 액터: `+6` 워드, `+8,+9` x와 y, `+F` 플래그, `+15` 방향. 워드의 `& 0xE00`은 인물이면 `0x200`, 주민이면 `0x400`이다. `& 0x1FF`는 식별값이다. |
+| `0x0695` | 384 x 18 | 인물 상태: 플래그, 역할 원값(필드 `+2B`에서 2를 뺀 값), 문맥 2와 3, 개인 스칼라, 병력 워드, 병과, 레벨, 경험치, 도구 여덟 개. 상수는 BAKDATA에서 온다. |
+| `0x2195` | 32 x 6 | 도시 상태. `+5`는 도시 플래그 바이트다. |
 
-The packed map is `game+5 << 12 | game+6`, written at `0x1E22D..0x1E242`. It
-overrides the saved context word: the world loader stores the chapter in `game+6`.
+묶음 맵 값은 `game+5 << 12 | game+6`이며 `0x1E22D..0x1E242`에서 쓴다. 이 값은
+저장된 문맥 워드를 덮어쓴다. 세계지도 로더는 장 번호를 `game+6`에 저장한다.
 
 ## ESAVE
 
-| Offset | Size | Contents |
+| 오프셋 | 크기 | 내용 |
 |---|---|---|
-| `0x000` | 8 | Chapter, member, block, group base, as words. |
-| `0x008` | 4 | Context city and packed map, both replaced on load. |
-| `0x00C` | 4 | Actor cache owner city and map. |
-| `0x010` | `0x174` | Actor cache, 62 x 6: person word, x, y, flags, facing. |
-| `0x190` | 2 | Cursor, in the same domain as `instruction.offset`. |
-| `0x192` | 2 | Busy: 0 none, 1 resume at cursor, 2 movement wait. |
-| `0x196` | 2 | Cache dirty. |
-| `0x19A` | 2 | Script music. |
-| `0x1A6` | `0x1EF` | Setup, 45 x 11: person word, x, y, flags word, mode, parameter word, class, level. |
-| `0x395` | 32 | Flags, MSB first. |
-| `0x3B5` | 33 | Source list: count, then bytes. |
-| `0x3D6` | `0x181` | Objective text, NUL terminated. Bytes past the NUL are stale. |
-| `0x557` | 2 | Header bytes: turn limit and the second byte. |
+| `0x000` | 8 | 장, 멤버, 블록, 그룹 기준값. 모두 워드다. |
+| `0x008` | 4 | 문맥 도시와 묶음 맵. 둘 다 불러올 때 교체된다. |
+| `0x00C` | 4 | 액터 캐시의 소유 도시와 맵. |
+| `0x010` | `0x174` | 액터 캐시, 62 x 6: 인물 워드, x, y, 플래그, 방향. |
+| `0x190` | 2 | 커서. `instruction.offset`과 같은 영역의 값이다. |
+| `0x192` | 2 | 점유(busy): 0 없음, 1 커서에서 재개, 2 이동 대기. |
+| `0x196` | 2 | 캐시 변경됨(dirty). |
+| `0x19A` | 2 | 스크립트 음악. |
+| `0x1A6` | `0x1EF` | 설정, 45 x 11: 인물 워드, x, y, 플래그 워드, 모드, 매개변수 워드, 병과, 레벨. |
+| `0x395` | 32 | 플래그, MSB 우선. |
+| `0x3B5` | 33 | 소스 목록: 개수, 그다음 바이트들. |
+| `0x3D6` | `0x181` | 목표 문구, NUL 종료. NUL 뒤의 바이트는 이전 값이 남은 것이다. |
+| `0x557` | 2 | 헤더 바이트: 턴 제한과 두 번째 바이트. |
 
-## Load order
+## 불러오기 순서
 
-The title path runs `CF5:B34E`, reloads the script member at `CF5:7A86`, and
-enters `CF5:A88C(1)`. Town and palace entry (`0x24A44`) re-read actors above the
-prop count; world entry (`0x20E28`) re-reads all 62 and skips the entry automatic
-wrapper at `0x20F3A`. Default spawn and default music are skipped.
+타이틀 경로는 `CF5:B34E`를 실행하고, `CF5:7A86`에서 스크립트 멤버를 다시 읽고,
+`CF5:A88C(1)`에 들어간다. 마을과 궁전 진입(`0x24A44`)은 소품 수를 넘는 액터를
+다시 읽는다. 세계지도 진입(`0x20E28`)은 62개 전부를 다시 읽고 `0x20F3A`의 진입
+자동 래퍼를 건너뛴다. 기본 배치와 기본 음악은 건너뛴다.
 
-A town or palace then runs the cache rule at `CF5:8708`: an owner mismatch sets
-dirty; a match with dirty set clears it, re-places cached actors and selects the
-script music. The importer calls the same native rule. All five slots are clean,
-so that branch is covered only by a synthetic check.
+그다음 마을이나 궁전은 `CF5:8708`의 캐시 규칙을 실행한다. 소유자가 다르면
+dirty를 세운다. 일치하고 dirty가 세워져 있으면 이를 지우고, 캐시된 액터를 다시
+배치하고, 스크립트 음악을 고른다. 가져오기 도구도 같은 네이티브 규칙을 호출한다.
+다섯 슬롯 모두 dirty가 아니므로 그 분기는 합성 검사로만 다룬다.
 
-Actors restore in slot order, which closes slot gaps. A person whose flag `0x80`
-is clear does not spawn (`0x21F08..0x21F1A`). Town and palace facings pass through
-DS:`38D8`. World positions are the raw doubled pair and the facing is direct. The
-world camera centres on the first actor, which is also the follow target
+액터는 슬롯 순서로 복원되며, 이 과정에서 슬롯 사이의 빈자리가 메워진다. 플래그
+`0x80`이 꺼진 인물은 배치되지 않는다(`0x21F08..0x21F1A`). 마을과 궁전의 방향은
+DS:`38D8`을 거친다. 세계지도 위치는 두 배 된 원값 쌍이고 방향은 그대로 쓴다.
+세계지도 카메라는 첫 액터를 중앙에 두며, 이 액터가 추적 대상이기도 하다
 (`0x20F61`, `0x21E71`).
 
-## Busy word
+## 점유 워드
 
-`3D` has one operand byte. `3D 01` sets busy to 1 before the prompt (`0x1D1B9`), so a
-load continues after the `3D`. `3D 00` leaves busy 0, so a load rejoins the idle
-field: the record tail does not run, and the phase can ask again. This is the same
-as a field-menu save. The importer decides only by the busy word.
+`3D`는 피연산자 바이트가 하나다. `3D 01`은 질문 전에 점유 값을 1로 정하므로
+(`0x1D1B9`) 불러온 뒤 `3D` 다음부터 계속한다. `3D 00`은 점유 값을 0으로 두므로
+불러온 뒤 유휴 필드로 돌아간다. 레코드의 나머지는 실행되지 않으며, 해당 페이즈가
+다시 물을 수 있다. 이는 필드 메뉴 저장과 같다. 가져오기 도구는 점유 워드로만
+판단한다.
 
-Busy 1 restores as a pending `3D` with the record resolved from the cursor. Busy 2
-is refused because opcode `01` turns input off for that wait. A busy 1 cursor that
-does not follow a `3D` is refused; reaching one is not established.
+점유 1은 커서로부터 레코드를 확정한 대기 중 `3D`로 복원된다. 점유 2는 명령
+`01`이 그 대기 동안 입력을 끄므로 거부한다. `3D` 바로 뒤가 아닌 점유 1 커서는
+거부한다. 그런 상태에 도달하는지는 확인되지 않았다.
 
-Battle slots cannot exist. The writer is reached only from `CF5:F0CE`, whose callers
-are `3D` and the field menu, and the battle menu has no save item. The script
-walk behind that claim is not a proof over every conditional skip, so the importer
-still refuses map kind 3.
+전투 중 슬롯은 존재할 수 없다. 저장 루틴에는 `CF5:F0CE`에서만 도달하고, 그
+호출자는 `3D`와 필드 메뉴이며, 전투 메뉴에는 저장 항목이 없다. 이 주장을
+뒷받침하는 스크립트 탐색은 모든 조건부 건너뛰기에 대한 증명이 아니므로, 가져오기
+도구는 여전히 맵 종류 3을 거부한다.
 
-## What a slot does not hold
+## 슬롯에 없는 것
 
-| State | Consequence |
+| 상태 | 결과 |
 |---|---|
-| RNG | The running stream continues, as MAIN's boot-seeded stream does. Later rolls differ. |
-| Live units, round, weather | A preserved-slot battle after a load has no units. No save point sits between one in the static walk. Native throws if reached. |
-| Retry buffer | Nil. The `36` records sampled run first after battle entry. |
-| `+1CB` and objective pairs | Zero on the title path, so the restored header preserves nothing and enables no objective. One idle phase, `c4:m0:b6` group 20, falls between `03` and its battle. |
-| Citizen wander timers | Native defaults. |
-| Options in the slot | Kept out of the native settings. |
+| RNG | 실행 중인 난수열이 이어진다. MAIN의 부팅 시 시드한 난수열과 같은 방식이다. 이후 굴림은 달라진다. |
+| 현재 부대, 라운드, 날씨 | 불러온 뒤의 보존 슬롯 전투에는 부대가 없다. 정적 탐색에서는 그런 전투 사이에 놓인 저장 지점이 없다. 도달하면 네이티브가 예외를 던진다. |
+| 재시도 버퍼 | nil. 표본으로 확인한 `36` 레코드는 전투 진입 후 가장 먼저 실행된다. |
+| `+1CB`와 목표 쌍 | 타이틀 경로에서는 0이므로, 복원된 헤더는 아무것도 보존하지 않고 어떤 목표도 켜지 않는다. 유휴 페이즈 하나, `c4:m0:b6` 그룹 20이 `03`과 그 전투 사이에 놓인다. |
+| 주민 배회 타이머 | 네이티브 기본값. |
+| 슬롯 안의 옵션 | 네이티브 설정에 들이지 않는다. |
 
-## Local result
+## 로컬 결과
 
-All five slots loaded. Two continued past a `3D 01`, and three rejoined the idle
-field. The explorer then played each to the ending with its boosted test policy,
-which is not a measure of balance. The load sheet opened a slot through real
-window events below the app-activation gate. Unknown fields remain `player+2`,
-`+6`, `+8` and `ctx+1B9`. No slot here was taken in a town.
+다섯 슬롯 모두 불러왔다. 둘은 `3D 01` 다음으로 계속했고, 셋은 유휴 필드로
+돌아갔다. 그 뒤 탐색기가 강화된 테스트 정책으로 각 슬롯을 엔딩까지 플레이했으며,
+이는 밸런스의 척도가 아니다. 불러오기 시트는 앱 활성화 게이트 아래에서 실제 창
+이벤트로 슬롯을 열었다. 알려지지 않은 필드는 `player+2`, `+6`, `+8`,
+`ctx+1B9`로 남아 있다. 여기 있는 슬롯 중 마을에서 저장한 것은 없다.

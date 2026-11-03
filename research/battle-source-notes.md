@@ -1,28 +1,26 @@
-# Original combat stat investigation
+# 원작 전투 능력치 조사
 
-This is a small read-only static investigation, not an implementation of the
-original combat rules or a recording of the DOS game. The examined `MAIN.EXE`
-SHA-256 is `731c8d26a39fcd4e9fa41b142db9bd5913a496a2da5eaa1db798b7867850815f`.
-All addresses are file offsets. Original bytes and disassembly remain in ignored
-local research outputs rather than the public repository.
+이는 작은 읽기 전용 정적 조사이며, 원작 전투 규칙의 구현이나 DOS 게임의 녹화가
+아니다. 검토한 `MAIN.EXE`의 SHA-256은
+`731c8d26a39fcd4e9fa41b142db9bd5913a496a2da5eaa1db798b7867850815f`이다. 모든
+주소는 파일 오프셋이다. 원작 바이트와 디스어셈블리는 공개 저장소가 아니라
+무시되는 로컬 연구 출력에 남는다.
 
-The source status and combat displays select a person object through the battle
-unit's person identity. That object has stride 44 at DS:7A94. Its current troop
-quantity is the u16 at offset +0x1E, returned by the getter at 0x209DA. The paired
-maximum getter at 0x1AD08 depends on class byte +0x20, level byte +0x21 and two
-source class tables at DS:1338 / DS:134C. The display consumers are 0x2D2CC..2D2F4
-and 0x32E54..32E85; the ratio-bar consumer is 0x28806..2895D.
+원작의 상태 화면과 전투 화면은 전투 부대의 인물 식별값을 통해 인물 객체를
+선택한다. 그 객체는 DS:7A94에서 스트라이드 44를 가진다. 현재 병력 수량은 오프셋
++0x1E의 u16이며, 0x209DA의 게터가 반환한다. 짝을 이루는 0x1AD08의 최대치 게터는
+병과 바이트 +0x20, 레벨 바이트 +0x21, 그리고 DS:1338 / DS:134C의 원작 병과 표 두
+개에 의존한다. 표시 소비자는 0x2D2CC..2D2F4와 0x32E54..32E85이고, 비율 막대
+소비자는 0x28806..2895D이다.
 
-Displayed attack and defense are derived quantities. The status card calls the
-wrappers at 0x2B1F0 and 0x2B20C, which pass the person object and battle-unit
-byte +0x0C to the stat producers at 0x1A43E and 0x1A56C. Those producers depend on
-person scalar fields +0x19 / +0x18 respectively, class, level, source class
-tables and item slots. This investigation has not resolved all arithmetic-helper
-and item effects, so the engine does not present these quantities as decoded raw
-attack/defense fields or implement an inferred replacement formula.
+표시되는 공격력과 방어력은 파생 수량이다. 상태 카드는 0x2B1F0과 0x2B20C의
+래퍼를 호출하고, 이 래퍼는 인물 객체와 전투 부대 바이트 +0x0C를 0x1A43E와
+0x1A56C의 능력치 생성기에 전달한다. 이 생성기는 각각 인물 스칼라 필드 +0x19 /
++0x18, 병과, 레벨, 원작 병과 표, 도구 슬롯에 의존한다. 이 조사는 모든 산술 보조
+함수와 도구 효과를 해명하지 못했으므로, 엔진은 이 수량을 디코딩된 원시
+공격력/방어력 필드로 제시하지 않으며 추정한 대체 공식을 구현하지도 않는다.
 
-A two-party combat context at 0x31E7A consumes the current quantity and selected
-attack/defense producers. The actual final damage entry point, rounding, random
-branches, counterattacks and quantity writeback still require tracing. Original
-AI and victory-condition semantics also remain outside the implemented policy.
-`BattlePolicy.original` therefore continues to return an unsupported outcome.
+0x31E7A의 2자 전투 컨텍스트는 현재 수량과 선택된 공격력/방어력 생성기를
+소비한다. 실제 최종 피해 진입점, 반올림, 난수 분기, 반격, 수량 기록은 아직
+추적이 필요하다. 원작 AI와 승리 조건 의미도 구현된 정책 밖에 남아 있다. 따라서
+`BattlePolicy.original`은 계속 미지원 결과를 반환한다.

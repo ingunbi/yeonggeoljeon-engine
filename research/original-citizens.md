@@ -1,53 +1,52 @@
-# Original citizens
+# 원작 주민
 
-Local inputs: `BAKDATA.R3`, `IPPAN0.R3`, `IPPAN0M.R3` and `MAIN.EXE`. Output:
-`citizens.json`. All of this is static derivation; nothing was compared with a
-running original.
+로컬 입력: `BAKDATA.R3`, `IPPAN0.R3`, `IPPAN0M.R3`, `MAIN.EXE`. 출력:
+`citizens.json`. 모두 정적 분석이며, 실행 중인 원작과 비교한 것은 없다.
 
-## Data
+## 데이터
 
-- `BAKDATA.R3` holds 256 citizen rows of 13 bytes. Bytes 0..7 are the name and
-  byte 8 is the town sprite (`1AD46..1ADAD`).
-- `IPPAN0.R3` holds four group tables. Sizes come from DS:`393A`, offsets from
-  DS:`3942`. Each table starts with a city count, one word per city, a word, then
-  one message word per citizen. A city word points at rows of key, member count
-  and citizen ids (`1FE97..1FEFF`).
-- `IPPAN0M.R3` holds the lines. DS:`2DD0` gives each group's base, and `FFFF`
-  means the citizen has no line.
+- `BAKDATA.R3`에는 13바이트짜리 주민 행 256개가 있다. 바이트 0..7은 이름이고
+  바이트 8은 마을 스프라이트다(`1AD46..1ADAD`).
+- `IPPAN0.R3`에는 그룹 표 네 개가 있다. 크기는 DS:`393A`에서, 오프셋은
+  DS:`3942`에서 온다. 각 표는 도시 수, 도시마다 워드 하나, 워드 하나, 그리고
+  주민마다 메시지 워드 하나로 시작한다. 도시 워드는 키, 구성원 수, 주민 id로 된
+  행들을 가리킨다(`1FE97..1FEFF`).
+- `IPPAN0M.R3`에는 대사가 있다. DS:`2DD0`이 그룹별 기준값을 주며, `FFFF`는 그
+  주민에게 대사가 없다는 뜻이다.
 
-Citizens use actor class `0x400`, object DS:`BC96`, stride `0x10`.
+주민은 액터 종류 `0x400`, 객체 DS:`BC96`, 간격 `0x10`을 쓴다.
 
-## Placement
+## 배치
 
-Script opcode `1F` and native settlement entry both reach `26298`
-(`1CB6:2D38`). `18E8` returns the first class-`0x400` slot, so placement runs only
-when no citizen stands on the map. The key is the room index, or `7D` for the
-city itself. The draw order per citizen is x from RNG `1F`, y from RNG `13`, one
-added to an odd coordinate, a retry unless the cell byte is `7F`, then facing
-from RNG 4, then RNG 16 and RNG 3.
+스크립트 명령 `1F`와 네이티브 거점 진입은 모두 `26298`(`1CB6:2D38`)에 이른다.
+`18E8`은 종류 `0x400`의 첫 슬롯을 반환하므로, 배치는 맵에 주민이 하나도 없을
+때만 실행된다. 키는 방 인덱스이며, 도시 자체는 `7D`다. 주민마다 난수를 뽑는
+순서는 RNG `1F`로 x, RNG `13`으로 y, 홀수 좌표에는 1을 더함, 칸 바이트가 `7F`가
+아니면 재시도, 그다음 RNG 4로 방향, 이어서 RNG 16과 RNG 3이다.
 
-These draws consume the shared generator, so entering a town changes every later
-battle's dice. Replay inputs recorded before this restoration do not carry over.
+이 난수 뽑기는 공유 난수 생성기를 소모하므로, 마을에 들어가면 이후 모든 전투의
+주사위가 바뀐다. 이 복원 이전에 기록한 입력 재생용 입력은 그대로 이어서 쓸 수
+없다.
 
-## Talking
+## 대화
 
-Citizen arrival runs `26AB9..26B24`, which shows the line and does not restore
-facing. Lines come from the word at block offset `3+2n+2id`.
+주민에게 도착하면 `26AB9..26B24`가 실행되며, 이 루틴은 대사를 보이고 방향은
+복원하지 않는다. 대사는 블록 오프셋 `3+2n+2id`의 워드에서 온다.
 
-## Wandering
+## 배회
 
-`257AC..2591F` runs each loop frame. A citizen alternates standing and walking. A
-walk draws a direction from RNG 4 and a length from RNG 16 plus one, and standing
-draws RNG 2; a counter that comes out even or zero gains one, so it is odd. Each
-walking frame tries the neighbor cell. The cell byte must be `7F` and the cell must
-stay within three of the citizen's placed home, or the walk ends.
+`257AC..2591F`는 루프 프레임마다 실행된다. 주민은 서 있기와 걷기를 번갈아 한다.
+걷기는 RNG 4로 방향을, RNG 16에 1을 더해 길이를 뽑고, 서 있기는 RNG 2를 뽑는다.
+짝수나 0이 나온 카운터에는 1을 더하므로 카운터는 홀수가 된다. 걷는 프레임마다
+이웃 칸을 시도한다. 칸 바이트가 `7F`여야 하고 칸이 주민이 배치된 원위치에서 3
+이내여야 하며, 그렇지 않으면 걷기가 끝난다.
 
-The source draws from the shared generator, so its battle dice depend on how long
-a player stands in town. The engine draws from a generator of its own and only in
-the window, so verification and replays keep citizens still. Wandering pauses
-while a script or the player's own walk runs; the source does not pause.
+원작은 공유 난수 생성기에서 뽑으므로, 전투 주사위가 플레이어가 마을에 머문
+시간에 따라 달라진다. 엔진은 자체 난수 생성기에서, 그것도 창에서만 뽑으므로
+검증과 입력 재생에서는 주민이 움직이지 않는다. 배회는 스크립트나 플레이어 자신의
+걷기가 실행되는 동안 멈춘다. 원작은 멈추지 않는다.
 
-## Late placement
+## 늦은 배치
 
-A destination script that ends with status one calls the same placement
-(`264A6`), for a map that a script entered without opcode `1F`.
+상태 1로 끝나는 도착지 스크립트는, 스크립트가 명령 `1F` 없이 들어간 맵에 대해
+같은 배치 루틴(`264A6`)을 호출한다.

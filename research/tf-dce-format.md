@@ -1,59 +1,51 @@
-# Original TF-DCE pictures
+# 원작 TF-DCE 그림
 
-`tf_dce.py` independently interprets the source graphics bytecode from the
-original `TFDED.COM` driver. The examined driver SHA-256 is
-`57db61a49d4a1ca525d14aca210457c57ec2c2caf04d58b99f4a51e053762371`.
-The original driver is never executed, copied into the engine, or published.
-Its COM load addresses are file offsets plus `100` hex.
+`tf_dce.py`는 원작 `TFDED.COM` 드라이버의 원작 그래픽 바이트코드를 독립적으로
+해석한다. 조사한 드라이버의 SHA-256은
+`57db61a49d4a1ca525d14aca210457c57ec2c2caf04d58b99f4a51e053762371`이다.
+원작 드라이버는 실행하지 않으며, 엔진에 복사하거나 공개하지도 않는다. COM 로드
+주소는 파일 오프셋에 16진수 `100`을 더한 값이다.
 
-The driver header reader at load `018C..0215` supplies picture width in planar
-bytes, height, four plane-codec nibbles, plane mapping, flags, an optional
-palette and an optional word dictionary. Packed pictures use a 02/T header.
-The per-plane dispatcher at `0298..02BA` supports preserved planes, fill,
-copy from a mapped plane, and compressed instructions. Source compressed
-output traverses one vertical column downward, then the next upward, switching
-direction at each column boundary (`0326`, `0660..0686`). This is distinct
-from ordinary row-major planar data.
+로드 주소 `018C..0215`의 드라이버 헤더 리더는 평면 바이트 단위의 그림 너비, 높이,
+평면 코덱 니블 네 개, 평면 대응, 플래그, 선택적 팔레트, 선택적 워드 사전을
+제공한다. 압축 그림은 02/T 헤더를 쓴다. `0298..02BA`의 평면별 분배기는 보존 평면,
+채우기, 대응된 평면에서 복사, 압축 명령을 지원한다. 원작 압축 출력은 세로 열 하나를
+아래로, 다음 열을 위로 훑으며 열 경계마다 방향을 바꾼다(`0326`, `0660..0686`). 이는
+일반적인 행 우선 평면 데이터와 다르다.
 
-The compressed instruction families encode literal runs, repeated bytes and
-pairs, repeated nibbles, overlapping traversal-history copies, horizontal
-VGA-address copies, and mapped-plane transformations. Plane transforms include
-inversion, rotation, and masks with a small changing mask history. Dictionary
-words select their own source dispatcher, rather than being prepended to the
-ordinary byte stream (`0344..0362`). Each plane terminates at its exact output
-extent; extraction requires exact complete consumption of each source payload.
+압축 명령 계열은 리터럴 연속, 반복 바이트와 바이트 쌍, 반복 니블, 겹치는 순회 이력
+복사, 가로 VGA 주소 복사, 대응 평면 변환을 부호화한다. 평면 변환에는 반전, 회전,
+그리고 변화하는 작은 마스크 이력을 쓰는 마스크가 있다. 사전 워드는 일반 바이트
+스트림 앞에 붙는 것이 아니라 자체 원작 분배기를 선택한다(`0344..0362`). 각 평면은
+정확한 출력 범위에서 끝나며, 추출하려면 각 원작 페이로드를 정확히 남김없이 소비해야
+한다.
 
-`prepare_story.py` owns the two packed resource directories: PACKGRP has
-38 six-byte descriptors and FACEDAT has 240. A descriptor is a 32-bit relative
-offset and a 16-bit payload length, relative to the directory end. MAIN loaders
-`0x18B5E..0x18C21` and `0x18A3C..0x18B00` establish their header lengths.
-Public tests use synthetic payloads; real-file tests require an explicitly
-selected original directory. Local exports include payload hashes, consumed
-lengths, decoded-pixel hashes and original file identities.
+`prepare_story.py`는 압축 자원 디렉터리 두 개를 담당한다. PACKGRP에는 6바이트
+기술자 38개가, FACEDAT에는 240개가 있다. 기술자는 디렉터리 끝을 기준으로 한 32비트
+상대 오프셋과 16비트 페이로드 길이다. MAIN 로더 `0x18B5E..0x18C21`과
+`0x18A3C..0x18B00`이 각 헤더 길이를 확정한다. 공개 테스트는 합성 페이로드를 쓰며,
+실제 파일 테스트에는 명시적으로 선택한 원작 디렉터리가 필요하다. 로컬 내보내기에는
+페이로드 해시, 소비 길이, 디코딩한 픽셀 해시, 원작 파일 식별 정보가 들어 있다.
 
-Opcode07 mode zero clears `[16,16,512,320]` and then uses the mode-one common
-figure-panel path. The common panel is `[152,32,240,160]`; its 224×144 picture
-is at `[160,40]`. Source draws an offscreen window at `[152,472]`, decodes the
-picture at `[160,480]`, captures that completed panel and transitions it into
-the visible destination (`MAIN0x206A8..0x207C7`). Original PACKGRP picture zero
-is not selected by this opcode. Its window border belongs to separate original
-window primitives, still a stated native-rendering limitation.
+명령07 모드 0은 `[16,16,512,320]`을 지운 다음 모드 1의 공통 그림 패널 경로를 쓴다.
+공통 패널은 `[152,32,240,160]`이고, 그 224×144 그림은 `[160,40]`에 있다. 원작은
+화면 밖 `[152,472]`에 창을 그리고, `[160,480]`에 그림을 디코딩한 뒤, 완성된 패널을
+캡처해 보이는 목적지로 전환한다(`MAIN0x206A8..0x207C7`). 원작 PACKGRP 그림 0은 이
+명령이 선택하지 않는다. 그 창 테두리는 별도의 원작 창 기본 요소에 속하며, 여전히
+명시된 네이티브 렌더링 한계다.
 
-The interpreter preserves that panel for consecutive opcode08 text and restores
-the saved underlying pixels before the first other instruction
-(`0x1C1CF..0x1C1DF`, `0x207C8`). Initial new-game palette zero is an explicit
-store at `0x1E49A..0x1E4A3`, through the byte setter `0x1E628..0x1E635`,
-before context construction and the new-game menu. It is not inferred from a
-map name. Four source palette variants are exported for later contexts.
+인터프리터는 연속된 명령08 텍스트 동안 그 패널을 유지하고, 다른 명령이 처음 나오기
+전에 저장해 둔 아래 픽셀을 복원한다(`0x1C1CF..0x1C1DF`, `0x207C8`). 새 게임의 초기
+팔레트 0은 컨텍스트 생성과 새 게임 메뉴 전에 바이트 설정 루틴 `0x1E628..0x1E635`를
+거쳐 `0x1E49A..0x1E4A3`에서 명시적으로 저장된다. 지도 이름에서 추정한 것이 아니다.
+이후 컨텍스트를 위해 원작 팔레트 변형 네 개를 내보낸다.
 
-The native VM owns that lifetime explicitly. It emits `close-story` before any
-non08 instruction, including invisible flag writes and `FF`, and leaves the
-source cursor unchanged until its next advance. The renderer restores the saved
-underlay when it receives this command; it does not infer lifetime from the last
-visible dialogue.
+네이티브 VM은 그 수명을 명시적으로 관리한다. 보이지 않는 플래그 쓰기와 `FF`를
+포함해 08이 아닌 모든 명령 앞에서 `close-story`를 내보내고, 다음 진행 때까지 원작
+커서를 바꾸지 않는다. 렌더러는 이 명령을 받으면 저장한 아래 그림을 복원하며,
+마지막으로 보인 대사로부터 수명을 추정하지 않는다.
 
-The current standalone decoder explicitly requires a zero-plane drawing base.
-Preserved-plane identities remain in output metadata. Exact window border
-primitives, original transition timing, grayscale and dynamic palette changes
-remain separate work. Structural completion and visual inspection of decoded
-source images are not an original DOS framebuffer parity recording.
+현재 독립 디코더는 모든 평면이 0인 그리기 바탕을 명시적으로 요구한다. 보존 평면
+식별 정보는 출력 메타데이터에 남는다. 정확한 창 테두리 기본 요소, 원작 전환 타이밍,
+회색조, 동적 팔레트 변경은 별도 작업으로 남는다. 디코딩한 원작 그림의 구조적 완료와
+육안 검사는 원작 DOS 프레임버퍼 동등성 기록이 아니다.

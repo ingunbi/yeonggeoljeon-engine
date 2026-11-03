@@ -1,72 +1,68 @@
-# Source map selection and battle-loop return
+# 원작 지도 선택과 전투 루프 복귀
 
-The MAIN executable profile is the same statically examined input recorded in
-`original-campaign-vm.md`. Original programs are never run or modified.
+MAIN 실행 파일 프로필은 `original-campaign-vm.md`에 기록한 것과 같은, 정적으로
+조사한 입력이다. 원작 프로그램은 실행하거나 수정하지 않는다.
 
-Opcode `11` stores the next packed map in script context `+0A`, sets the raw
-battle result through helper `2CB4:1BA`, and continues the same interpreter
-call (`0x1C768..0x1C7B8`). It does not return from the interpreter there.
-Opcode `09` also selects script context `+0A`, sets its busy state one, and
-returns raw interpreter status two (`0x1D125..0x1D143`). This selects a future
-map; it is not itself a call to the map asset loader. A sequence containing
-`11` then `09` must retain that order while deferring the actual battle-stage
-replacement until the enclosing battle loop finishes.
+명령 `11`은 다음 패킹된 지도 값을 스크립트 컨텍스트 `+0A`에 저장하고, 보조 함수
+`2CB4:1BA`로 원시 전투 결과를 설정한 뒤, 같은 인터프리터 호출을 계속한다
+(`0x1C768..0x1C7B8`). 이 지점에서 인터프리터를 반환하지 않는다. 명령 `09`도
+스크립트 컨텍스트 `+0A`를 선택하고, busy 상태를 1로 설정한 뒤, 원시 인터프리터
+상태 2를 반환한다(`0x1D125..0x1D143`). 이는 앞으로 갈 지도를 선택하는 것이며, 그
+자체가 지도 자원 로더 호출은 아니다. `11` 뒤에 `09`가 오는 시퀀스는 그 순서를
+유지하면서, 실제 전투 스테이지 교체를 감싸는 전투 루프가 끝날 때까지 미뤄야 한다.
 
-The external dispatcher calls the battle loop and interprets its result
-(`0x1E31C..0x1E344`). Result one selects checkpoint restoration, three adds
-outer flag `20`, four adds flag `40`, and other values invoke `CF5:C86C`
-(`0x201BC..0x2022E`). That helper reads the selected map from the script
-snapshot and calls a kind-specific game selector:
+외부 분배기는 전투 루프를 호출하고 그 결과를 해석한다(`0x1E31C..0x1E344`). 결과
+1은 체크포인트 복원을 선택하고, 3은 외부 플래그 `20`을, 4는 플래그 `40`을 더하며,
+다른 값은 `CF5:C86C`를 호출한다(`0x201BC..0x2022E`). 이 보조 함수는 스크립트
+스냅숏에서 선택된 지도를 읽고 종류별 게임 선택 루틴을 호출한다.
 
-- Kind zero: town selector `0x261A8`.
-- Kind one: world selector `0x220D0`.
-- Kind two: palace selector `0x261F6`.
-- Kind three: battle selector `0x20172`.
+- 종류 0: 마을 선택 루틴 `0x261A8`.
+- 종류 1: 세계지도 선택 루틴 `0x220D0`.
+- 종류 2: 궁전 선택 루틴 `0x261F6`.
+- 종류 3: 전투 선택 루틴 `0x20172`.
 
-All script-dispatch selectors store the selected low byte as Game map byte six.
-Only world and battle also write that low byte to Game selector byte four. Town
-and palace retain Game+4. All four preserve player7A80+10 current city. Town/world/battle write the source position-byte
-pair; palace does not. The script transition helper then supplies Game+4, rather than player current
-city, and the original packed map to context entry `86F0`
-(`0x1C040..0x1C055`) and finally sets game entry-mode byte seven to zero.
-That final override is relevant even when the selector initially wrote one.
+스크립트 분배 선택 루틴은 모두 선택된 하위 바이트를 Game 지도 바이트 6으로
+저장한다. 세계지도와 전투만 그 하위 바이트를 Game 선택자 바이트 4에도 쓴다. 마을과
+궁전은 Game+4를 유지한다. 네 가지 모두 player7A80+10의 현재 도시를 보존한다.
+마을/세계지도/전투는 원작 위치 바이트 쌍을 쓰지만, 궁전은 쓰지 않는다. 그다음
+스크립트 전환 보조 함수는 플레이어의 현재 도시가 아니라 Game+4와 원작의 패킹된 지도
+값을 컨텍스트 진입 `86F0`에 넘기고(`0x1C040..0x1C055`), 마지막으로 게임 진입 모드
+바이트 7을 0으로 설정한다. 이 마지막 덮어쓰기는 선택 루틴이 처음에 1을 쓴 경우에도
+의미가 있다.
 
-World entry calls its default city/player spawn only when game byte seven is
-one (`0x20EF5..0x20F29`). At zero it skips that spawn and evaluates its source
-automatic wrapper. Settlement entry has the analogous once-only default-player
-spawn gate (`0x24BB9..0x24C3A`). Therefore scripted `09/11` entry must not inject
-a default player placement or its RNG draw. Script-selected actors appear when
-subsequent original script instructions place them. Native built-in city
-navigation has a different entry-mode contract.
+세계지도 진입은 게임 바이트 7이 1일 때만 기본 도시/플레이어 출현을
+호출한다(`0x20EF5..0x20F29`). 0이면 그 출현을 건너뛰고 원작의 자동 래퍼를 평가한다.
+거점 진입에도 비슷한 1회성 기본 플레이어 출현 관문이 있다(`0x24BB9..0x24C3A`).
+따라서 스크립트의 `09/11` 진입은 기본 플레이어 배치나 그 RNG 추첨을 끼워 넣어서는
+안 된다. 스크립트가 선택한 액터는 이후 원작 스크립트 명령이 배치할 때 나타난다.
+네이티브 내장 도시 이동은 진입 모드 계약이 다르다.
 
-Actual world and settlement map initialization clears the displayed actor
-slots (`0x20ACA..0x20B45`, `0x2447A..0x244F8`) before their respective entry
-paths. Static map props and source script actor cache have separate owners.
+실제 세계지도 및 거점 지도 초기화는 각 진입 경로 전에 표시 중인 액터 슬롯을
+지운다(`0x20ACA..0x20B45`, `0x2447A..0x244F8`). 정적 지도 소품과 원작 스크립트 액터
+캐시는 담당자가 따로 있다.
 
-Only settlement entry calls cache replay `CF5:8708`, file `0x1C058..0x1C0E3`, at
-`0x24C6A`. There is one direct far pointer to that helper in the examined MAIN;
-the traced world entry does not call it. The cache operation first writes the
-current context city/map. Mismatched cache ownership marks the cache dirty
-without clearing identities or changing its owner. Matched clean cache does
-nothing. Matched dirty cache clears dirty first, restores nonempty nonplayer
-entries in physical order, then selects cached script music. Player zero is
-excluded. A later script placement owns cache clearing and owner replacement.
+캐시 재생 `CF5:8708`(파일 `0x1C058..0x1C0E3`)은 거점 진입만 `0x24C6A`에서
+호출한다. 조사한 MAIN에는 이 보조 함수를 가리키는 직접 far 포인터가 하나 있으며,
+추적한 세계지도 진입은 이를 호출하지 않는다. 캐시 동작은 먼저 현재 컨텍스트의
+도시/지도를 기록한다. 캐시 소유자가 일치하지 않으면 식별 정보를 지우거나 소유자를
+바꾸지 않고 캐시를 dirty로 표시한다. 소유자가 일치하는 clean 캐시는 아무것도 하지
+않는다. 소유자가 일치하는 dirty 캐시는 먼저 dirty를 지우고, 비어 있지 않은
+비플레이어 항목을 물리적 순서대로 복원한 뒤, 캐시된 스크립트 음악을 선택한다.
+플레이어 0은 제외된다. 캐시 지우기와 소유자 교체는 이후의 스크립트 배치가 담당한다.
 
-`acknowledgeMapSelection` owns completion of the interpreter selection;
-`enterMapContext` owns actual context entry. `replaySettlementCache` owns the
-cache's source predicate and returns parsed actors/music for the native
-placement owner. Cached script music and the current device selection are
-separate state: an external battle stinger does not overwrite context `+1BF`.
+`acknowledgeMapSelection`은 인터프리터 선택의 완료를 담당하고, `enterMapContext`는
+실제 컨텍스트 진입을 담당한다. `replaySettlementCache`는 캐시의 원작 조건식을
+담당하며, 해석한 액터/음악을 네이티브 배치 담당자에게 반환한다. 캐시된 스크립트
+음악과 현재 장치 선택은 별개 상태다. 외부 전투 스팅어는 컨텍스트 `+1BF`를 덮어쓰지
+않는다.
 
-The native host now retains a battle's source09 or source11 selection until
-the physical or strategy operation and its source caller finish. Only then
-does the outer battle-loop boundary interpret the raw result, apply victory
-carryover and enter the selected map, as described in
-[the framework note](original-framework.md). A caller-selected local replay
-reached the first campaign victory, returned to the following world scene and
-reached the second battle's manual phase. A local frontier run then won the
-second battle through its source adjacency event, entered the source11 world
-selection and continued into chapter one. These runs test those particular
-native exit paths; they do not establish all source battle exits or
-original-runtime parity. Original save-mode restoration and
-built-in navigation still require their own producing boundaries.
+네이티브 호스트는 이제 물리 공격 또는 책략 동작과 그 원작 호출자가 끝날 때까지
+전투의 source09 또는 source11 선택을 보관한다. 그 뒤에야 바깥 전투 루프 경계가 원시
+결과를 해석하고, 승리 이월을 적용하고, 선택된 지도로 들어간다. 이는
+[프레임워크 노트](original-framework.md)에 설명되어 있다. 호출자가 고른 로컬 입력
+재생은 첫 캠페인 승리에 도달하고, 이어지는 세계지도 장면으로 돌아간 뒤, 두 번째
+전투의 수동 단계에 도달했다. 이어 로컬 프런티어 실행이 원작 인접 이벤트로 두 번째
+전투에서 이기고, source11 세계지도 선택으로 들어가 1장으로 계속 진행했다. 이
+실행들은 해당 네이티브 종료 경로만 시험하며, 원작의 모든 전투 종료나 원작 런타임
+동등성을 입증하지 않는다. 원작 세이브 모드 복원과 내장 이동은 여전히 각자의 생성
+경계가 필요하다.

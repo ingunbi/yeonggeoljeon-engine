@@ -1,195 +1,183 @@
-# Original combat arithmetic
+# 원작 전투 산술
 
-This note records static derivations from the caller-supplied Korean DOS/V
-`MAIN.EXE` profile examined by the local importer. The original executable was
-not run. Original resource tables, item records, disassembly and verification
-outputs remain outside the public source tree, under ignored local build paths.
+이 노트는 로컬 임포터가 검토한, 호출자가 제공한 한국어 DOS/V `MAIN.EXE`
+프로파일의 정적 분석을 기록한다. 원작 실행 파일은 실행하지 않았다. 원작 리소스
+표, 도구 레코드, 디스어셈블리, 검증 출력은 공개 소스 트리 밖, 무시되는 로컬
+빌드 경로에 둔다.
 
-`OriginalCombat.swift` owns the arithmetic interpretation. Consumers supply
-original person state, original runtime slot identities, terrain bytes, the
-shared RNG state and locally imported tables. Placement IDs, person IDs and
-runtime slots are distinct identities.
+`OriginalCombat.swift`가 산술 해석을 소유한다. 소비자는 원작 인물 상태, 원작
+런타임 슬롯 식별값, 지형 바이트, 공유 RNG 상태, 로컬로 가져온 표를 공급한다.
+배치 ID, 인물 ID, 런타임 슬롯은 서로 다른 식별값이다.
 
-## Confirmed paths
+## 확인된 경로
 
-| Behavior | MAIN file range |
+| 동작 | MAIN 파일 범위 |
 | --- | --- |
-| Derived attack | `0x1A43E..0x1A53D` |
-| Derived defense | `0x1A56C..0x1A66B` |
-| Class/level maximum troops | `0x1AD08..0x1AD31` |
-| Physical and strategy damage producer | `0x31474..0x317CB` |
-| Morale loss | `0x317CC..0x31853` |
-| Hit and defeated-target EXP | `0x31854..0x31925` |
-| Counter eligibility | `0x3198E..0x31A04` |
-| Quantity, morale and EXP writeback, recursive counter | `0x321E2..0x32317` |
-| EXP/level mutation | `0x1A8B4..0x1A9C8` |
-| Shared random generator | `0x181D4..0x18227` |
-| Troop/morale recovery and adjacent MP aura | `0x2B228..0x2B43B` |
-| Condition-mask2 recovery | `0x2B690..0x2B708` |
-| Maximum MP and MP gain mutation | `0x2C6E4..0x2C727`, `0x2D5DA..0x2D606` |
-| Morale setter and condition side effects | `0x2BEEC..0x2BF51` |
-| Retirement predicate | `0x2D630..0x2D67E` |
+| 파생 공격력 | `0x1A43E..0x1A53D` |
+| 파생 방어력 | `0x1A56C..0x1A66B` |
+| 병과/레벨별 최대 병력 | `0x1AD08..0x1AD31` |
+| 물리 및 책략 피해 생성기 | `0x31474..0x317CB` |
+| 사기 손실 | `0x317CC..0x31853` |
+| 명중 및 격파 대상 경험치 | `0x31854..0x31925` |
+| 반격 자격 | `0x3198E..0x31A04` |
+| 수량, 사기, 경험치 기록과 재귀 반격 | `0x321E2..0x32317` |
+| 경험치/레벨 변경 | `0x1A8B4..0x1A9C8` |
+| 공유 난수 생성기 | `0x181D4..0x18227` |
+| 병력/사기 회복과 인접 MP 오라 | `0x2B228..0x2B43B` |
+| condition-mask2 회복 | `0x2B690..0x2B708` |
+| 최대 MP와 MP 획득 변경 | `0x2C6E4..0x2C727`, `0x2D5DA..0x2D606` |
+| 사기 설정 함수와 조건 부수 효과 | `0x2BEEC..0x2BF51` |
+| 퇴장 술어 | `0x2D630..0x2D67E` |
 
-The local importer records source hashes and table spans. Public tests use
-invented tables and people, never copied original stat tables or item values.
+로컬 임포터는 원작 해시와 표 범위를 기록한다. 공개 테스트는 지어낸 표와 인물을
+쓰며, 원작 능력치 표나 도구 값을 복사하지 않는다.
 
-## Derived stats and physical strikes
+## 파생 능력치와 물리 타격
 
-For each attack/defense query, the source combines the corresponding class base,
-current morale, `4000/(140-scalar)` and the level multiplier `(level+10)/10`.
-Equipment contributes the largest applicable percentage bonus among the eight
-item slots; it does not sum those bonuses. The source uses category immediates
-0 for attack and 5 for defense. Signed long division truncates toward zero;
-long multiplication/addition and final word return widths are retained.
+각 공격력/방어력 질의마다 원작은 해당 병과 기본값, 현재 사기,
+`4000/(140-scalar)`, 레벨 배수 `(level+10)/10`을 조합한다. 장비는 도구 슬롯
+여덟 개 중 적용 가능한 가장 큰 퍼센트 보너스 하나만 기여하며, 보너스를 합산하지
+않는다. 원작은 범주 즉시값으로 공격력에 0, 방어력에 5를 쓴다. 부호 있는 long
+나눗셈은 0 방향으로 절사한다. long 곱셈/덧셈과 최종 워드 반환 폭은 그대로
+유지한다.
 
-Class group is integer division of class ID by 3. The three participating
-groups form the cycle 0 over 1, 1 over 2, and 2 over 0. An advantage decreases
-the target defense by a quarter; a disadvantage increases it by a quarter.
-Physical damage then uses attack minus half adjusted defense, terrain reduction,
-the subtype-7 counter half, a minimum of one, and the target's current troop cap.
-The source terrain lookup uses the complete raw terrain byte. The importer
-preserves a 256-byte window rather than clamping to the nominal 20-entry table.
+병과 그룹은 병과 ID를 3으로 정수 나눗셈한 값이다. 참여하는 세 그룹은 0이 1을,
+1이 2를, 2가 0을 이기는 순환을 이룬다. 유리하면 대상 방어력이 4분의 1 감소하고,
+불리하면 4분의 1 증가한다. 그다음 물리 피해는 공격력에서 조정된 방어력의 절반을
+뺀 값, 지형 감소, 하위 유형 7 반격의 절반, 최솟값 1, 대상의 현재 병력 상한을
+사용한다. 원작의 지형 조회는 원시 지형 바이트 전체를 사용한다. 임포터는 명목상
+20항목 표로 잘라 내지 않고 256바이트 창을 보존한다.
 
-Nonlethal physical morale loss divides damage by `(targetLevel+5)` and then by
-3, with minimum one for nonzero damage. Strategy morale loss divides damage by
-100. Lethal damage computes full previous morale loss for presentation, but the
-writeback skips the morale setter and retains the dead unit's previous morale.
+치명적이지 않은 물리 사기 손실은 피해를 `(targetLevel+5)`로 나눈 뒤 다시 3으로
+나누며, 피해가 0이 아니면 최솟값은 1이다. 책략 사기 손실은 피해를 100으로
+나눈다. 치명 피해는 연출을 위해 이전 사기 전체의 손실을 계산하지만, 기록 단계는
+사기 설정 함수를 건너뛰고 죽은 부대의 이전 사기를 유지한다.
 
-The normal player attack (`0x2DB49..0x2DB54`, then `0x30E53..0x30E5C`) and AI
-attack (`0x3038F..0x3039C`) obtain subtype from the class table at DS`0x3FD2`.
-`physicalSubtypeByClass` owns that table; it is not a boolean counter flag.
-Counter-class eligibility tests that subtype value for zero, while the success threshold uses target
-attack scalar against `random(150)`. The draw precedes subtype, lethal-damage and
-condition suppression. A subtype-7 hit can therefore consume a counter draw
-even though it cannot cause another counter.
+일반 플레이어 공격(`0x2DB49..0x2DB54`, 이어서 `0x30E53..0x30E5C`)과 AI
+공격(`0x3038F..0x3039C`)은 DS`0x3FD2`의 병과 표에서 하위 유형을 얻는다. 그 표는
+`physicalSubtypeByClass`가 소유하며, 불리언 반격 플래그가 아니다. 반격 병과
+자격은 그 하위 유형 값이 0인지 검사하고, 성공 문턱값은 대상의 공격 스칼라를
+`random(150)`과 비교한다. 이 추출은 하위 유형, 치명 피해, 조건 억제보다 먼저
+일어난다. 따라서 하위 유형 7 타격은 또 다른 반격을 일으킬 수 없는데도 반격
+추출을 소비할 수 있다.
 
-The physical context prelude at `0x31FDB..0x3216F` consumes eight `random(16)`
-draws for attacker class IDs 3 through 5, or sixteen when the source global
-options word has a nonzero low-byte high nibble. It skips this prelude for
-subtype 7. These presentation draws precede the damage producer and therefore
-affect later counter/strategy draws. `physicalPrelude` takes that options word
-explicitly and returns the draws for a caller-owned presentation.
-The source static wrapper `0x1A37C` calls `0x19D26`, whose `0x19D4D` call
-constructs global object DS`0x7A80`. Constructor `0x1A406..0x1A436` sets its
-options word at offset4 to zero (`0x1A423`). That is an established initial
-state, not an assumed user-option value after a load or settings change.
+`0x31FDB..0x3216F`의 물리 컨텍스트 서두는 공격자 병과 ID 3부터 5까지에 대해
+`random(16)` 추출을 8회 소비하며, 원작 전역 옵션 워드의 하위 바이트 상위 니블이
+0이 아니면 16회 소비한다. 하위 유형 7에서는 이 서두를 건너뛴다. 이 연출용 추출은
+피해 생성기보다 앞서므로 이후의 반격/책략 추출에 영향을 준다. `physicalPrelude`는
+그 옵션 워드를 명시적으로 받고, 호출자가 소유한 연출을 위해 추출값을 반환한다.
+원작 정적 래퍼 `0x1A37C`는 `0x19D26`을 호출하고, 그 안의 `0x19D4D` 호출이 전역
+객체 DS`0x7A80`을 생성한다. 생성자 `0x1A406..0x1A436`은 오프셋 4의 옵션 워드를
+0으로 설정한다(`0x1A423`). 이는 확정된 초기 상태이며, 로드나 설정 변경 이후의
+사용자 옵션 값을 가정한 것이 아니다.
 
-## Strategy damage contexts
+## 책략 피해 컨텍스트
 
-Source context kinds 2 and 3 use encoded subtype nibbles, intellect and level.
-The first chance roll is truncated to one byte. The source then applies its
-class resistance, terrain/environment quarter bonus and a second random jitter
-before testing failure for kind 2. Kind 3 omits that chance gate and its attack
-contribution. Intermediate subtraction wraps as a word before promotion to the
-long damage quantity. A zero random bound consumes no RNG state.
+원작 컨텍스트 종류 2와 3은 인코딩된 하위 유형 니블, 지력, 레벨을 사용한다. 첫
+번째 확률 굴림은 1바이트로 절사된다. 그다음 원작은 병과 저항, 지형/환경 4분의 1
+보너스, 두 번째 난수 흔들림을 적용한 뒤 종류 2에 대해 실패를 검사한다. 종류 3은
+그 확률 관문과 공격 기여를 생략한다. 중간 뺄셈은 long 피해 수량으로 승격되기
+전에 워드로 랩어라운드된다. 난수 범위가 0이면 RNG 상태를 소비하지 않는다.
 
-This establishes the damage context only. The separate source-derived command
-controller owns availability, MP cost, legal targets/range, status and healing;
-see [original-strategies.md](original-strategies.md).
-Battle-object byte 4 indexes an imported 256-byte environment lookup window;
-the nominal six state labels are not assumed.
+이것은 피해 컨텍스트만 확정한다. 가용성, MP 비용, 합법 대상/범위, 상태, 회복은
+원작에서 도출한 별도의 커맨드 컨트롤러가 소유한다.
+[original-strategies.md](original-strategies.md)를 참고한다.
+전투 객체 바이트 4는 가져온 256바이트 환경 조회 창을 인덱싱한다. 명목상의 상태
+라벨 6개를 가정하지 않는다.
 
-## Experience and mutation order
+## 경험치와 변경 순서
 
-Only source runtime slots below 15 receive the common hit and defeated-target
-EXP. The first enemy runtime slot has a separate defeated-target bonus. The
-EXP setter excludes its masked NPC identity range, and an initially level-99
-person retains prior EXP. Its level-up loop does not recheck that cap, so an
-initial level below 99 can cross it when a single accumulated EXP word permits
-multiple increments. New levels affect later derived-stat queries; the setter
-does not refill current troops.
+공통 명중 경험치와 격파 대상 경험치는 원작 런타임 슬롯 15 미만만 받는다. 첫
+번째 적 런타임 슬롯에는 별도의 격파 대상 보너스가 있다. 경험치 설정 함수는
+마스크된 NPC 식별 범위를 제외하며, 처음부터 레벨 99인 인물은 이전 경험치를
+유지한다. 레벨 업 루프는 그 상한을 다시 확인하지 않으므로, 누적 경험치 워드
+하나가 여러 번의 증가를 허용하면 99 미만에서 시작한 레벨이 상한을 넘을 수 있다.
+새 레벨은 이후의 파생 능력치 질의에 영향을 준다. 설정 함수는 현재 병력을 다시
+채우지 않는다.
 
-The source writes target troops, updates nonlethal target morale, and mutates
-attacker EXP/level before entering a recursive subtype-7 counter. The counter
-must query the updated shared person objects and the original attacker's terrain.
-The pure strike function intentionally does not duplicate those mutable objects.
-The morale setter can set condition2 after low-morale decline, so the caller
-must recheck the updated target condition flags before entering that counter.
-The final retirement predicate also accepts condition2 with zero morale even
-when troops remain. Its stateful retirement/campaign-hook producer is separate
-from this pure predicate.
+원작은 대상 병력을 쓰고, 치명적이지 않은 대상 사기를 갱신하고, 공격자
+경험치/레벨을 변경한 뒤 재귀적인 하위 유형 7 반격에 들어간다. 반격은 갱신된
+공유 인물 객체와 원래 공격자의 지형을 질의해야 한다. 순수 타격 함수는 그 가변
+객체를 의도적으로 복제하지 않는다. 사기 설정 함수는 사기가 낮게 떨어진 뒤
+condition2를 설정할 수 있으므로, 호출자는 그 반격에 들어가기 전에 갱신된 대상
+조건 플래그를 다시 확인해야 한다. 최종 퇴장 술어는 병력이 남아 있어도 사기가 0인
+condition2도 받아들인다. 상태를 가진 퇴장/캠페인 훅 생성기는 이 순수 술어와
+별개다.
 
-## Resumable physical context and recursive aliasing
+## 재개 가능한 물리 컨텍스트와 재귀 별칭
 
-`OriginalAttackOperation` owns a Codable program counter, completed context
-effects, retirement checks and pending acknowledgement. The synchronous
-`attack` convenience drives this same operation. Each primary/subtype7 context
-uses one mutable producer for presentation draws, damage, target HP/morale and
-attacker EXP. Waiting for a canonical session retirement notice does not repeat
-these quantities or execute the caller's remaining tail.
+`OriginalAttackOperation`은 Codable 프로그램 카운터, 완료된 컨텍스트 효과, 퇴장
+검사, 대기 중인 확인을 소유한다. 동기식 `attack` 편의 함수도 같은 연산을
+구동한다. 각 1차/subtype7 컨텍스트는 연출용 추출, 피해, 대상 HP/사기, 공격자
+경험치에 하나의 가변 생성기를 사용한다. 정식 세션 퇴장 알림을 기다리는 동안 이
+수량을 반복하거나 호출자의 남은 꼬리를 실행하지 않는다.
 
-The original recursive call at `0x322B9` passes the same context pointer to
-`0x31E7A` (`E91A`). That method writes context attacker/target indices at
-`0x31E83..0x31EFD`. No caller restore follows the recursive return. The target
-read at `0x322F2..0x3230D` therefore uses the context's current target, which can
-still be the counter's target. It must not be replaced with a saved logical
-outer target. This corrects the former native loop that preselected two
-different retirement slots.
+원작의 재귀 호출 `0x322B9`는 같은 컨텍스트 포인터를 `0x31E7A`(`E91A`)에
+전달한다. 그 메서드는 `0x31E83..0x31EFD`에서 컨텍스트의 공격자/대상 인덱스를
+쓴다. 재귀 반환 뒤에 호출자의 복원은 없다. 따라서 `0x322F2..0x3230D`의 대상
+읽기는 컨텍스트의 현재 대상을 사용하며, 이는 여전히 반격의 대상일 수 있다. 이를
+저장해 둔 논리적 바깥 대상으로 바꿔서는 안 된다. 이로써 서로 다른 퇴장 슬롯 두
+개를 미리 선택하던 이전 네이티브 루프를 바로잡는다.
 
-A retirement script executes synchronously inside its source call stack. The
-operation yields that notice and requires explicit acknowledgement before
-querying the current target again. The next check reads that slot's current
-person, HP, morale and status, rather than retaining an earlier retirement
-decision. The session's status4/cache/notice producer remains the single owner;
-suppression flag4 changes status without creating a campaign wait. Local check
-indices and global retirement sequence numbers remain distinct.
+퇴장 스크립트는 원작 호출 스택 안에서 동기적으로 실행된다. 연산은 그 알림을
+내보내고, 현재 대상을 다시 질의하기 전에 명시적인 확인을 요구한다. 다음 검사는
+이전의 퇴장 결정을 유지하지 않고 그 슬롯의 현재 인물, HP, 사기, 상태를 읽는다.
+세션의 status4/캐시/알림 생성기가 유일한 소유자로 남는다. 억제 flag4는 캠페인
+대기를 만들지 않고 상태를 바꾼다. 로컬 검사 인덱스와 전역 퇴장 순번은 서로
+구별된다.
 
-The player caller at `0x30E21..0x30E41` and AI caller at
-`0x3034F..0x30373` turn the attacker horizontally before creating the context;
-equal x preserves the prior sprite-flip bit. The acted flag128 is set at
-`0x30E61` or `0x303A1`, after the entire context call returns. It is not set
-while a nested retirement script is waiting. Repeated finished advances return
-the retained result without repeating damage, RNG, EXP or that completion.
+`0x30E21..0x30E41`의 플레이어 호출자와 `0x3034F..0x30373`의 AI 호출자는
+컨텍스트를 만들기 전에 공격자를 수평으로 돌려세운다. x가 같으면 이전 스프라이트
+뒤집기 비트를 유지한다. 행동 완료 flag128은 컨텍스트 호출 전체가 반환된 뒤
+`0x30E61` 또는 `0x303A1`에서 설정된다. 중첩된 퇴장 스크립트가 대기하는 동안에는
+설정되지 않는다. 끝난 뒤 반복해서 진행하면 피해, RNG, 경험치, 그 완료를 반복하지
+않고 유지된 결과를 반환한다.
 
-Synthetic tests cover serialization before/after recursive damage and while a
-retirement is pending, source prelude/counter draw ordering, updated-level
-counter defense, post-morale condition suppression, shared person aliases,
-current-target re-query after script mutation, source context index aliasing,
-suppressed notices and one-time completion. Synthetic slot replacement at a
-retirement boundary tests continuation semantics, not campaign reachability.
-These checks do not establish original animation timing or all presentation RNG.
-The examined retirement-script opcode producers do not establish a second
-re-entry into the global E52E context. Unresolved scripted actor-action paths
-remain separate unsupported boundaries rather than a guessed nested context.
+합성 테스트는 재귀 피해 전후와 퇴장 대기 중의 직렬화, 원작 서두/반격 추출 순서,
+갱신된 레벨의 반격 방어력, 사기 변경 후의 조건 억제, 공유 인물 별칭, 스크립트
+변경 후의 현재 대상 재질의, 원작 컨텍스트 인덱스 별칭, 억제된 알림, 1회 완료를
+다룬다. 퇴장 경계에서의 합성 슬롯 교체는 캠페인 도달 가능성이 아니라 이어가기
+의미를 시험한다. 이 검사는 원작 애니메이션 타이밍이나 모든 연출 RNG를 확립하지
+않는다. 검토한 퇴장 스크립트 명령 생성기들은 전역 E52E 컨텍스트로의 두 번째
+재진입을 확립하지 않는다. 해결되지 않은 스크립트 액터 행동 경로는 추측한 중첩
+컨텍스트가 아니라 별도의 미지원 경계로 남는다.
 
-## Phase recovery
+## 페이즈 회복
 
-The recovery method consumes `random(11)` and `random(5)` before checking source
-unit status for value2. Its troop gain is `(firstRoll+15)*10`; morale gain is
-`defenseScalar/10+secondRoll+1`. A remaining gap smaller than ten after the
-candidate recovery is filled before applying the maximum clamp. Terrain IDs
-8 and 13 enable troop and morale recovery; terrain14 enables troops. The
-method's literal item-ID tests add the corresponding recovery flags.
+회복 메서드는 원작 부대 상태가 value2인지 확인하기 전에 `random(11)`과
+`random(5)`를 소비한다. 병력 회복량은 `(firstRoll+15)*10`이고, 사기 회복량은
+`defenseScalar/10+secondRoll+1`이다. 후보 회복 후 남은 차이가 10보다 작으면
+최대치 고정 전에 그 차이를 채운다. 지형 ID 8과 13은 병력과 사기 회복을
+활성화하고, terrain14는 병력 회복을 활성화한다. 이 메서드의 리터럴 도구 ID
+검사가 해당 회복 플래그를 추가한다.
 
-Active class12 grants `level/10+1` MP to occupied cardinal neighbors. The combat
-kernel returns this amount; the turn owner enumerates neighbors and applies
-the source order against shared state. Maximum MP uses the source low-word
-multiplication and byte caller behavior, including its quotient-256 edge.
+활성 class12는 점유된 상하좌우 이웃에게 `level/10+1` MP를 준다. 전투 커널은 이
+양을 반환하고, 턴 소유자가 이웃을 열거해 공유 상태에 원작 순서대로 적용한다.
+최대 MP는 원작의 하위 워드 곱셈과 바이트 호출자 동작을 사용하며, 몫 256 경계
+사례도 포함한다.
 
-Condition-mask2 recovery is a separate method. It draws `random(100)` only when
-that condition is set and unit status is2, and clears the bit when the draw is
-less than `(defenseScalar+currentMorale)/3`. The current morale must include any
-preceding recovery. Inactive source slots retain absent person/terrain facts;
-their unconditional recovery draws still occur. Phase traversal and invocation
-order are owned by `OriginalTurns.swift`.
+condition-mask2 회복은 별도의 메서드다. 그 조건이 설정되어 있고 부대 상태가 2일
+때에만 `random(100)`을 추출하며, 추출값이 `(defenseScalar+currentMorale)/3`보다
+작으면 비트를 지운다. 현재 사기에는 앞선 회복이 모두 반영되어야 한다. 비활성
+원작 슬롯은 인물/지형 정보가 없는 채로 유지되지만, 무조건적인 회복 추출은 여전히
+일어난다. 페이즈 순회와 호출 순서는 `OriginalTurns.swift`가 소유한다.
 
-The morale setter itself attempts that condition recovery when morale increases,
-and even when the requested and previous morale both equal100. A morale decline
-to a requested word below30 instead consumes `random(5)` and sets condition2 on
-a roll below3. Its clamp uses signed comparison, while that below30 test is
-unsigned. `recover` owns this setter's side effects whenever its morale-recovery
-flag is enabled; later phase condition checks remain separate calls.
+사기 설정 함수 자체도 사기가 증가할 때, 그리고 요청 사기와 이전 사기가 모두
+100일 때에도 그 조건 회복을 시도한다. 반대로 요청 워드가 30 미만인 사기 감소는
+`random(5)`를 소비하고, 굴림이 3 미만이면 condition2를 설정한다. 고정은 부호 있는
+비교를 쓰지만, 그 30 미만 검사는 부호 없는 비교다. 사기 회복 플래그가 켜져
+있으면 이 설정 함수의 부수 효과는 `recover`가 소유한다. 이후 페이즈의 조건
+검사는 별도의 호출로 남는다.
 
-## Verification limits
+## 검증 한계
 
-The source seed initializer `0x181FA..0x18212` packs raw bytes 2 through 5 of the
-runtime clock structure. Runtime `0xCA8A..0xCAE7` fills them from the RTC day,
-hour, minute and second bytes without converting BCD to decimal. `clockSeed`
-accepts those raw bytes explicitly. The two observed static call sites are
-`0x1E197` and `0x1E317`; no original runtime clock sample was captured.
+원작 시드 초기화 `0x181FA..0x18212`는 런타임 시계 구조체의 원시 바이트 2부터
+5까지를 패킹한다. 런타임 `0xCA8A..0xCAE7`은 BCD를 10진수로 변환하지 않고 RTC의
+일, 시, 분, 초 바이트로 그 값을 채운다. `clockSeed`는 그 원시 바이트를 명시적으로
+받는다. 관찰된 정적 호출 지점은 `0x1E197`과 `0x1E317` 두 곳이며, 원작 런타임
+시계 표본은 수집하지 않았다.
 
-Synthetic tests establish arithmetic branches, widths, RNG draw ordering and
-mutation edge cases. Local importer tests establish selected-byte provenance,
-cardinality and unchanged original inputs. These checks do not establish live
-DOS execution, framebuffer/animation parity, the original initial RNG seed,
-noncombat RNG consumption, every strategy command, or a complete campaign.
+합성 테스트는 산술 분기, 폭, RNG 추출 순서, 변경 경계 사례를 확립한다. 로컬
+임포터 테스트는 선택한 바이트의 출처, 개수, 원작 입력의 불변을 확립한다. 이
+검사는 실제 DOS 실행, 프레임버퍼/애니메이션 동등성, 원작 초기 RNG 시드, 전투 외
+RNG 소비, 모든 책략 커맨드, 완전한 캠페인을 확립하지 않는다.

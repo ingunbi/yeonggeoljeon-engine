@@ -1,106 +1,101 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
-# Source movement, AI and turn restoration
+# 원작 이동, AI, 턴 복원
 
-This is a static reconstruction of the examined Korean DOS/V executable. The
-original program has not been run or modified. Synthetic tests establish the
-new implementation's boundary semantics; they do not establish original-runtime
-parity or whole-campaign playability. Original tables and real-file reports stay
-in ignored local build directories.
+이 문서는 조사한 한국어 DOS/V 실행 파일을 정적으로 재구성한 것이다. 원작
+프로그램은 실행하거나 수정하지 않았다. 합성 테스트는 새 구현의 경계 의미를
+입증할 뿐, 원작 런타임과의 일치나 캠페인 전체의 플레이 가능성을 입증하지
+않는다. 원작 테이블과 실제 파일 보고서는 무시되는 로컬 빌드 디렉터리에 둔다.
 
-The executable's class domain has nineteen entries. Movement type, movement
-budget, attack pattern, setup order, strategy level/MP and direction ordering
-remain caller-owned input data exported by `prepare_movement.py`. Terrain defense
-has one owner in `prepare_combat.py`. Raw terrain bytes retain their original
-indexing, including byte255; nominal table row spacing does not justify replacing
-that value with an impassable default. The native scratch grids hold960 cells.
+실행 파일의 병과 정의역은 19개 항목이다. 이동 유형, 이동력, 공격 패턴, 배치
+순서, 책략 레벨/MP, 방향 순서는 `prepare_movement.py`가 내보내는 호출자 소유의
+입력 데이터로 남는다. 지형 방어는 `prepare_combat.py` 한 곳이 소유한다. 원시
+지형 바이트는 byte255를 포함해 원래 인덱스를 유지한다. 테이블의 명목상 행
+간격은 그 값을 통행 불가 기본값으로 바꿀 근거가 되지 않는다. 네이티브 임시
+격자는 960칸이다.
 
-Source movement uses distance-layer scans in row-major order, with the source
-cardinal direction order and first assignment to a cell. Hostile occupancy blocks
-expansion, friendly occupancy permits transit, and hostile-adjacent cells stop
-further expansion except at the seed or under the original script flag. Route
-tracing selects the first strictly lower neighbor, applies original terrain
-costs, and preserves source tie order. The partial trace is also used by AI goal
-selection; player routes require a complete trace and a free destination.
+원작 이동은 거리 층을 행 우선 순서로 훑으며, 원작의 4방향 순서와 칸별 최초
+할당을 따른다. 적이 점유한 칸은 확장을 막고, 아군이 점유한 칸은 통과를
+허용하며, 적에 인접한 칸에서는 시작 칸이거나 원작 스크립트 플래그가 있을 때를
+제외하고 더 확장하지 않는다. 경로 역추적은 값이 엄격히 더 작은 첫 이웃을
+고르고, 원작 지형 비용을 적용하며, 원작의 동점 순서를 유지한다. 부분 역추적은
+AI 목표 선택에도 쓰인다. 플레이어 경로에는 완전한 역추적과 비어 있는 목적지가
+필요하다.
 
-Physical AI predictions are distinct from actual damage. The score preserves
-class-family defense adjustment, terrain integer reduction, the moving unit's
-troop component, preferred-target bonus, word wrapping, and byte weight
-conversion. Attack patterns are the executable's ordered patterns rather than a
-Manhattan radius. Target execution first checks the selected ID and otherwise
-falls through to the last current range candidate, as the source does.
+AI의 물리 공격 예측은 실제 피해와 별개다. 점수는 병과 계열별 방어 보정, 지형에
+의한 정수 감소, 이동하는 부대의 병력 항, 선호 대상 보너스, 워드 랩어라운드,
+바이트 가중치 변환을 유지한다. 공격 패턴은 맨해튼 반경이 아니라 실행 파일에
+정해진 순서의 패턴이다. 대상 실행은 원작처럼 선택된 ID를 먼저 확인하고, 그렇지
+않으면 현재 사거리 후보 중 마지막 후보로 넘어간다.
 
-Native orders0 through4 share one position-score producer. Coordinate and person
-goals, recursive goal bonuses, influence-triggered defense, extended influence
-search, reverse fields, partial-route endpoint bonuses, occupied cells, terrain
-bonuses, staying bonuses and strict ties retain source order. A disappeared cache
-target changes the native order to1. Reaching a coordinate goal changes orders0
-or4 to3 before the final attack gate. Order4 bypasses attack/strategy scoring.
-Strategy availability preserves all36 IDs and the original class, level and MP
-checks. Strategy prediction preserves per-target RNG, damage/status/support
-utility, aggregate support, strict ties and the original word comparison followed
-by byte storage. The caller supplies an explicit native context; planning returns
-RNG writeback rather than silently consuming preview state. These utility scores
-do not execute strategy effects. Unsupported command producers must still fail
-without substituting a physical attack. Script-flag4 retains its direct goal controller for orders0/4 and its separate
-100-point movement budget and baseline-only evaluator for other native orders.
-Overlapping scripted friendly destinations require an original occupancy-grid
-owner and fail explicitly while that representation remains unresolved.
+네이티브 지시 0부터 4까지는 위치 점수 생성기 하나를 공유한다. 좌표 목표와 인물
+목표, 재귀적 목표 보너스, 영향권이 촉발하는 방어, 확장 영향권 탐색, 역방향
+필드, 부분 경로 끝점 보너스, 점유된 칸, 지형 보너스, 제자리 보너스, 엄격한
+동점 처리는 원작 순서를 유지한다. 캐시된 대상이 사라지면 네이티브 지시는 1로
+바뀐다. 좌표 목표에 도달하면 마지막 공격 관문 전에 지시 0 또는 4가 3으로
+바뀐다. 지시 4는 공격/책략 점수 계산을 건너뛴다. 책략 사용 가능 여부는 36개 ID
+전부와 원작의 병과, 레벨, MP 검사를 유지한다. 책략 예측은 대상별 RNG,
+피해/상태/지원 효용, 지원 합산, 엄격한 동점 처리, 그리고 원작의 워드 비교 뒤
+바이트 저장을 유지한다. 호출자는 명시적인 네이티브 문맥을 제공하며, 계획 단계는
+미리보기 상태를 조용히 소비하지 않고 RNG 되쓰기 값을 돌려준다. 이 효용 점수는
+책략 효과를 실행하지 않는다. 지원하지 않는 커맨드 생성기는 여전히 물리 공격으로
+대체하지 않고 실패해야 한다. 스크립트 flag4는 지시 0/4에 대해서는 직접 목표
+제어기를, 다른 네이티브 지시에 대해서는 별도의 100점 이동력과 기준값만 쓰는
+평가기를 유지한다. 스크립트로 정한 아군 목적지가 겹치면 원작 점유 격자의
+소유자가 필요하며, 그 표현이 해결되지 않은 동안에는 명시적으로 실패한다.
 
-The source round consumes a weather draw before its numbered-turn event9. It
-then clears action bits, visits all fifteen friendly slots for upkeep (including
-absent slots), checks global event0, processes friendly condition recovery and
-manual input, runs friendly automatic orders, visits all thirty enemy slots for
-upkeep and condition recovery, and runs enemy automatic orders. Automatic order
-priority is recovery terrain, recovery need, then the remaining units, each in
-runtime-slot order. Native priority numbers for absent source objects remain
-unresolved; active action order is preserved without inventing those values.
+원작 라운드는 번호 턴 event9 전에 날씨 난수를 한 번 뽑는다. 그다음 행동 비트를
+지우고, 아군 슬롯 15개 전부(빈 슬롯 포함)를 돌며 유지 처리를 하고, 전역
+event0을 검사하고, 아군 상태 회복과 수동 입력을 처리하고, 아군 자동 지시를
+실행하고, 적 슬롯 30개 전부를 돌며 유지 처리와 상태 회복을 하고, 적 자동
+지시를 실행한다. 자동 지시의 우선순위는 회복 지형, 회복 필요, 나머지 부대
+순이며, 각각 런타임 슬롯 순서를 따른다. 부재한 원작 객체의 네이티브 우선순위
+번호는 해결되지 않았다. 그 값을 지어내지 않고 활성 행동 순서만 유지한다.
 
-Hooks preserve campaign ownership: numbered rounds are event9, global checks are
-event0, and unit checks query event6 (person/coordinate), event11 (person/region),
-then event4 for cardinal neighbors. Failed friendly-person lookups try the
-source wildcard identity. Each probe must be requested after the preceding
-script completes so changed positions and roster are read anew. Exhausting the
-source round limit yields result3. No generic elimination rule supplies victory.
+훅은 캠페인의 소유권을 유지한다. 번호 라운드는 event9, 전역 검사는 event0이고,
+부대 검사는 event6(인물/좌표), event11(인물/영역), 그다음 4방향 이웃에 대한
+event4를 조회한다. 아군 인물 조회가 실패하면 원작의 와일드카드 식별자를
+시도한다. 바뀐 위치와 명단을 새로 읽도록, 각 조회는 앞선 스크립트가 끝난 뒤에
+요청해야 한다. 원작 라운드 제한을 다 쓰면 result3이 된다. 일반적인 전멸 규칙이
+승리를 주지는 않는다.
 
-Manual order7 permits moving before acting. Attacks and waiting set bit80;
-movement sets bit40. An attack prevents a later move. Cancelling the source
-command menu restores its saved origin and clears bit40. Waiting changes no
-morale. Combat-owned upkeep and morale setters retain their own RNG consumption,
-condition changes, integer widths and class-specific MP effects.
+수동 지시 7은 행동 전에 이동할 수 있게 한다. 공격과 대기는 bit80을, 이동은
+bit40을 설정한다. 공격하면 그 뒤에 이동할 수 없다. 원작 커맨드 메뉴를 취소하면
+저장해 둔 출발 위치로 되돌리고 bit40을 지운다. 대기는 사기를 바꾸지 않는다.
+전투가 소유한 유지 처리와 사기 설정 함수는 고유한 RNG 소비, 상태 변화, 정수
+폭, 병과별 MP 효과를 유지한다.
 
-Battle script actions have a separate native action-manager byte, duel context,
-ordered environment backups and marker overlays. Duel setup, clash, motion and
-completion preserve their coordinates, frame selectors and conditional sound RNG;
-they do not invent troop loss or retirement. Native bitmap timing remains
-unrestored. Affiliation transfer retains shared person identity and copies the
-first matching runtime slot into the first inactive slot of the opposite side.
-Side-wide troop effects visit live slots without deduplicating aliased people.
-Environment effects preserve sequential picture remaps, byte wrapping, raw type
-indices and the first matching backup rather than normalizing them downstream.
+전투 스크립트 동작에는 별도의 네이티브 동작 관리자 바이트, 일기토 문맥, 순서가
+있는 환경 백업, 표식 오버레이가 있다. 일기토의 준비, 격돌, 동작, 종료는 좌표,
+프레임 선택자, 조건부 효과음 RNG를 유지하며, 병력 손실이나 퇴장을 지어내지
+않는다. 네이티브 비트맵 타이밍은 복원하지 않았다. 소속 이전은 공유 인물
+식별자를 유지하고, 처음 일치하는 런타임 슬롯을 반대 진영의 첫 비활성 슬롯으로
+복사한다. 진영 전체 병력 효과는 별칭으로 겹친 인물의 중복을 제거하지 않고
+살아 있는 슬롯을 돈다. 환경 효과는 순차적인 그림 재매핑, 바이트 랩어라운드,
+원시 유형 인덱스, 처음 일치하는 백업을 뒤 단계에서 정규화하지 않고 그대로
+유지한다.
 
-Generic campaign place, move and remove commands dispatch to different producers
-on battle maps. Place activates a reserved runtime slot from its matching setup
-row, rather than copying the VM actor cache's coordinates. Activation's flip is
-unit flag10; it is independent of the byte8 AI priority. Scripted movement uses
-the native flag4 goal controller and then clears C4. Scripted removal sets native
-status4 while suppressing death/objective effects and clears references only from
-order0 followers. Native person lookup remains the first matching slot, including
-inactive aliases. The VM owns its actor cache and typed operand interpretation;
-these battle adapters own live-unit mutations. Party activation and spawn search
-have one owner in `OriginalParty`.
+캠페인의 일반 배치, 이동, 제거 명령은 전투 맵에서 서로 다른 생성기로 분기한다.
+배치는 VM 행위자 캐시의 좌표를 복사하지 않고, 일치하는 배치 행에서 예약된
+런타임 슬롯을 활성화한다. 활성화 때의 뒤집기는 부대 flag10이며, byte8 AI
+우선순위와 무관하다. 스크립트 이동은 네이티브 flag4 목표 제어기를 쓴 뒤 C4를
+지운다. 스크립트 제거는 사망/목표 효과를 억제하면서 네이티브 status4를 설정하고,
+지시 0 추종 부대에게서만 참조를 지운다. 네이티브 인물 조회는 비활성 별칭을
+포함해 여전히 처음 일치하는 슬롯을 고른다. VM은 행위자 캐시와 유형별 피연산자
+해석을 소유하고, 이 전투 어댑터는 살아 있는 부대의 변경을 소유한다. 파티
+활성화와 출현 위치 탐색은 `OriginalParty` 한 곳이 소유한다.
 
-## Orders with no target
+## 대상이 없는 지시
 
-Orders zero and four aim at the target slot, or at the coordinate bytes `+6`,`+7`
-when the slot is `FF` (`30510`). A script can set the order and name a person who
-is not on the map; the target setter then declines (`33F94`) and the bytes stay as
-they were. Neither unit constructor writes them, so they hold zero or a goal from
-an earlier battle in that slot. The engine uses zero and does not carry goals across
-battles. One chapter-three battle reaches this once the named person is absent.
+지시 0과 4는 대상 슬롯을 노리고, 슬롯이 `FF`이면 좌표 바이트 `+6`,`+7`을
+노린다(`30510`). 스크립트는 지시를 설정하면서 맵에 없는 인물을 지정할 수 있다.
+그러면 대상 설정 함수가 거절하고(`33F94`) 바이트는 그대로 남는다. 두 부대
+생성자 모두 이 바이트를 쓰지 않으므로, 값은 0이거나 그 슬롯에 있던 이전 전투의
+목표다. 엔진은 0을 쓰고 목표를 다음 전투로 넘기지 않는다. 3장의 한 전투는
+지정된 인물이 없을 때 이 경우에 이른다.
 
-## Cleared enemy roster
+## 비워진 적 명단
 
-`1CB6:4ABC` (`2801C`) runs after the acting unit's own events, from the manual
-path (`27EFE`) and the AI path (`30638`, flags `80`/`40`). It counts status-two
-enemies in slots 15..44. With none left it probes kind seven, then the automatic
-record. Objective scripts that end a battle by elimination depend on this.
+`1CB6:4ABC`(`2801C`)는 행동한 부대 자신의 이벤트 뒤에, 수동 경로(`27EFE`)와
+AI 경로(`30638`, 플래그 `80`/`40`)에서 실행된다. 슬롯 15..44에서 상태 2인 적을
+센다. 하나도 남지 않으면 종류 7을 조회하고, 그다음 자동 레코드를 조회한다.
+전멸로 전투를 끝내는 목표 스크립트는 이 동작에 의존한다.

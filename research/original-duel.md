@@ -1,89 +1,90 @@
-# Duel scene
+# 일기토 장면
 
-Static derivation from `MAIN.EXE`, with `SBOPL2.COM` for the tick rate. A
-subagent wrote the first reading with the same disassembly tools; the engine's
-checks below are synthetic. The original was never run, and nothing was compared
-with a DOS framebuffer, real audio or real timing.
+`MAIN.EXE`의 정적 분석이며, 틱 속도는 `SBOPL2.COM`에서 얻었다. 첫 판독은 같은
+디스어셈블리 도구로 하위 에이전트가 작성했다. 아래 엔진 검사는 합성 입력을 쓴다.
+원작은 한 번도 실행하지 않았고, DOS 프레임버퍼나 실제 오디오, 실제 타이밍과
+비교한 것은 없다.
 
-Offsets are MAIN file offsets unless written `seg:off` or `DS:off`. 2CB4 offset
-plus `0x33540` is the file offset.
+오프셋은 `seg:off`나 `DS:off`로 적지 않은 한 MAIN 파일 오프셋이다. 2CB4
+오프셋에 `0x33540`을 더하면 파일 오프셋이다.
 
-## Dispatch
+## 분기
 
-The script interpreter `CF5:8794` sends each opcode through one wrapper to one
-handler. The duel context is `DS:E5B4`.
+스크립트 해석기 `CF5:8794`는 각 명령을 래퍼 하나를 거쳐 처리기 하나로 보낸다.
+일기토 문맥은 `DS:E5B4`다.
 
-| Op | Case | Handler |
+| 명령 | 분기 | 처리기 |
 |---|---|---|
-| `10` | `0x1C722` | setup `2CB4:125E` (`0x3479E..0x34A0E`) |
-| `33` | `0x1CFDD` | end `2CB4:1824` (`0x34D64..0x34DD9`) |
-| `34` | `0x1CFE8` | clash `2CB4:1736` (`0x34C76..0x34D62`) |
-| `35` | `0x1CFF3` | motion `2CB4:14D0` (`0x34A10..0x34C74`) |
+| `10` | `0x1C722` | 준비 `2CB4:125E` (`0x3479E..0x34A0E`) |
+| `33` | `0x1CFDD` | 종료 `2CB4:1824` (`0x34D64..0x34DD9`) |
+| `34` | `0x1CFE8` | 격돌 `2CB4:1736` (`0x34C76..0x34D62`) |
+| `35` | `0x1CFF3` | 동작 `2CB4:14D0` (`0x34A10..0x34C74`) |
 
-A person without a unit record makes the wrapper return before the handler.
+부대 레코드가 없는 인물이면 래퍼가 처리기 전에 돌아온다.
 
-## Timing and drawing
+## 타이밍과 그리기
 
-`CF5:2502(u)` only starts a countdown of `6u` ticks, and `CF5:24C4` waits for it. A
-tick is 16.58 ms (`SBOPL2.COM` sets the PIT divisor to `0x1000` and counts 53 of every
-256 interrupts). Every hold starts its countdown before it draws, so a step lasts at
-least its ticks.
+`CF5:2502(u)`는 `6u`틱 카운트다운을 시작하기만 하고, `CF5:24C4`가 그것을
+기다린다. 한 틱은 16.58 ms다(`SBOPL2.COM`이 PIT 분주값을 `0x1000`으로 설정하고
+인터럽트 256번마다 53번을 센다). 모든 대기는 그리기 전에 카운트다운을
+시작하므로, 한 단계는 적어도 그 틱 수만큼 지속된다.
 
-`2CB4:0CD6` stamps a frame's 6×6 tiles into one grid layer, and `2CB4:0C16` is the
-only present. Participant 1 sits in layer 0 and participant 0 in layer 1, so
-participant 0 covers participant 1. A rider at cell `x` is a 96×96 picture at
-`(16+16x, 80)` inside the scene at `(16,32,416,208)`. The camera scrolls only the
-background: the combat view's back and ground members, chosen by the terrain under
-participant 1 at setup (`0x34877..0x348E6`).
+`2CB4:0CD6`은 프레임 하나의 6×6 타일을 격자 레이어 하나에 찍고, 화면 표시는
+`2CB4:0C16`뿐이다. 참가자 1은 레이어 0에, 참가자 0은 레이어 1에 있으므로 참가자
+0이 참가자 1을 덮는다. 칸 `x`의 기수는 `(16,32,416,208)` 장면 안
+`(16+16x, 80)`에 있는 96×96 그림이다. 카메라는 배경만 스크롤한다. 배경은 전투
+화면의 뒤쪽 멤버와 지면 멤버이며, 준비 때 참가자 1 아래의 지형으로 고른다
+(`0x34877..0x348E6`).
 
-Setup also draws two lower windows (`2CB4:0C3C`, then `1CB6:F752` with sides 2 and
-3): portrait, name, level and class, then strength (person `+19` over 100), troops
-over the maximum, and experience over 100. The labels are `DS:4FAA`, `4FBD`, `4FC2`
-and `4FDD`. They are drawn once and not updated.
+준비 단계는 아래쪽 창 두 개도 그린다(`2CB4:0C3C`, 그다음 진영 2와 3으로
+`1CB6:F752`). 얼굴 그림, 이름, 레벨, 병과, 그다음 무력(인물 `+19`)/100,
+병력/최대 병력, 경험치/100이다. 레이블은 `DS:4FAA`, `4FBD`, `4FC2`, `4FDD`다.
+한 번만 그리고 갱신하지 않는다.
 
-## Steps
+## 단계
 
-Run poses repeat 1, 2, 3. `start` is `CF5:6280`, which ends any effect playing;
-`stop` is `CF5:629E`; `wait` is `CF5:631A`, an untimed wait for the effect to end.
+달리기 자세는 1, 2, 3을 반복한다. `start`는 재생 중인 효과음을 끝내는
+`CF5:6280`이고, `stop`은 `CF5:629E`, `wait`는 효과음이 끝나기를 시간 제한 없이
+기다리는 `CF5:631A`다.
 
-- Setup: song 18; each rider runs alone at cell 7 or 13 while the ground scrolls
-  under it (sound 17, one 24-tick hold and eleven 4-tick holds each); then both ride
-  in from −6 and 26 to 4 and 16; then a 12-tick hold. At least 188 ticks.
-- Adjust (`115E`): both riders step toward each other, or apart with bit 7, 4 ticks a
-  step on sound 17. Gap 4 starts 38; overlap starts 40, waits, and restarts 17.
-- Approach (`0FFC`): one rider runs until four cells short, or through and on for
-  code 10. Crossing the other starts 40 and waits.
-- Clash: adjust 4, five rounds, adjust apart 4. Each round draws `rng(3)` for each
-  rider (0 frames 4 and 5, 1 frames 6 and 7, 2 stands), then shows two 4-tick poses.
-  Unless both stand, each pose draws `rng(2)` for sound 40 or 41. A 12-tick pause ends
-  the round. At least 132 ticks. Nothing else in the scene draws random numbers.
-- Motion codes, by `DS:5082` sound: 0 approach, frames 4 and 5, sound 40; 1 approach,
-  6 and 7, 41; 2 frames 8 and 9, 23; 3 loads death art into bank 1 and shows frames
-  0 to 4, then 21; 5 stands, 13; 6 and 7 as 0 and 1 with 38 and 39; 8 adjust 10; 9
-  pans the camera; 10 runs through. Codes 0 to 3, 6 and 7 hold 6 ticks a frame and
-  then wait for the sound. Code 4 makes participant 1 flee for fourteen 4-tick steps
-  and leaves it erased.
-- End: the map view returns and the song from before setup plays again.
+- 준비: 곡 18. 각 기수가 칸 7 또는 13에서 혼자 달리고 그 아래로 지면이
+  스크롤된다(각각 효과음 17, 24틱 대기 한 번과 4틱 대기 열한 번). 그다음 둘이
+  −6과 26에서 4와 16까지 달려 들어온다. 그다음 12틱 대기. 최소 188틱.
+- 간격 조정(`115E`): 두 기수가 서로를 향해, 또는 비트 7이 있으면 서로 멀어지는
+  쪽으로, 효과음 17과 함께 한 걸음에 4틱씩 움직인다. 간격이 4가 되면 38을
+  시작하고, 겹치면 40을 시작해 기다린 뒤 17을 다시 시작한다.
+- 접근(`0FFC`): 한 기수가 상대에게 네 칸 못 미칠 때까지 달리거나, 코드 10이면
+  상대를 지나쳐 계속 달린다. 상대를 가로지르면 40을 시작하고 기다린다.
+- 격돌: 간격 조정 4, 다섯 라운드, 멀어지는 간격 조정 4. 각 라운드는 기수마다
+  `rng(3)`을 뽑고(0은 프레임 4와 5, 1은 프레임 6과 7, 2는 서 있기), 4틱짜리
+  자세 두 개를 보인다. 둘 다 서 있는 경우가 아니면 각 자세마다 `rng(2)`를 뽑아
+  효과음 40 또는 41을 고른다. 12틱 멈춤으로 라운드가 끝난다. 최소 132틱. 장면의
+  다른 어떤 부분도 난수를 뽑지 않는다.
+- 동작 코드(효과음은 `DS:5082` 기준): 0은 접근, 프레임 4와 5, 효과음 40; 1은
+  접근, 6과 7, 41; 2는 프레임 8과 9, 23; 3은 사망 그림을 뱅크 1에 읽고 프레임 0부터
+  4까지 보인 뒤 21; 5는 서 있기, 13; 6과 7은 0, 1과 같되 38과 39; 8은 간격 조정
+  10; 9는 카메라 이동; 10은 지나쳐 달리기. 코드 0부터 3까지와 6, 7은 프레임마다
+  6틱 대기한 뒤 효과음을 기다린다. 코드 4는 참가자 1을 4틱 걸음 열네 번 동안
+  달아나게 하고 지운 채로 둔다.
+- 종료: 맵 화면이 돌아오고 준비 전의 곡이 다시 재생된다.
 
-Death and flee art always load into participant 1's bank, whichever rider the script
-names, and a load replaces only some frames.
+사망 그림과 도주 그림은 스크립트가 어느 기수를 지정하든 항상 참가자 1의 뱅크에
+읽히며, 한 번 읽을 때 일부 프레임만 바뀐다.
 
-## Engine
+## 엔진
 
-`OriginalScriptDuel` in the battle session still owns positions, frames, the camera
-and the RNG. `OriginalDuelStage` replays the same steps for the window from the
-state before the opcode; the clash replays the session's draws from the RNG state
-the session started from. A self-check runs setup, the clash, every motion code and
-a flee against the session and compares positions, frames, camera and RNG. The
-campaign holds the script while the steps play, as the source's handlers do. The
-input replays and `--battle` apply a duel at once and show its end state.
+전투 세션의 `OriginalScriptDuel`이 여전히 위치, 프레임, 카메라, RNG를 소유한다.
+`OriginalDuelStage`는 명령 이전 상태에서 같은 단계를 창에 다시 재생한다. 격돌은
+세션이 시작한 RNG 상태에서 세션의 난수 뽑기를 다시 재생한다. 자체 검사는 준비,
+격돌, 모든 동작 코드, 도주 하나를 세션과 대조해 실행하고 위치, 프레임, 카메라,
+RNG를 비교한다. 캠페인은 원작 처리기처럼 단계가 재생되는 동안 스크립트를 멈춰
+둔다. 입력 재생과 `--battle`은 일기토를 즉시 적용하고 끝 상태를 보인다.
 
-## Not restored or not checked
+## 복원하지 않았거나 확인하지 않은 것
 
-- Effect lengths, so the length of every wait, were not compared with the original.
-- A rider already past its mark walks away until a word wraps in the source; the
-  engine jumps to the mark, as the session does.
-- The panels' pattern fill and window frames; the engine draws its own panels.
-- The disk loads at setup and death take real time that is not modelled.
-- Camera values past 40 read outside the ground rows in the source; the engine
-  clamps.
+- 효과음 길이, 따라서 모든 기다림의 길이는 원작과 비교하지 않았다.
+- 이미 목표 지점을 지난 기수는 원작에서 워드가 순환할 때까지 멀어져 간다.
+  엔진은 세션처럼 목표 지점으로 바로 이동한다.
+- 패널의 패턴 채우기와 창 테두리. 엔진은 자체 패널을 그린다.
+- 준비와 사망 때의 디스크 읽기는 실제 시간이 걸리지만 모델링하지 않았다.
+- 원작에서 40을 넘는 카메라 값은 지면 행 바깥을 읽는다. 엔진은 값을 제한한다.

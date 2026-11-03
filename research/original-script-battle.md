@@ -1,57 +1,54 @@
-# Script battle orders and inventory gifts
+# 스크립트 전투 지시와 소지품 지급
 
-These are static source derivations for the examined DOS/V profile. Original
-instructions, item values/names and resource payloads are not embedded here.
-The campaign format owner parses operands once; `OriginalScriptBattle.swift`
-consumes its typed instruction arguments.
+조사한 DOS/V 프로필에 대한 원작 정적 분석이다. 원작 명령, 도구 값/이름, 리소스
+페이로드는 여기에 넣지 않았다. 캠페인 형식 담당 코드가 피연산자를 한 번
+파싱하고, `OriginalScriptBattle.swift`는 그 타입이 정해진 명령 인자를 소비한다.
 
-Opcode `0x1C` (`MAIN0x1C946..0x1C9E5`) changes native AI orders and goals. It
-does not set combat stats. The common method (`0x3385A..0x338A5`) finds the first
-matching person among all45 runtime slots, including reserves/retired slots.
-When the person's affiliation low bits are nonzero it clears unit condition
-mask4 and passes the imported mode lookup into the source mode setter.
+명령 `0x1C`(`MAIN0x1C946..0x1C9E5`)는 네이티브 AI 지시와 목표를 바꾼다. 전투
+능력치는 설정하지 않는다. 공통 메서드(`0x3385A..0x338A5`)는 예비/퇴장 슬롯을
+포함한 런타임 슬롯 45개 전체에서 처음 일치하는 인물을 찾는다. 인물의 소속 하위
+비트가 0이 아니면 부대 상태 마스크 4를 지우고, 가져온 모드 조회 결과를 원작 모드
+설정 함수에 넘긴다.
 
-Selectors0/1/2 then consume and discard a word. Selectors3/5 resolve a target
-person to its first runtime slot and set the preferred-target byte. Selectors4/6
-consume typed x/y bytes and store a goal only when the class can traverse its
-terrain; that method also clears the preferred-target byte. These later setters
-are independent of the common affiliation gate. The target setter requires
-both person lookups; the coordinate setter clears mask4 before its passability
-test. Source goal coordinates remain stored when setting a preferred target.
-An out-of-board source lookup remains unsupported because adjacent raw memory
-is not interpreted as part of the map.
+이어 선택자 0/1/2는 워드 하나를 읽고 버린다. 선택자 3/5는 대상 인물을 첫
+런타임 슬롯으로 해석하고 우선 대상 바이트를 설정한다. 선택자 4/6은 타입이
+정해진 x/y 바이트를 읽고, 병과가 그 지형을 지나갈 수 있을 때만 목표를 저장한다.
+이 메서드는 우선 대상 바이트도 지운다. 이 뒤쪽 설정 함수들은 공통 소속 관문과
+무관하다. 대상 설정 함수는 두 인물 조회가 모두 필요하며, 좌표 설정 함수는 통과
+가능 검사 전에 마스크 4를 지운다. 우선 대상을 설정할 때 원작 목표 좌표는 저장된
+채로 남는다. 판 밖 원작 조회는 인접한 raw 메모리를 지도의 일부로 해석하지
+않으므로 계속 지원하지 않는다.
 
-Opcode `0x1B` (`0x1C902..0x1C943`) grants its byte item ID. Its recipient is
-person0 outside a battle map, or the explicit battle-context+7 person for map
-kind3. That current-person field belongs to the campaign/battle host and must
-not be inferred from the last actor or from similarly numbered script fields.
+명령 `0x1B`(`0x1C902..0x1C943`)는 바이트 도구 ID를 지급한다. 받는 인물은 전투
+지도 밖에서는 인물 0이고, 지도 종류 3에서는 명시적인 전투 문맥+7의 인물이다. 그
+현재 인물 필드는 캠페인/전투 호스트에 속하며, 마지막 행위자나 번호가 비슷한
+스크립트 필드에서 추정해서는 안 된다.
 
-The inventory method (`0x1A6EC..0x1A88F`) first inserts into the first empty one
-of eight slots. Full inventory invokes player replacement input. Cancellation
-retains the previous inventory. After choosing an old item, the source searches
-its first matching item-ID slot; selecting a duplicate therefore replaces the
-first match. `grantScriptItem` preserves those rules. Missing replacement input
-stops explicitly rather than silently discarding or overwriting an item.
+소지품 메서드(`0x1A6EC..0x1A88F`)는 먼저 여덟 칸 가운데 첫 빈칸에 넣는다.
+소지품이 가득 차 있으면 플레이어 교체 입력을 부른다. 취소하면 이전 소지품을
+유지한다. 기존 도구를 고른 뒤 원작은 그 도구 ID와 처음 일치하는 칸을 찾으므로,
+중복 도구를 고르면 처음 일치하는 칸이 교체된다. `grantScriptItem`은 이 규칙을
+지킨다. 교체 입력이 없으면 도구를 조용히 버리거나 덮어쓰지 않고 명시적으로
+멈춘다.
 
-Synthetic integration tests cover mode/affiliation separation, retired-slot and
-first-match lookup, blocked-goal partial effects, retained coordinates, unused
-word operands, item insertion/duplicates and full-inventory replacement. They
-do not establish original GUI presentation, a completed campaign or live DOS
-execution parity.
+합성 통합 테스트는 모드/소속 분리, 퇴장 슬롯과 첫 일치 조회, 막힌 목표의 부분
+효과, 유지되는 좌표, 쓰이지 않는 워드 피연산자, 도구 삽입/중복, 가득 찬 소지품
+교체를 다룬다. 이 테스트는 원작 GUI 표현, 완주한 캠페인, 실제 DOS 실행과의
+일치를 확립하지 않는다.
 
-Opcode `0x1A` (`0x1C8D2..0x1C8FF`) reads one person word and calls the same
-generic placement helper as `0x0A`, with literal x0, y0 and raw direction0.
-`0x1D2D4..0x1D3D4` updates the owned actor-cache row before dispatching by map
-kind. Settlement factories retain those coordinates; world placement doubles
-them, preserving zero. Their position setters store the supplied bytes rather
-than resolving a default entry or city location. The campaign producer therefore
-normalizes `1A` to a typed `place` command with `sourcePlacementFacing:0`.
+명령 `0x1A`(`0x1C8D2..0x1C8FF`)는 인물 워드 하나를 읽고, 리터럴 x 0, y 0, raw
+방향 0으로 `0x0A`와 같은 범용 배치 도우미를 호출한다.
+`0x1D2D4..0x1D3D4`는 지도 종류로 분기하기 전에 소유한 행위자 캐시 행을
+갱신한다. 거점 팩토리는 그 좌표를 유지하고, 세계지도 배치는 0을 유지한 채
+좌표를 두 배로 한다. 이들의 위치 설정 함수는 기본 진입점이나 도시 위치를
+해석하지 않고 주어진 바이트를 저장한다. 그래서 캠페인 생성기는 `1A`를
+`sourcePlacementFacing:0`이 있는 타입이 정해진 `place` 명령으로 정규화한다.
 
-For battle maps, `0x335BE..0x3366C` ignores the command's position and direction:
-it finds the first native person slot, requires status1 and activates from that
-person's first setup row. Setup flag4 determines sprite flip. The tail after
-activation does not clear action/condition maskC4. The battle adapter accepts
-the ignored direction's omission, while the common command/host/runtime owner
-interprets the exclusive script-quarter versus raw8 direction fields for cache
-and nonbattle placement. Synthetic producer and native tests cover this path;
-original bytes, images and derived catalogs remain local imports.
+전투 지도에서 `0x335BE..0x3366C`는 명령의 위치와 방향을 무시한다. 첫 네이티브
+인물 슬롯을 찾고, 상태 1을 요구하며, 그 인물의 첫 준비 행에서 활성화한다. 준비
+플래그 4가 스프라이트 뒤집기를 정한다. 활성화 뒤의 꼬리 부분은 행동/상태 마스크
+C4를 지우지 않는다. 전투 어댑터는 무시되는 방향이 빠진 것을 받아들이며, 공통
+명령/호스트/런타임 담당 코드는 캐시와 비전투 배치를 위해 서로 배타적인 스크립트
+4분할 방향 필드와 raw 8 방향 필드를 해석한다. 합성 생성기 테스트와 네이티브
+테스트가 이 경로를 다룬다. 원작 바이트, 그림, 파생 카탈로그는 로컬에서 가져오는
+것으로 남는다.

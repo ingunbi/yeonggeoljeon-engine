@@ -1,89 +1,83 @@
-# Outer framework, battle exit and retry selector
+# 외부 프레임워크, 전투 종료, 재시도 선택기
 
-These are static derivations from the pinned Korean DOS/V MAIN profile and
-the examined HERO.COM launcher. No original program was run or modified.
-Offsets are MAIN.EXE file offsets (load image plus header `0x6A00`).
+고정한 한국어 DOS/V MAIN 프로필과 조사한 HERO.COM 실행기의 정적 분석이다. 원작
+프로그램은 실행하거나 수정하지 않았다. 오프셋은 MAIN.EXE 파일 오프셋이다(적재
+이미지 + 헤더 `0x6A00`).
 
-## Battle-loop dispatcher
+## 전투 루프 분기기
 
-The framework map loop `0x1E1DC..0x1E3A7` enters the map kind held by the
-game object and, for kind three, runs the battle loop at `0x1E31C`. Its raw
-result is interpreted at `0x1E324..0x1E344`:
+프레임워크 맵 루프 `0x1E1DC..0x1E3A7`은 게임 객체가 가진 맵 종류로 들어가며,
+종류 3이면 `0x1E31C`에서 전투 루프를 실행한다. 그 원시 결과는
+`0x1E324..0x1E344`에서 해석된다.
 
-| Raw result | Effect |
+| 원시 결과 | 효과 |
 |---|---|
-| 1 | Restore the battle checkpoint and rerun the battle loop (`0x1E347..0x1E368`). |
-| 3 | Add framework mask `20`. |
-| 4 | Add framework mask `40`. |
-| other | Call `CF5:C86C` (`0x201BC..0x2022E`), which enters script context `+0A`. |
+| 1 | 전투 체크포인트를 복원하고 전투 루프를 다시 실행한다(`0x1E347..0x1E368`). |
+| 3 | 프레임워크 마스크 `20`을 더한다. |
+| 4 | 프레임워크 마스크 `40`을 더한다. |
+| 기타 | `CF5:C86C`(`0x201BC..0x2022E`)를 호출해 스크립트 문맥 `+0A`로 들어간다. |
 
-Raw result one comes from the battle system menu (`0x27D12..0x27EA3`,
-nine DS:`3AA0` items). Retreat asks the DS:`[3D1E]` question and writes
-result one (`0x27D77..0x27DA3`) unless script context `+1CB` is set; that
-field is the setup header's preserved-slot byte (`0x1C427..0x1C42D`), and
-the refusal shows DS:`3D2E`. Quit asks DS:`3D4F` and writes result four
-(`0x27E87..0x27EA3`). Source `36` saves the script context with its setup
-rows (`CF5:7E4A`), the persons those rows name and the player object
-(`CF5:AD5A`). Result one restores the same three (`CF5:7FE0`, `CF5:ADB4`)
-and reruns the battle loop. RNG, cities, the game object and `7A76` are not
-restored.
+원시 결과 1은 전투 시스템 메뉴(`0x27D12..0x27EA3`, DS:`3AA0` 항목 9개)에서
+나온다. 총퇴각은 DS:`[3D1E]` 질문을 하고, 스크립트 문맥 `+1CB`가 설정되어 있지
+않으면 결과 1을 쓴다(`0x27D77..0x27DA3`). 이 필드는 배치 헤더의 보존 슬롯
+바이트(`0x1C427..0x1C42D`)이며, 거부할 때는 DS:`3D2E`를 보인다. 종료는
+DS:`3D4F`를 묻고 결과 4를 쓴다(`0x27E87..0x27EA3`). 원작 `36`은 스크립트 문맥을
+그 배치 행(`CF5:7E4A`), 그 행들이 지정한 인물, 플레이어 객체(`CF5:AD5A`)와 함께
+저장한다. 결과 1은 이 셋을 똑같이 복원하고(`CF5:7FE0`, `CF5:ADB4`) 전투 루프를
+다시 실행한다. RNG, 도시, 게임 객체, `7A76`은 복원하지 않는다.
 
-Opcodes `09` and `11` both write context `+0A`. A source `11` inside a
-battle sets the raw result through `336FA` and selects the next map without
-an interpreter return. The native host therefore records both producers and
-enters the map only after the battle loop ends. The latest producer that
-agrees with the VM's context map supplies provenance. A context map of kind
-three is the next battle of a chain: C86C reaches `20172` and the new battle
-inherits the carryover exactly as a source `09` entry would. Four source `11`
-sites select a battle this way, so the battle catalog lists them as load sites.
+명령 `09`와 `11`은 둘 다 문맥 `+0A`를 쓴다. 전투 안의 원작 `11`은 `336FA`를
+통해 원시 결과를 설정하고, 해석기 반환 없이 다음 맵을 고른다. 그래서 네이티브
+호스트는 두 생성기를 모두 기록하고, 전투 루프가 끝난 뒤에만 맵에 들어간다. VM의
+문맥 맵과 일치하는 가장 최근 생성기가 출처를 제공한다. 종류 3인 문맥 맵은
+연쇄의 다음 전투다. C86C가 `20172`에 이르고, 새 전투는 원작 `09` 진입과 똑같이
+이월 상태를 물려받는다. 원작 `11` 지점 네 곳이 이렇게 전투를 고르므로, 전투
+목록은 이들을 적재 지점으로 나열한다.
 
-The native host records continuation owners when source `36` runs inside a
-battle. On result one it restores the script context (keeping game field 4,
-city objects, `7A76` and the device music), the setup-named persons, the
-roster and money, then rebuilds the battle session with the continuing RNG.
-The battle view shows retreat and quit with the exported labels and
-questions. Locally, retreating after three rounds of chapter one's first
-battle returned the units, person values, money and script position to the
-battle start; quitting produced mask `40` and the retry selector.
+네이티브 호스트는 원작 `36`이 전투 안에서 실행될 때 연속 상태의 소유자를
+기록한다. 결과 1이면 스크립트 문맥(게임 필드 4, 도시 객체, `7A76`, 장치 음악은
+유지), 배치가 지정한 인물, 명단, 소지금을 복원한 뒤, 이어지는 RNG로 전투 세션을
+다시 만든다. 전투 화면은 내보낸 레이블과 질문으로 총퇴각과 종료를 보인다.
+로컬에서 1장 첫 전투의 3라운드 뒤에 총퇴각하자 부대, 인물 값, 소지금, 스크립트
+위치가 전투 시작 때로 돌아갔다. 종료하자 마스크 `40`과 재시도 선택기가 나왔다.
 
-After the dispatcher, `0x1E399..0x1E39D` leaves the framework loop when the
-mask contains `04`, `08`, `20` or `40`. World and town loops translate
-interpreter status seven to mask `20` and status eight to mask `04`
-(`0x22250..0x22285`, `0x26491..0x264CA`). A source `29` inside a battle
-writes raw result three as well, so both routes reach mask `20`.
+분기기 뒤에서 `0x1E399..0x1E39D`는 마스크에 `04`, `08`, `20`, `40` 중 하나가
+있으면 프레임워크 루프를 빠져나간다. 세계지도 루프와 마을 루프는 해석기 상태 7을
+마스크 `20`으로, 상태 8을 마스크 `04`로 바꾼다(`0x22250..0x22285`,
+`0x26491..0x264CA`). 전투 안의 원작 `29`도 원시 결과 3을 쓰므로, 두 경로 모두
+마스크 `20`에 이른다.
 
-## main and the launcher
+## main과 실행기
 
-`main` is `0x1E43A` (C runtime call at `0x127A4`). After the framework loop
-returns (`0x1E546..0x1E551`) it tests the mask:
+`main`은 `0x1E43A`다(C 런타임 호출은 `0x127A4`). 프레임워크 루프가 돌아온 뒤
+(`0x1E546..0x1E551`) 마스크를 검사한다.
 
-- `04` takes the ending branch first and returns exit code one.
-- `20` or `40` calls the two-button selector `CF5:3C5E` with mode two and
-  the DS:`2A2E` text (`0x1E5DD..0x1E5E8`). The selector creates its Yes
-  button before No; their results are one and zero (`0x17736..0x1796B`).
-- Yes returns exit code four. No calls `0x1E3A8`, which draws two pictures,
-  waits for one input (`0x15EA6..0x15EBF`) and lets main exit with code three.
+- `04`는 먼저 엔딩 분기로 가고 종료 코드 1을 돌려준다.
+- `20`이나 `40`이면 버튼 두 개짜리 선택기 `CF5:3C5E`를 모드 2와 DS:`2A2E`
+  문구로 호출한다(`0x1E5DD..0x1E5E8`). 선택기는 예 버튼을 아니요보다 먼저
+  만들며, 결과는 각각 1과 0이다(`0x17736..0x1796B`).
+- 예는 종료 코드 4를 돌려준다. 아니요는 `0x1E3A8`을 호출하는데, 이 함수는 그림
+  두 장을 그리고 입력 하나를 기다린 뒤(`0x15EA6..0x15EBF`) main이 코드 3으로
+  종료하게 한다.
 
-HERO.COM runs `B:MAIN.EXE` in a loop and dispatches its exit code through a
-five-word table. Code zero runs `A:OPEN.EXE` and then MAIN again, one runs
-`A:END.EXE` and stops, two prints a memory message and stops, three stops,
-and four runs MAIN again without OPEN. A Yes answer therefore returns to
-MAIN's own title menu, not to the opening program.
+HERO.COM은 `B:MAIN.EXE`를 루프로 실행하고, 그 종료 코드를 워드 5개짜리 테이블로
+분기한다. 코드 0은 `A:OPEN.EXE`를 실행한 뒤 MAIN을 다시 실행하고, 1은
+`A:END.EXE`를 실행하고 멈추며, 2는 메모리 메시지를 출력하고 멈추고, 3은 멈추고,
+4는 OPEN 없이 MAIN을 다시 실행한다. 따라서 예라고 답하면 오프닝 프로그램이
+아니라 MAIN 자체의 타이틀 메뉴로 돌아간다.
 
-## Native mapping
+## 네이티브 대응
 
-`OriginalBattleExit` owns the dispatcher table and `OriginalFrameworkReturn`
-owns the mask, the selector answer and the restart/exit outcome. The campaign
-producer exports the DS:`2A2E` text into local GameData after checking the
-examined push sequence; public source contains no original string.
+`OriginalBattleExit`는 분기 테이블을, `OriginalFrameworkReturn`은 마스크, 선택기
+응답, 재시작/종료 결과를 소유한다. 캠페인 생성기는 조사한 push 순서를 확인한 뒤
+DS:`2A2E` 문구를 로컬 GameData로 내보낸다. 공개 소스에는 원작 문자열이 없다.
 
-The campaign window shows the selector over the current screen. Yes replaces
-the campaign host with a new one, which shows MAIN's title menu as described in
-[the resume note](native-resume.md). Original slots import read-only
-([the save note](original-saves.md)). No shows the `0x1E3A8` exit screen and
-closes the window on the next input. The replay driver accepts
-`{kind:"retry-choice",index}` and stops after recording the outcome.
+캠페인 창은 현재 화면 위에 선택기를 보인다. 예는 캠페인 호스트를 새 호스트로
+바꾸며, 새 호스트는 [이어하기 노트](native-resume.md)에 설명한 대로 MAIN의
+타이틀 메뉴를 보인다. 원작 슬롯은 읽기 전용으로 가져온다
+([세이브 노트](original-saves.md)). 아니요는 `0x1E3A8` 종료 화면을 보이고 다음
+입력에 창을 닫는다. 입력 재생 드라이버는 `{kind:"retry-choice",index}`를 받아들이고
+결과를 기록한 뒤 멈춘다.
 
-These rules are tested with synthetic results and masks. They do not
-establish original timing, the in-battle restart producer for result one, or
-complete campaign parity.
+이 규칙은 합성 결과와 마스크로 테스트한다. 원작 타이밍, 결과 1에 대한 전투 내
+재시작 생성기, 캠페인 전체의 일치는 입증하지 않는다.

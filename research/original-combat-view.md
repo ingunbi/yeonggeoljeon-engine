@@ -1,68 +1,67 @@
-# Enlarged combat view
+# 확대 전투 화면
 
-Static derivation from `MAIN.EXE`, `HEXBCHR.R3`, `HEXBCHP.R3` and `HEXBMAP.R3`. No
-original program was run, and nothing was compared with a DOS framebuffer. File
-offsets are MAIN unless noted. Output: local `combat-view.json`.
+`MAIN.EXE`, `HEXBCHR.R3`, `HEXBCHP.R3`, `HEXBMAP.R3`의 정적 분석이다. 원작
+프로그램은 실행하지 않았고, DOS 프레임버퍼와 비교하지 않았다. 따로 적지 않은 파일
+오프셋은 MAIN 기준이다. 출력: 로컬 `combat-view.json`.
 
-## When it runs
+## 실행 시점
 
-`DEFE` (`0x3145E`) is true while the option word's high nibble is clear, so the view
-is on by default (부대전투 = 본다). It belongs to the strike body of context `E91A`:
-damage, morale, EXP and the counter roll run first, then `0x3218E` opens the scene,
-then results, then the writeback.
+`DEFE`(`0x3145E`)는 옵션 워드의 상위 니블이 0인 동안 참이므로, 이 화면은 기본으로
+켜져 있다(부대전투 = 본다). 이 화면은 컨텍스트 `E91A`의 타격 본체에 속한다. 피해,
+사기, 경험치, 반격 판정이 먼저 실행되고, 이어서 `0x3218E`가 장면을 열고, 그다음
+결과, 마지막으로 되쓰기가 이어진다.
 
-The view draws no random numbers and writes no game state. A call-graph walk from
-its routines finds no path to the generator. So `OriginalAttackOperation` and the
-strategy and item operations commit their result, then yield it with a snapshot of
-the values from before the blow. The flow holds there and the window plays the
-scene. Verification and `--battle` skip it and run the same steps in the same order.
+이 화면은 난수를 뽑지 않고 게임 상태를 쓰지 않는다. 그 루틴들에서 호출 그래프를
+따라가도 난수 생성기로 가는 경로가 없다. 그래서 `OriginalAttackOperation`과 책략,
+도구 동작은 결과를 확정한 뒤, 타격 전 값의 스냅숏과 함께 결과를 내놓는다. 흐름은
+그 지점에서 멈추고 창이 장면을 재생한다. 검증과 `--battle`은 이를 건너뛰고 같은
+단계를 같은 순서로 실행한다.
 
-Callers are the player and AI attacks, the counter (subtype 7), strategies 0 to 14
-on each target, and items `22` to `2A`. A miss and a zero hit get the full scene.
+호출자는 플레이어와 AI의 공격, 반격(subtype 7), 대상마다의 책략 0부터 14까지, 도구
+`22`부터 `2A`까지다. 빗나감과 피해 0인 명중도 전체 장면을 재생한다.
 
-## Art
+## 그림
 
-`HEXBCHP` holds 224 opaque 16 by 16 tiles. `HEXBMAP` members 0 to 4 are 46 by 5 sky
-bands and 5 to 8 are 66 by 8 ground bands, chosen by terrain through DS:`4E42` and
-DS:`4E56`. `HEXBCHR` holds 181 frames: 169 of 4 by 4 tiles and 12 of 3 by 3 shots. The first 154 are class art.
-Class frames sit at the running sum of DS:`4E08`. Frames face right and side one
-mirrors them. Index zero is transparent.
+`HEXBCHP`에는 불투명한 16×16 타일 224개가 있다. `HEXBMAP` 멤버 0부터 4까지는
+46×5 하늘 띠, 5부터 8까지는 66×8 지면 띠이며, DS:`4E42`와 DS:`4E56`을 거쳐 지형에
+따라 고른다. `HEXBCHR`에는 프레임 181개가 있다. 169개는 4×4 타일, 12개는 3×3
+발사체다. 처음 154개는 병과 그림이다. 병과 프레임은 DS:`4E08`의 누적합 위치에 있다.
+프레임은 오른쪽을 향하며 진영 1은 이를 좌우 반전한다. 인덱스 0은 투명이다.
 
-The scene is a 26 by 13 tile grid of four layers. A stamp replaces the tile in its
-layer and cell, and a sprite's top row goes to layer three and its bottom row to
-layer zero. So a sprite lower on the screen covers one above it, and erasing or
-overlapping needs no other rule (`2A294`). Sky scrolls at a third of ground speed.
+장면은 레이어 네 개로 된 26×13 타일 격자다. 스탬프는 자기 레이어와 칸의 타일을
+대체하며, 스프라이트의 위쪽 행은 레이어 3에, 아래쪽 행은 레이어 0에 들어간다.
+따라서 화면에서 더 아래에 있는 스프라이트가 위의 스프라이트를 가리며, 지우기나
+겹치기에 다른 규칙이 필요 없다(`2A294`). 하늘은 지면 속도의 3분의 1로 스크롤된다.
 
-## Scene
+## 장면
 
-`OriginalCombatScene` builds the whole scene as a list of held frames.
+`OriginalCombatScene`은 장면 전체를 유지 시간이 있는 프레임 목록으로 만든다.
 
-| Step | Source | Notes |
+| 단계 | 원작 | 비고 |
 |---|---|---|
-| Begin | `32318` | Sixty ticks, a mouse button ends it. A counter opens with a notice first. |
-| Prep | `32F86` | Physical only. Three poses, with the shot's sound. |
-| Run | `3308E` | 41 steps. The attacker runs in place while the target and ground slide in. |
-| Swing | `3319A` | Melee classes, two poses of twelve ticks. |
-| Pan | `3321A` | Shots and strategies, 21 steps. The overlay stays fixed while the world slides. |
-| Hit | `3341C` | The target is shoved one cell per hundred troops, thirteen on a kill. |
-| Results | `31A06` | Pages of sixty ticks, a mouse button ends each. |
+| 시작 | `32318` | 60틱. 마우스 버튼으로 끝난다. 반격은 먼저 알림으로 시작한다. |
+| 준비 | `32F86` | 물리 공격만. 자세 세 개와 발사체 소리. |
+| 달리기 | `3308E` | 41단계. 공격자는 제자리에서 달리고 대상과 지면이 미끄러져 들어온다. |
+| 휘두르기 | `3319A` | 근접 병과. 12틱짜리 자세 두 개. |
+| 패닝 | `3321A` | 발사체와 책략. 21단계. 오버레이는 고정되고 월드가 미끄러진다. |
+| 명중 | `3341C` | 대상은 병력 100마다 한 칸 밀리며, 격파 시 13칸 밀린다. |
+| 결과 | `31A06` | 60틱짜리 페이지. 마우스 버튼으로 각 페이지가 끝난다. |
 
-Soldiers are `min(5, troops/600+1)`, fixed for the scene. Nobody leaves as they die.
-Damage shows only as the shove and the numbers.
+병사 수는 `min(5, troops/600+1)`이며 장면 동안 고정된다. 죽어도 아무도 사라지지
+않는다. 피해는 밀려남과 숫자로만 나타난다.
 
-Held quirks of the source: the background snaps back after a pan, because the pan
-does not store its scroll; tigers, carts and flames stay on screen through the hit;
-and the hit sound follows the attacker's class even for a strategy.
+유지한 원작의 특이점: 패닝은 스크롤 값을 저장하지 않으므로 패닝 뒤 배경이 원래
+위치로 돌아간다. 호랑이, 수레, 불꽃은 명중 동안 화면에 남는다. 명중 소리는 책략일
+때도 공격자의 병과를 따른다.
 
-## Differences
+## 차이점
 
-- The stat panels and the result window use the native panel and native text, not
-  the MARK tiles and the source font. Positions and values follow the source.
-- Steps of one tick are floors. On period hardware a full redraw took longer, so
-  Run and Pan were likely slower than 41 and 21 ticks.
-- A right click or Escape ends the scene at once, which the source cannot do. It
-  has no effect on results.
-- The ambush, failed-strategy and level notices are native chips over the map. The
-  source draws them in its message window, and a counter's ambush line over the old
-  scene shows over the map here.
-- A terrain byte past the source's twenty entries opens no scene.
+- 능력치 패널과 결과 창은 MARK 타일과 원작 글꼴이 아니라 네이티브 패널과 네이티브
+  텍스트를 쓴다. 위치와 값은 원작을 따른다.
+- 한 틱짜리 단계는 하한값이다. 당시 하드웨어에서는 전체 다시 그리기가 더 오래
+  걸렸으므로, 달리기와 패닝은 41틱과 21틱보다 느렸을 가능성이 높다.
+- 오른쪽 클릭이나 Escape는 장면을 즉시 끝내며, 원작에는 이 기능이 없다. 결과에는
+  영향이 없다.
+- 매복, 책략 실패, 레벨 알림은 지도 위의 네이티브 칩이다. 원작은 이를 메시지 창에
+  그리며, 이전 장면 위에 나오던 반격의 매복 문구는 여기서는 지도 위에 나온다.
+- 원작의 20개 항목을 넘는 지형 바이트에서는 장면을 열지 않는다.

@@ -1,111 +1,111 @@
-# Music
+# 음악
 
-Static derivations from the pinned files; no original program was run. Addresses
-are `SBOPL2.COM` memory addresses (the file loads at 0x100). Song data stays in
-local GameData (`music.json`).
+고정한 파일에서 얻은 정적 분석이며, 원작 프로그램은 실행하지 않았다. 주소는
+`SBOPL2.COM`의 메모리 주소다(파일은 0x100에 적재된다). 곡 데이터는 로컬
+GameData(`music.json`)에 둔다.
 
-`HERO.COM` starts `SBOPL2.COM`, "Sound Blaster BGM Driver 1.01", which stays
-resident on interrupt 66h and drives an OPL2 at port 388h. `CF5:600A` takes a
-selection below 20 and asks the driver to play that member of `MUSIC.R3`, unless it
-is already the current selection. The VM's `currentMusic` is this selection.
-`OPMUSIC.R3` and `EDMUSIC.R3` belong to the opening and ending programs.
+`HERO.COM`은 `SBOPL2.COM`("Sound Blaster BGM Driver 1.01")을 시작한다. 이
+드라이버는 인터럽트 66h에 상주하며 포트 388h의 OPL2를 구동한다. `CF5:600A`는
+20 미만의 선택값을 받아, 그것이 이미 현재 선택이 아니면 드라이버에 `MUSIC.R3`의
+해당 멤버를 재생하게 한다. VM의 `currentMusic`이 이 선택값이다. `OPMUSIC.R3`와
+`EDMUSIC.R3`는 오프닝 프로그램과 엔딩 프로그램의 것이다.
 
-## Files
+## 파일
 
-A music file holds a count word, then a 32-bit offset and a 16-bit size per member,
-then the data. A member starts with seven words, the track offsets from the member
-start; zero means no track. Instrument records and tracks follow, and a track
-refers to its instrument by a word relative to the command byte. All 150 tracks of
-the 25 members parse to an end command.
+음악 파일은 개수 워드, 멤버마다 32비트 오프셋과 16비트 크기, 그리고 데이터
+순으로 되어 있다. 멤버는 멤버 시작점 기준 트랙 오프셋인 워드 7개로 시작하며,
+0은 트랙이 없다는 뜻이다. 그 뒤에 악기 레코드와 트랙이 오고, 트랙은 명령
+바이트 기준 상대 워드로 자기 악기를 가리킨다. 25개 멤버의 트랙 150개가 모두
+종료 명령까지 파싱된다.
 
-## Instruments
+## 악기
 
-22 bytes (0x846, 0xB18): 0x20 and 0x23, 0xC0, 0xE0 and 0xE3, 0x40 and 0x43, 0x60 and
-0x63, 0x80 and 0x83 values, then transpose, modulation speed (word), wave, pitch
-depth, depth index, level depth, two operator shares, delay and an enable byte.
+22바이트(0x846, 0xB18): 0x20과 0x23, 0xC0, 0xE0과 0xE3, 0x40과 0x43, 0x60과
+0x63, 0x80과 0x83 값, 그다음 조옮김, 변조 속도(워드), 파형, 음높이 깊이, 깊이
+인덱스, 레벨 깊이, 두 오퍼레이터의 배분값, 지연, 활성화 바이트.
 
-## Tracks
+## 트랙
 
-| Byte | Meaning |
+| 바이트 | 의미 |
 |---|---|
-| 00..5F | Note with its own step and gate bytes. Gate zero is a rest. A gate past the step ties into the next note. |
-| 60..BF | Note 0..5F with the current step and gate. |
-| D0 | Repeat start. |
-| D1..DF | Repeat end with that many extra passes. |
-| EE, EF | Deep tremolo and deep vibrato bits of register BD. |
-| F0 | Volume. It is an attenuation: half of it is added to the carrier's level. |
-| F1, F2 | Tempo, as a timer value or as a number. F2 sets 0x464E×tempo/100 per interrupt. |
-| F4 | Instrument. |
-| F6, F7 | Pitch glide: interval and length, tempo-scaled for F6. |
-| F8, F9 | Modulation on and off. |
-| FD | Leave the repeat on its last pass. |
-| FE | Loop point. |
-| FF | End. With looping on, every track returns to its own loop point. |
+| 00..5F | 자체 스텝 바이트와 게이트 바이트를 가진 음표. 게이트 0은 쉼표다. 스텝을 넘는 게이트는 다음 음표로 이어진다. |
+| 60..BF | 현재 스텝과 게이트를 쓰는 음표 0..5F. |
+| D0 | 반복 시작. |
+| D1..DF | 그 수만큼 추가로 반복하는 반복 끝. |
+| EE, EF | 레지스터 BD의 깊은 트레몰로 비트와 깊은 비브라토 비트. |
+| F0 | 음량. 감쇠값이며, 그 절반이 캐리어의 레벨에 더해진다. |
+| F1, F2 | 템포. 타이머 값 또는 숫자로 준다. F2는 인터럽트당 0x464E×tempo/100을 설정한다. |
+| F4 | 악기. |
+| F6, F7 | 음높이 글라이드: 음정 간격과 길이. F6은 템포에 맞춰 조정된다. |
+| F8, F9 | 변조 켜기와 끄기. |
+| FD | 마지막 반복 회차에서 반복을 빠져나간다. |
+| FE | 루프 지점. |
+| FF | 끝. 루프가 켜져 있으면 모든 트랙이 각자의 루프 지점으로 돌아간다. |
 
-C0..CF, E0..ED, F3, F5, FA..FC do nothing for this driver; the middle ranges skip
-their operands.
+C0..CF, E0..ED, F3, F5, FA..FC는 이 드라이버에서 아무 일도 하지 않는다. 가운데
+범위는 피연산자를 건너뛴다.
 
-## Timing
+## 타이밍
 
-The driver sets the PIT divisor to 0x1000, about 291.3 interrupts per second. Each
-interrupt adds the tempo word to a 16-bit fraction, and a carry is one music tick.
-At tempo 120 that is 96 ticks per second, so a quarter note of 48 ticks takes half
-a second. A second fraction of 0x36/256 runs modulation and glides at about 61 Hz.
+드라이버는 PIT 분주값을 0x1000으로 설정하며, 이는 초당 약 291.3회의
+인터럽트다. 인터럽트마다 템포 워드를 16비트 소수부에 더하고, 자리올림 한 번이
+음악 틱 하나다. 템포 120에서는 초당 96틱이므로 48틱인 4분음표는 반 초가
+걸린다. 두 번째 소수부 0x36/256이 변조와 글라이드를 약 61 Hz로 진행한다.
 
-## Native playback
+## 네이티브 재생
 
-`OriginalMusicDriver` ports the interpreter from 0x30E to 0x113F and writes OPL
-registers through a closure. `OPL2Chip` is written from the chip's documented
-behavior: phase, envelope, key scaling, vibrato, tremolo, feedback and the four
-waveforms. It omits rhythm mode and timers, which the driver does not use, and it
-was not compared with real hardware output. `OriginalAudio` runs both at 49716 Hz
-behind an `AVAudioSourceNode`. `--render-music N --output FILE` writes twenty seconds
-to a WAV. Music starts with the first selection, so tests and replays never open
-audio. The BGM entries of the field and battle menus switch it on and off.
+`OriginalMusicDriver`는 0x30E부터 0x113F까지의 해석기를 이식하고 클로저를 통해
+OPL 레지스터를 쓴다. `OPL2Chip`은 칩의 문서화된 동작(위상, 엔벨로프, 키
+스케일링, 비브라토, 트레몰로, 피드백, 네 가지 파형)을 바탕으로 작성했다.
+드라이버가 쓰지 않는 리듬 모드와 타이머는 빠져 있으며, 실제 하드웨어 출력과
+비교하지 않았다. `OriginalAudio`는 `AVAudioSourceNode` 뒤에서 둘을 49716 Hz로
+돌린다. `--render-music N --output FILE`은 20초 분량을 WAV로 쓴다. 음악은 첫
+선택 때 시작되므로 테스트와 입력 재생은 오디오를 열지 않는다. 필드 메뉴와 전투
+메뉴의 BGM 항목이 음악을 켜고 끈다.
 
-## Song changes
+## 곡 전환
 
-`CF5:600A` (`0x1995A`) ignores ids from 20 up and a song that is already playing.
-Otherwise it calls `CF5:6086` with length 8, which asks the driver to fade
-(interrupt 66h function 2) and waits at `CF5:5F56` (`0x198A6`) until the driver
-reports the song stopped, then starts the new one. The driver steps the fade every
-fourth effect tick and stops after the eighth step: 36 ticks at about 61 Hz, near
-0.6 seconds. The engine fades and starts the next song the same way, from the
-audio thread, but it does not hold the script during the fade.
+`CF5:600A`(`0x1995A`)는 20 이상의 id와 이미 재생 중인 곡을 무시한다. 그렇지
+않으면 길이 8로 `CF5:6086`을 호출한다. 이 함수는 드라이버에
+페이드를 요청하고(인터럽트 66h 기능 2), 드라이버가 곡이 멈췄다고 알릴 때까지
+`CF5:5F56`(`0x198A6`)에서 기다린 뒤 새 곡을 시작한다. 드라이버는 효과 틱 네 번마다
+페이드를 한 단계씩 진행하고 여덟 번째 단계 뒤에 멈춘다. 약 61 Hz로 36틱이니
+0.6초 가까이다. 엔진은 오디오 스레드에서 같은 방식으로 페이드한 뒤 다음 곡을
+시작하지만, 페이드하는 동안 스크립트를 멈춰 두지는 않는다.
 
-## Not restored
+## 복원하지 않은 것
 
-- The source's own volume. The field menu's volume row sets one output level, an
-  engine addition.
-- The other fades through `CF5:6086`: length 16 at `0x1E3B3`, `0x1E584` and
-  `0x1E5F9`, 4 at `0x1EE5D`, 8 at `0x2294A`, 15 at `0x27859`, and the plain stop at
-  `0x1E0BE`. The engine stops at once there.
-- The script hold during a fade.
+- 원작 자체의 음량. 필드 메뉴의 음량 행은 출력 레벨 하나를 설정하며, 이는 엔진이
+  추가한 것이다.
+- `CF5:6086`을 거치는 나머지 페이드: `0x1E3B3`, `0x1E584`, `0x1E5F9`의 길이 16,
+  `0x1EE5D`의 4, `0x2294A`의 8, `0x27859`의 15, 그리고 `0x1E0BE`의 단순 정지.
+  엔진은 이 지점들에서 즉시 멈춘다.
+- 페이드하는 동안 스크립트를 멈춰 두는 동작.
 
-## Sound effects
+## 효과음
 
-`CF5:5EC2` (`19812`) installs a bank at `3021:0004` through interrupt 66h function
-10. That address is inside `MAIN.EXE`, at file offset `0x36C14`, up to the data
-segment: 4492 bytes. The bank holds 43 entries of two words. Each word is a track
-offset from its own entry, and a track reads instruments and notes as a song does.
+`CF5:5EC2`(`19812`)는 인터럽트 66h 기능 10으로 `3021:0004`에 뱅크를 설치한다.
+이 주소는 `MAIN.EXE` 안의 파일 오프셋 `0x36C14`이며, 데이터 세그먼트 직전까지
+4492바이트다. 뱅크에는 워드 두 개짜리 항목이 43개 있다. 각 워드는 자기 항목
+기준 트랙 오프셋이며, 트랙은 곡과 같은 방식으로 악기와 음표를 읽는다.
 
-Function 11 (`0x4FE`) stops any effect and starts the two tracks on OPL channels 7
-and 8, with volume 15. The caller passes the source id plus one (`19AEA`), and ids
-stop at `2B` (`19B66`). The tracks advance on the same 61 Hz clock as modulation
-(`0xE13`), not on the tempo clock, and they never loop. Music uses seven tracks, so
-the two never share a channel.
+기능 11(`0x4FE`)은 재생 중인 효과음을 멈추고 두 트랙을 OPL 채널 7과 8에서 음량
+15로 시작한다. 호출자는 원작 id에 1을 더해 넘기며(`19AEA`), id는 `2B`에서
+끝난다(`19B66`). 트랙은 템포 클록이 아니라 변조와 같은 61 Hz 클록(`0xE13`)으로
+진행하며, 루프하지 않는다. 음악은 트랙 7개를 쓰므로 둘이 채널을 공유하는 일은
+없다.
 
-All 43 effects render to 0.1 to 3 seconds of sound. Nobody has compared them by ear
-with the original.
+43개 효과음은 모두 0.1초에서 3초 길이의 소리로 렌더링된다. 원작과 귀로 비교해
+본 사람은 없다.
 
-The sound test table DS:`3364` names all 43 ids. Played so far: left and right
-click, purchase and sale, level, class change, retirement, not selectable, the
-walking sounds 14 to 16 and move end, arrow, clash and bomb, and the table
-DS:`3F7E` for strategies, the sounds of the enlarged combat view, and every duel
-sound ([duel scene](original-duel.md)).
+사운드 테스트 테이블 DS:`3364`는 43개 id 모두에 이름을 붙인다. 지금까지
+재생하는 것: 왼쪽·오른쪽 클릭, 구입과 판매, 레벨, 병과 변경, 퇴장, 선택 불가,
+걷는 소리 14부터 16까지와 이동 끝, 화살, 격돌, 폭탄, 책략용 테이블 DS:`3F7E`,
+확대 전투 화면의 소리, 그리고 모든 일기토 소리([일기토 장면](original-duel.md)).
 
-## Opening and ending programs
+## 오프닝과 엔딩 프로그램
 
-`OPEN.EXE` and `END.EXE` carry the same library and load their own files. Their
-play routine takes a member number: `OPEN.EXE` asks for 0 at `0x468A` and 1 at
-`0x64BE`, and `END.EXE` for 0, 1 and 2 at `0x48F3`, `0x7895` and `0x9641`.
+`OPEN.EXE`와 `END.EXE`는 같은 라이브러리를 담고 있으며 각자의 파일을 읽는다. 두
+프로그램의 재생 루틴은 멤버 번호를 받는다. `OPEN.EXE`는 `0x468A`에서 0을,
+`0x64BE`에서 1을 요청하고, `END.EXE`는 `0x48F3`, `0x7895`, `0x9641`에서 각각
+0, 1, 2를 요청한다.

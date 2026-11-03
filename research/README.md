@@ -1,38 +1,36 @@
-# Evidence and implementation provenance
+# 증거와 구현 출처
 
-The engine source is newly written for this project. The previous experimental
-application used Eiketsuden Reloaded; that fork stays outside this repository.
-Its implementation and generated content packs are not build inputs here.
+엔진 소스는 이 프로젝트를 위해 새로 작성했다. 이전 실험용 애플리케이션은
+Eiketsuden Reloaded를 썼으며, 그 포크는 이 저장소 밖에 둔다. 그 구현과 생성된
+콘텐츠 팩은 여기서 빌드 입력이 아니다.
 
-Prior reverse-engineering sessions supplied source-bound notes on the Korean
-DOS/V edition's graphics, town movement, and opening title layout. These notes
-were produced while that earlier fork was being investigated. Some contributors
-have seen that engine's source; this is **not** an assertion of an isolated
-clean-room process. Format facts and original executable observations are
-distinguished from external implementations.
+이전 리버스 엔지니어링 세션은 한국어판 DOS/V의 그래픽, 마을 이동, 오프닝
+타이틀 배치에 대한 원작 기반 노트를 제공했다. 이 노트는 그 이전 포크를
+조사하던 중에 만들어졌다. 일부 기여자는 그 엔진의 소스를 본 적이 있으며, 이
+문서는 격리된 클린룸 과정을 주장하지 **않는다**. 형식 사실과 원작 실행 파일
+관찰은 외부 구현과 구분한다.
 
-## Supported original identity
+## 지원하는 원작 식별 정보
 
-| Input | SHA-256 |
+| 입력 | SHA-256 |
 |---|---|
-| Korean DOS/V MAIN.EXE | `731c8d26a39fcd4e9fa41b142db9bd5913a496a2da5eaa1db798b7867850815f` |
-| Korean DOS/V OPEN.EXE | `97f5f00fee2b340243bda76166e3d989740d8723a20f72a6b38545f848c18a01` |
+| 한국어판 DOS/V MAIN.EXE | `731c8d26a39fcd4e9fa41b142db9bd5913a496a2da5eaa1db798b7867850815f` |
+| 한국어판 DOS/V OPEN.EXE | `97f5f00fee2b340243bda76166e3d989740d8723a20f72a6b38545f848c18a01` |
 
-These identify an examined build; matching one file does not establish the
-identity of all other game resources. Export reports hash the actual inputs.
-The engine build tools read original executables as data and never execute them.
+이 값은 조사한 빌드를 식별한다. 한 파일이 일치한다고 다른 모든 게임 리소스의
+동일성이 확립되지는 않는다. 내보내기 보고서는 실제 입력의 해시를 기록한다. 엔진
+빌드 도구는 원작 실행 파일을 데이터로 읽으며 결코 실행하지 않는다.
 
-## Evidence categories
+## 증거 분류
 
-- **Observed bytes:** source file digests, container records, sprite cells,
-  scenario operands, message text, palette entries.
-- **Static derivation:** interpretation of those bytes supported by the original
-  code's input/output behavior at recorded file offsets.
-- **Native verification:** the new engine's decoded pixels, state transitions,
-  and generated frames.
-- **Unverified parity:** original live timing, sound, complete branches and
-  campaign behavior until explicitly compared in future work.
+- **관찰한 바이트:** 원작 파일 다이제스트, 컨테이너 레코드, 스프라이트 셀,
+  시나리오 피연산자, 메시지 텍스트, 팔레트 항목.
+- **정적 분석:** 기록한 파일 오프셋에서 원작 코드의 입출력 동작으로 뒷받침되는
+  그 바이트의 해석.
+- **네이티브 검증:** 새 엔진의 디코딩한 픽셀, 상태 전이, 생성한 프레임.
+- **검증하지 않은 일치:** 이후 작업에서 명시적으로 비교하기 전까지의 원작 실제
+  타이밍, 소리, 전체 분기, 캠페인 동작.
 
-Local reports and original-data exports belong in `build/` or `research/local/`,
-both ignored. Public documentation describes formats and research conclusions
-without redistributing the original game.
+로컬 보고서와 원작 데이터 내보내기는 둘 다 무시되는 `build/`나
+`research/local/`에 둔다. 공개 문서는 원작 게임을 재배포하지 않고 형식과 연구
+결론을 설명한다.

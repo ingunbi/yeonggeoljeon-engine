@@ -1,74 +1,68 @@
-# END2 and the common final credits
+# END2와 공통 최종 크레딧
 
-This work uses static inspection of the selected END executable with SHA-256
-`6a961179ee3b34d869ed3031523d616d79f1d863d61f4f4f6af8cebd1fe8dc77`.
-Its load-header size is `1600`, and its DGROUP file base is `CE40`. No original
-program is executed or modified. Text, palette payloads and extracted pixels
-remain only in ignored local output.
+이 작업은 SHA-256이
+`6a961179ee3b34d869ed3031523d616d79f1d863d61f4f4f6af8cebd1fe8dc77`인 선택된 END
+실행 파일을 정적으로 조사한 결과다. 로드 헤더 크기는 `1600`이고, DGROUP 파일 기준
+위치는 `CE40`이다. 원작 프로그램은 실행하거나 수정하지 않는다. 텍스트, 팔레트
+페이로드, 추출한 픽셀은 무시되는 로컬 출력에만 남는다.
 
-The selection-three END2 branch is file `0x77BE..0x9541`. It is a separate
-narrative sequence, not the shared final credits. END's main calls the common
-final flow at `0x9570` after either END1 or END2 returns (`0x46CA..0x46E4`).
-The narrative now plays through [original-screen-programs.md](original-screen-programs.md),
-along with the final credits described below. END2 has no random effects: every
-sprite position comes from modulo arithmetic and fixed tables.
+선택 3의 END2 분기는 파일 `0x77BE..0x9541`이다. 이는 공유 최종 크레딧이 아니라
+별도의 서사 시퀀스다. END의 main은 END1이나 END2가 반환된 뒤 `0x9570`의 공통 최종
+흐름을 호출한다(`0x46CA..0x46E4`). 이 서사는 이제 아래에 설명하는 최종 크레딧과
+함께 [original-screen-programs.md](original-screen-programs.md)를 통해 재생된다.
+END2에는 무작위 효과가 없다. 모든 스프라이트 위치는 나머지 연산과 고정 테이블에서
+나온다.
 
-The first END2 producer draws two NPK halves from END2 members zero and one,
-320×328 at `(0,36)` and `(320,36)` (`0x7803..0x7880`). It cycles six raw
-224×144 pictures, members two through seven, at `(376,84)`. Each raw picture
-is nine consecutive 224×16 interleaved-planar strips. Its six five-line
-captions are separate source word lists, displayed from `(16,240)` with the
-source outline offsets. Two original palette references and the text pointer
-facts are retained by the local reader.
+첫 END2 생성기는 END2 멤버 0과 1에서 NPK 반쪽 두 개를 320×328 크기로 `(0,36)`과
+`(320,36)`에 그린다(`0x7803..0x7880`). 멤버 2부터 7까지의 원시 224×144 그림 여섯
+장을 `(376,84)`에서 순환시킨다. 각 원시 그림은 연속된 224×16 인터리브 평면 띠
+아홉 개다. 다섯 줄짜리 캡션 여섯 개는 별도의 원작 워드 목록이며, 원작 외곽선
+오프셋을 적용해 `(16,240)`부터 표시한다. 원작 팔레트 참조 두 개와 텍스트 포인터
+사실은 로컬 리더가 보관한다.
 
-The source `0:8642`, file `0x9C42..0x9D4F`, is a 16-pattern planar transition.
-It calculates `(step*7)%16`, selects one of four row residues and a caller-owned
-16-bit mask. At those rows it writes `old & mask | new & ~mask` to each pair
-of plane bytes. The mask is not a transparent color: its low and high bytes
-retain distinct plane identities. The source truncates height to complete
-four-row blocks. The four actual masks are read from original data, never
-embedded as a new public table. The independent helper takes explicit raw
-buffer geometry and the supplied mask words.
+원작 `0:8642`(파일 `0x9C42..0x9D4F`)는 16패턴 평면 전환이다. `(step*7)%16`을
+계산해 네 가지 행 나머지 중 하나와 호출자가 소유한 16비트 마스크를 고른다. 해당
+행에서 평면 바이트 쌍마다 `old & mask | new & ~mask`를 쓴다. 마스크는 투명색이
+아니다. 하위 바이트와 상위 바이트는 각각 다른 평면에 속한다. 원작은 높이를 완전한
+4행 블록 단위로 잘라 낸다. 실제 마스크 네 개는 원작 데이터에서 읽으며, 새 공개
+테이블로 넣지 않는다. 독립 보조 함수는 명시적인 원시 버퍼 형상과 주어진 마스크
+워드를 받는다.
 
-The common flow at `0x9570..0x998B` displays twenty source credit pages. Each
-contains seventeen 20-pixel lines and is 160×340 at `(384,32)` in the examined
-profile. It uses the same source Korean/ASCII glyph mapping and bold expansion
-as the restored ending text, with color index seven. Nine raw END1 pictures,
-members 56 through 64, are 288×240 at `(0,0)`. The source preloads each picture
-on an even page, transitions it on the following odd page, then uses a final
-black pending picture. Palette-pointer payloads remain local.
+`0x9570..0x998B`의 공통 흐름은 원작 크레딧 페이지 20장을 표시한다. 조사한
+프로필에서 각 페이지는 20픽셀 줄 17개로 이루어지며 `(384,32)`에 160×340 크기로
+놓인다. 복원한 엔딩 텍스트와 같은 원작 한글/ASCII 글리프 대응과 굵게 확장을 색
+인덱스 7로 쓴다. 멤버 56부터 64까지의 원시 END1 그림 아홉 장은 `(0,0)`에 288×240
+크기로 놓인다. 원작은 각 그림을 짝수 페이지에서 미리 읽고 다음 홀수 페이지에서
+전환한 뒤, 마지막에는 검은 대기 그림을 쓴다. 팔레트 포인터 페이로드는 로컬에
+남는다.
 
-Each page performs fifty text-pattern phases. Line transitions start two phases
-apart; all fifty phases use ten-centisecond absolute deadline increments.
-The source then adds 100 centiseconds. Odd-page picture transitions have
-sixteen 15-centisecond increments and separate palette steps; the remaining
-page wait is 260 centiseconds. Other pages wait 500 centiseconds after their
-preload. The event schedule preserves this exact order.
+각 페이지는 텍스트 패턴 단계를 50번 수행한다. 줄 전환은 두 단계 간격으로 시작하며,
+50단계 모두 절대 마감 시각을 10센티초씩 늘린다. 원작은 그다음 100센티초를 더한다.
+홀수 페이지의 그림 전환은 15센티초 증가 16번과 별도의 팔레트 단계로 이루어지며,
+남은 페이지 대기는 260센티초다. 다른 페이지는 미리 읽은 뒤 500센티초를 기다린다.
+이벤트 일정은 이 순서를 정확히 보존한다.
 
-Clock domains remain distinct. The common flow resets its DOS-centisecond
-clock, waits for deadline 200, then polls the audio driver until idle before
-selecting its next music (`0x962C..0x9646`). Palette steps use a source driver
-timer, not DOS centiseconds. Such waits may make a later absolute deadline
-already overdue. The source's final centisecond deadline is therefore a
-schedule fact, not a measured total wall-clock duration.
+시계 영역은 서로 분리되어 있다. 공통 흐름은 DOS 센티초 시계를 초기화하고 마감
+200을 기다린 뒤, 다음 음악을 고르기 전에 오디오 드라이버가 유휴 상태가 될 때까지
+폴링한다(`0x962C..0x9646`). 팔레트 단계는 DOS 센티초가 아니라 원작 드라이버
+타이머를 쓴다. 이런 대기 때문에 뒤의 절대 마감이 이미 지나 있을 수 있다. 따라서
+원작의 마지막 센티초 마감은 일정상의 사실이지, 측정한 전체 실제 경과 시간이 아니다.
 
-After the pages, the source draws NPK member 68 at `(216,80)` and NPK member
-zero at `(184,200)`, selects its final palette and waits again. The final input
-loop is now identified: `0:A564`, file `0xBB64..0xBB7B`, always returns one;
-`0:7F42`, file `0x9542..0x956F`, uses INT33 function three and accepts either
-of the low two mouse-button bits. A native acknowledgement may model that
-button gate. It is not an automatic timeout or a keyboard-only gate.
+페이지가 끝나면 원작은 NPK 멤버 68을 `(216,80)`에, NPK 멤버 0을 `(184,200)`에
+그리고, 마지막 팔레트를 고른 뒤 다시 기다린다. 마지막 입력 루프는 이제
+확인되었다. `0:A564`(파일 `0xBB64..0xBB7B`)는 항상 1을 반환하고,
+`0:7F42`(파일 `0x9542..0x956F`)는 INT33 함수 3을 써서 마우스 버튼 하위 두 비트 중
+어느 쪽이든 받아들인다. 네이티브 확인 입력이 이 버튼 관문을 모델링할 수 있다.
+이것은 자동 시간 초과나 키보드 전용 관문이 아니다.
 
-After this input the source stops music, fades to black, clears the display,
-closes the archive and returns normally at `0x998B`. The helper exports an
-explicit source-return event after those gates. It does not label a frame-list
-EOF as completed ending playback. Audio-driver timing, palette-timer execution
-and the remaining END2 narrative need their own restored owners before native
-whole-ending completion can be asserted.
+이 입력 뒤 원작은 음악을 멈추고, 검은 화면으로 페이드하고, 화면을 지우고,
+아카이브를 닫은 다음 `0x998B`에서 정상 반환한다. 보조 도구는 이 관문들 뒤에
+명시적인 원작 반환 이벤트를 내보낸다. 프레임 목록의 EOF를 엔딩 재생 완료로
+표시하지 않는다. 네이티브에서 엔딩 전체가 완료되었다고 주장하려면, 오디오 드라이버
+타이밍, 팔레트 타이머 실행, 남은 END2 서사에 각각 복원된 담당자가 있어야 한다.
 
-`tools/ending_credits.py` contains only the new geometry-aware transition codec,
-source-order event schedule and pointer-fact readers. Synthetic tests distinguish
-row/plane ownership, partial geometry and gated completion. Optional original
-checks pin the source profile and verify its pointer population and masks.
-Local PNG inspection confirms the examined raw picture geometry and original
-credit bitmap rendering; it is not original DOS framebuffer comparison.
+`tools/ending_credits.py`에는 형상을 고려하는 새 전환 코덱, 원작 순서의 이벤트
+일정, 포인터 사실 리더만 들어 있다. 합성 테스트는 행/평면 소유, 부분 형상, 관문을
+거친 완료를 구별한다. 선택적인 원작 검사는 원작 프로필을 고정하고 포인터 구성과
+마스크를 확인한다. 로컬 PNG 검사로 조사한 원시 그림 형상과 원작 크레딧 비트맵
+렌더링을 확인했지만, 이는 원작 DOS 프레임버퍼 비교가 아니다.

@@ -1,110 +1,105 @@
-# Battle item use
+# 전투 중 도구 사용
 
-Static derivations from the pinned Korean DOS/V MAIN profile; no original
-program was run. Offsets are MAIN.EXE file offsets. Item names, descriptions,
-refusals and labels stay in local GameData. The command window that reaches this
-code is described in [original-screen.md](original-screen.md).
+고정한 한국어 DOS/V MAIN 프로필의 정적 분석이며, 원작 프로그램은 실행하지
+않았다. 오프셋은 MAIN.EXE 파일 오프셋이다. 도구 이름, 설명, 거부 문구, 레이블은
+로컬 GameData에 둔다. 이 코드에 이르는 커맨드 창은
+[original-screen.md](original-screen.md)에 설명되어 있다.
 
-`0x2E0E6..0x2E833` runs when a unit chooses 사용한다 for a held item. It receives
-the unit and the item id. A use ends by clearing the first matching inventory
-slot and setting mask `0x80` (`0x2E807..0x2E82B`). Every refusal, every cancelled
-pick and a declined question skip both, so the item stays held and the unit keeps
-its action. Items cost no MP.
+`0x2E0E6..0x2E833`은 부대가 소지한 도구에 대해 사용한다를 고를 때 실행된다.
+부대와 도구 id를 받는다. 사용은 처음 일치하는 소지품 슬롯을 비우고 마스크
+`0x80`을 설정하는 것으로 끝난다(`0x2E807..0x2E82B`). 모든 거부, 취소한 대상
+선택, 거절한 질문은 이 둘을 건너뛰므로 도구는 그대로 남고 부대는 행동을
+유지한다. 도구는 MP를 쓰지 않는다.
 
-## Effect groups
+## 효과 그룹
 
-The routine tests id ranges in this order.
+루틴은 다음 순서로 id 범위를 검사한다.
 
-| Item ids | Group | Picker |
+| 도구 id | 그룹 | 대상 선택 |
 |---|---|---|
-| `0..2`, `0x10..0x12` | Class change | None; yes/no question |
-| `0x13..0x1A` | Promotion | None; yes/no question |
-| `0x22..0x2A` | Attack | Enemy, range code `tier` with bit 7 |
-| `0x2B..0x2D` | Confusion | Enemy, range code `0`, `1`, `0` with bit 7 |
-| `0x1B..0x20`, `0x34..0x36` | Recovery | Friendly including the user, range code `tier` with bit 7 |
-| `0x2E..0x33` | Area recovery | None; yes/no question over the whole list |
-| `0x21` | Bomb | Enemy, range code `0x81` |
+| `0..2`, `0x10..0x12` | 병과 변경 | 없음. 예/아니요 질문 |
+| `0x13..0x1A` | 전직 | 없음. 예/아니요 질문 |
+| `0x22..0x2A` | 공격 | 적, 범위 코드 `tier`에 비트 7 |
+| `0x2B..0x2D` | 혼란 | 적, 범위 코드 `0`, `1`, `0`에 비트 7 |
+| `0x1B..0x20`, `0x34..0x36` | 회복 | 사용자를 포함한 아군, 범위 코드 `tier`에 비트 7 |
+| `0x2E..0x33` | 범위 회복 | 없음. 목록 전체에 대한 예/아니요 질문 |
+| `0x21` | 폭탄 | 적, 범위 코드 `0x81` |
 
-Any other id, which includes all equipment, shows the DS:`4B64` refusal.
+그 밖의 id는 모든 장비를 포함해 DS:`4B64` 거부 문구를 보인다.
 
-## Class change and promotion
+## 병과 변경과 전직
 
-Class changes read a six-entry table: ids `0..2` select the first three entries
-and ids `0x10..0x12` the last three. Refusals are checked in this order:
+병과 변경은 항목 6개짜리 테이블을 읽는다. id `0..2`는 앞의 세 항목을, id
+`0x10..0x12`는 뒤의 세 항목을 고른다. 거부 조건은 다음 순서로 검사한다.
 
-1. Person zero cannot change class.
-2. The target must differ from the current class.
-3. The target must not be the base of the current class's family (`class/3*3`).
-4. The target class's movement type must be able to stand on the unit's terrain.
+1. 인물 0은 병과를 바꿀 수 없다.
+2. 목표 병과는 현재 병과와 달라야 한다.
+3. 목표 병과는 현재 병과 계열의 기본 병과(`class/3*3`)가 아니어야 한다.
+4. 목표 병과의 이동 유형이 부대가 있는 지형에 설 수 있어야 한다.
 
-After the question the routine writes the class, then rewrites the troop count
-through the capped setter `0x1A892`, so troops fall to the new maximum.
+질문 뒤 루틴은 병과를 쓰고, 상한이 있는 설정 함수 `0x1A892`로 병력 수를 다시
+쓴다. 그래서 병력은 새 최대치까지 줄어든다.
 
-Promotions read paired tables: eight required classes, with required levels of 15
-and 30 alternating. The unit must hold the required class and reach the level.
-The new class is the required class plus one. A promotion does not rewrite troops.
+전직은 짝을 이룬 테이블을 읽는다. 필요 병과 8개와, 15와 30이 번갈아 나오는
+필요 레벨이다. 부대는 필요 병과여야 하고 그 레벨에 도달해야 한다. 새 병과는
+필요 병과에 1을 더한 것이다. 전직은 병력을 다시 쓰지 않는다.
 
-## Attack items
+## 공격 도구
 
-`family = (0x22-id)/3+2` with truncating division gives 0 for fire, 1 for water
-and 2 for earth; `tier = (id-0x22)%3`.
+버림 나눗셈으로 계산한 `family = (0x22-id)/3+2`는 불이면 0, 물이면 1, 땅이면
+2다. `tier = (id-0x22)%3`이다.
 
-The routine refuses fire when the environment lookup says rain, before any
-pick. It then checks the target's terrain through the same four-entry table as
-strategies. A refusal joins the family's terrain names between two fixed texts
-(`0x2D90E..0x2D9CA`).
+루틴은 환경 조회 결과가 비이면 대상을 고르기 전에 불을 거부한다. 그다음 책략과
+같은 항목 4개짜리 테이블로 대상의 지형을 검사한다. 거부 문구는 고정 문구 두 개
+사이에 해당 계열의 지형 이름들을 이어 붙인다(`0x2D90E..0x2D9CA`).
 
-The effect calls the context dispatcher at `0x31E7A` with kind 3 and subtype
-`family<<4|tier`. Kind 3 is the existing strategy damage producer without its
-chance gate and without an attack contribution. Troop, morale, experience and
-retirement writeback are the same as for a strategy.
+효과는 `0x31E7A`의 문맥 분기기를 종류 3, 하위 유형 `family<<4|tier`로 호출한다.
+종류 3은 기존 책략 피해 생성기에서 확률 관문과 공격력 기여를 뺀 것이다. 병력,
+사기, 경험치, 퇴장의 되쓰기는 책략과 같다.
 
-## Confusion
+## 혼란
 
-There is no success roll. The target must not already be confused. Item `0x2D`
-then visits the four neighbours of the target's starting cell in cardinal order
-and confuses each unit on the opposite side from the user. Each target gets the
-same retirement check as other effects, which retires a confused unit at zero
-morale.
+성공 판정은 없다. 대상은 이미 혼란 상태가 아니어야 한다. 그다음 도구 `0x2D`는
+대상의 시작 칸에 이웃한 네 칸을 4방향 순서로 돌며, 사용자와 반대 진영의 부대를
+각각 혼란시킨다. 각 대상은 다른 효과와 같은 퇴장 검사를 받으며, 이 검사는 사기가
+0인 혼란 부대를 퇴장시킨다.
 
-## Recovery
+## 회복
 
-Kind 1 is troops, kind 2 is morale and kind 3 is both. Tier is `id%3` for
-`0x1B..0x20` and `id-0x34` for `0x34..0x36`. The routine refuses a unit with
-nothing to recover, then calls the healing routine at `0x2EE20` with subtype
-`tier<<4|kind` and caster slot `FF`, the path that omits caster bonuses.
+종류 1은 병력, 종류 2는 사기, 종류 3은 둘 다다. 등급은 `0x1B..0x20`이면
+`id%3`, `0x34..0x36`이면 `id-0x34`다. 루틴은 회복할 것이 없는 부대를 거부한 뒤,
+하위 유형 `tier<<4|kind`와 시전자 슬롯 `FF`로 `0x2EE20`의 회복 루틴을 호출한다.
+이는 시전자 보너스를 생략하는 경로다.
 
-Area recovery uses tier `(id-0x2E)%3`, troops for `0x2E..0x30` and morale for
-`0x31..0x33`. The routine snapshots the target list once, with the user first,
-and asks one question.
+범위 회복은 등급 `(id-0x2E)%3`을 쓰며, `0x2E..0x30`은 병력, `0x31..0x33`은
+사기다. 루틴은 사용자를 맨 앞에 두고 대상 목록을 한 번 스냅숏으로 잡은 뒤 질문을
+하나 한다.
 
-The line after a single recovery tests the tier against 3, which never matches
-because the tier is at most 2. The first text is therefore unreachable, and the
-native line always uses the second.
+단일 회복 뒤의 대사는 등급을 3과 비교하는데, 등급은 최대 2이므로 절대 일치하지
+않는다. 따라서 첫 번째 문구에는 도달할 수 없고, 네이티브 대사는 항상 두 번째
+문구를 쓴다.
 
-## Bomb
+## 폭탄
 
-The bomb draws `random(21)`, computes `(draw+90)*15` and removes the smaller of
-that amount and the target's troops. If troops remain it draws `random(10)`, adds
-30, and lowers morale by the smaller of that amount and the current morale through
-the normal setter. A wiped-out target consumes no second draw. The bomb grants no
-experience.
+폭탄은 `random(21)`을 뽑고 `(draw+90)*15`를 계산해, 그 양과 대상 병력 중 작은
+값만큼 병력을 없앤다. 병력이 남으면 `random(10)`을 뽑아 30을 더하고, 그 양과
+현재 사기 중 작은 값만큼 일반 설정 함수로 사기를 낮춘다. 전멸한 대상은 두 번째
+뽑기를 소비하지 않는다. 폭탄은 경험치를 주지 않는다.
 
-## Native mapping
+## 네이티브 대응
 
-`OriginalItemOperation` retains its continuation across retirement dialogue, as
-`OriginalStrategyOperation` does, and `OriginalBattleFlow.manualItem` drives it.
-`begin` performs every check without drawing RNG or changing state, so the view can
-show a refusal before any effect. Replays use a `battle-item` input with `slot`,
-`item` and an optional `target`.
+`OriginalItemOperation`은 `OriginalStrategyOperation`처럼 퇴장 대사를 거치는
+동안 연속 상태를 유지하며, `OriginalBattleFlow.manualItem`이 이를 구동한다.
+`begin`은 RNG를 뽑거나 상태를 바꾸지 않고 모든 검사를 수행하므로, 화면은 효과
+전에 거부를 보일 수 있다. 입력 재생은 `slot`, `item`, 선택적 `target`을 가진
+`battle-item` 입력을 쓴다.
 
-Public tests use synthetic tables and people. They check the id table, refusal
-order, RNG order and consumption. A local harness drove each group through the
-menus against real data; that exercises view event methods, not macOS input
-delivery.
+공개 테스트는 합성 테이블과 인물을 쓴다. id 테이블, 거부 순서, RNG 순서, 소모를
+검사한다. 로컬 하네스가 실제 데이터로 각 그룹을 메뉴를 통해 구동했다. 이는 뷰
+이벤트 메서드를 시험할 뿐, macOS 입력 전달을 시험하지 않는다.
 
-## Limits
+## 한계
 
-- Effect animations are not played. The routine at `0x2AB40` and its helpers make
-  no random calls, so skipping them leaves the RNG timeline unchanged.
-- Original item effects have not been compared with a running DOS game.
+- 효과 애니메이션은 재생하지 않는다. `0x2AB40`의 루틴과 보조 함수들은 난수를
+  호출하지 않으므로, 건너뛰어도 RNG 시간선은 바뀌지 않는다.
+- 원작 도구 효과는 실행 중인 DOS 게임과 비교하지 않았다.

@@ -1,67 +1,65 @@
-# Battle-resource and placement observations
+# 전투 자원과 배치 관찰
 
-Examined `MAIN.EXE` SHA-256:
+조사한 `MAIN.EXE`의 SHA-256:
 `731c8d26a39fcd4e9fa41b142db9bd5913a496a2da5eaa1db798b7867850815f`.
-Offsets below are file offsets. These are read-only static derivations; original
-DOS execution and framebuffer comparison have not been performed.
+아래 오프셋은 파일 오프셋이다. 이 내용은 읽기 전용 정적 분석이며, 원작 DOS 실행과
+프레임버퍼 비교는 수행하지 않았다.
 
-## Map geometry and pictures
+## 지도 형상과 그림
 
-`HEXZMAP.R3` has 59 LS11 members in the examined edition. Members0..57 are maps;
-member58 is text and is not treated as a map. Each map begins with two even
-picture-grid dimensions, followed by one byte per16×16 picture cell, followed by
-one terrain byte per32×32 battle cell. The battle grid is half the picture grid
-on both axes. MAIN `0x26DF1..0x26E72` reads each dimension, shifts it right once,
-copies four times the battle-cell count for picture IDs, then copies exactly the
-battle-cell count for terrain. Terrain bytes are retained literally, including
-uninterpreted values; terrain IDs do not establish movement costs.
+조사한 판본의 `HEXZMAP.R3`에는 LS11 멤버 59개가 있다. 멤버 0..57은 지도이고, 멤버
+58은 텍스트이므로 지도로 취급하지 않는다. 각 지도는 짝수인 그림 격자 크기 두 개로
+시작하고, 그 뒤에 16×16 그림 칸마다 1바이트, 이어서 32×32 전투 칸마다 지형 바이트
+1개가 온다. 전투 격자는 두 축 모두 그림 격자의 절반이다. MAIN `0x26DF1..0x26E72`는
+각 크기를 읽어 오른쪽으로 한 번 시프트하고, 그림 ID로 전투 칸 개수의 네 배를 복사한
+다음, 지형으로 정확히 전투 칸 개수만큼 복사한다. 지형 바이트는 해석하지 않은 값을
+포함해 그대로 보존하며, 지형 ID가 이동 비용을 입증하지는 않는다.
 
-MAIN `0x26C9C..0x26CEF` loads `HEXZCHP` member0 at the start of the tile bank and
-the selected member at byte`0x2800`. Member0 contains80 planar16×16 tiles;
-members1/2 contain174/175. The selector at `0x2827A..0x282AA` tests the map index
-against19 words at DS`0x3DCC` and chooses member2 for a match, member1 otherwise.
-The exporter reads this source table rather than hardcoding its map list.
+MAIN `0x26C9C..0x26CEF`는 `HEXZCHP` 멤버 0을 타일 뱅크 시작에, 선택된 멤버를 바이트
+`0x2800`에 읽어 들인다. 멤버 0에는 평면 16×16 타일 80개가, 멤버 1/2에는 174/175개가
+있다. `0x2827A..0x282AA`의 선택 루틴은 지도 인덱스를 DS`0x3DCC`의 워드 19개와
+비교해, 일치하면 멤버 2를, 아니면 멤버 1을 고른다. 내보내기 도구는 지도 목록을
+하드코딩하지 않고 이 원작 테이블을 읽는다.
 
-The default color palette is source slot3. MAIN `0x20183..0x20194` sets game
-field5 to3 through `0x1E628..0x1E635`; `0x15B3A..0x15B44` reads that field.
-Palette helpers `0x18346..0x18372` use its low nibble and `0x182CE..0x18345`
-selects48 bytes at DS`0x1050 + 48*slot`. Monochrome settings and original
-framebuffer parity are separate unverified behavior.
+기본 컬러 팔레트는 원작 팔레트 슬롯 3이다. MAIN `0x20183..0x20194`는
+`0x1E628..0x1E635`를 통해 게임 field5를 3으로 설정하고, `0x15B3A..0x15B44`가 그
+필드를 읽는다. 팔레트 보조 함수 `0x18346..0x18372`는 그 하위 니블을 쓰고,
+`0x182CE..0x18345`는 DS`0x1050 + 48*slot`의 48바이트를 고른다. 흑백 설정과 원작
+프레임버퍼 동등성은 검증하지 않은 별도 동작이다.
 
-## Placement programs
+## 배치 프로그램
 
-Opcode03 (`0x1C3F2..0x1C539`) clears the45-placement table, consumes11 header
-bytes and30 records of9 bytes. Opcode22 (`0x1CB0D..0x1CC8E`) consumes a side
-replacement selector and30 records of13 bytes. Each record retains its literal
-person, x/y, side, conditional-flag and visibility operands. Source side operand
-zero is inverted into placement flag bit0=1; a nonzero operand yields bit0=0.
-The native display side uses0 for source flag0 and1 for source flag1.
+명령03(`0x1C3F2..0x1C539`)은 배치 45개짜리 테이블을 지우고, 헤더 바이트 11개와
+9바이트 레코드 30개를 소비한다. 명령22(`0x1CB0D..0x1CC8E`)는 진영 교체 선택자
+하나와 13바이트 레코드 30개를 소비한다. 각 레코드는 인물, x/y, 진영, 조건 플래그,
+표시 여부 피연산자를 그대로 보존한다. 원작 진영 피연산자 0은 반전되어 배치 플래그
+bit0=1이 되고, 0이 아닌 피연산자는 bit0=0이 된다. 네이티브 표시 진영은 원작 flag0에
+0을, 원작 flag1에 1을 쓴다.
 
-MAIN `0x26E8C..0x27010` constructs the live roster from that table. Placement flag
-bit1 suppresses initial activation; its producers are the final9-byte-record
-operand or13-byte-record byte7. Campaign-conditional eligibility remains unknown
-until the campaign state executes the corresponding source conditions.
+MAIN `0x26E8C..0x27010`은 이 테이블로 런타임 명단을 만든다. 배치 플래그 bit1은 초기
+활성화를 막으며, 그 생성기는 9바이트 레코드의 마지막 피연산자나 13바이트 레코드의
+byte7이다. 캠페인 조건에 따른 자격은 캠페인 상태가 해당 원작 조건을 실행할 때까지
+알 수 없다.
 
-The exported unit `id` is a stable identity local to a placement producer. It is
-not a person ID or a recovered DOS runtime slot. Original insertion selects the
-first available45-table entry, so unresolved conditions can change slot allocation.
-The source ordinal, producer and unresolved runtime slot are preserved separately.
+내보낸 부대 `id`는 배치 생성기 안에서만 통하는 안정적인 식별자다. 인물 ID도 아니고
+복원한 DOS 런타임 슬롯도 아니다. 원작의 삽입은 45개 테이블에서 처음 비어 있는
+항목을 고르므로, 해결되지 않은 조건이 슬롯 할당을 바꿀 수 있다. 원작 순번, 생성기,
+미해결 런타임 슬롯은 따로 보존한다.
 
-## Catalog limits
+## 목록의 한계
 
-The current local catalog contains60 distinct source kind3 map-load sites and58
-map pictures. This is not a claim that the original game has exactly60 battles or
-that all60 definitions are playable. IDs use chapter/member/block, with a suffix
-for later distinct map-load sites in the same block; shared instruction tails
-retain a single identity through the exporter-owned identity helper.
+현재 로컬 목록에는 서로 다른 원작 kind3 지도 로드 지점 60개와 지도 그림 58개가
+있다. 이는 원작 게임에 전투가 정확히 60개 있다거나 정의 60개가 모두 플레이
+가능하다는 주장이 아니다. ID는 장/멤버/블록을 쓰며, 같은 블록 안에서 뒤에 나오는
+별개의 지도 로드 지점에는 접미사를 붙인다. 공유 명령 꼬리는 내보내기 도구가 소유한
+식별 보조 함수를 통해 하나의 식별자를 유지한다.
 
-Placement producer inheritance is a lexical projection, not an executed campaign
-path. Only unconditional placement records populate `units`; `conditionalUnits`
-preserves the unresolved records without declaring them inactive. Every exported
-definition has `originalRosterComplete:false`. Unknown HP, damage, class movement
-and objectives remain null. The native original-rules policy must reject these
-definitions; an explicitly selected experimental policy may test engine mechanics
-with the documented partial roster without claiming original combat behavior.
+배치 생성기 상속은 어휘적 투영이지, 실행된 캠페인 경로가 아니다. 무조건 배치
+레코드만 `units`를 채우며, `conditionalUnits`는 미해결 레코드를 비활성이라고
+선언하지 않고 보존한다. 내보낸 모든 정의는 `originalRosterComplete:false`를 가진다.
+알 수 없는 HP, 피해, 병과 이동력, 목표는 null로 남는다. 네이티브 원작 규칙 정책은
+이 정의를 거부해야 한다. 명시적으로 선택한 실험 정책은 문서화된 부분 명단으로 엔진
+메커니즘을 시험할 수 있지만, 원작 전투 동작이라고 주장하지 않는다.
 
-All pictures, original strings, placements and verification records are generated
-only in caller-selected local output. They are not part of the public source tree.
+모든 그림, 원작 문자열, 배치, 검증 레코드는 호출자가 선택한 로컬 출력에만 생성된다.
+이것들은 공개 소스 트리에 포함되지 않는다.

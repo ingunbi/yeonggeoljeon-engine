@@ -1,92 +1,95 @@
-# Title menu
+# 타이틀 메뉴
 
-Static derivation from `MAIN.EXE`, with `GRPDRV.EXE` for the fade. A subagent wrote
-the first reading with the same disassembly tools; the engine's checks are synthetic,
-with one optional real-file check. No original program was run, and nothing was
-compared with a DOS framebuffer, real audio or real timing. Offsets are MAIN file
-offsets unless written `seg:off` or `DS:off`.
+`MAIN.EXE`의 정적 분석이며, 페이드는 `GRPDRV.EXE`에서 얻었다. 첫 판독은 같은
+디스어셈블리 도구로 하위 에이전트가 작성했다. 엔진의 검사는 합성 입력을 쓰며,
+선택적인 실제 파일 검사가 하나 있다. 원작 프로그램은 실행하지 않았고, DOS
+프레임버퍼나 실제 오디오, 실제 타이밍과 비교한 것은 없다. 오프셋은 `seg:off`나
+`DS:off`로 적지 않은 한 MAIN 파일 오프셋이다.
 
-## What MAIN shows
+## MAIN이 보여 주는 것
 
-`main` (`0x1E43A`) calls `CF5:A7E8`, which sets palette DS:`1050` slot 0 at once and
-clears the canvas twice (`0x1E179`, `0x1E183`, `0x1E19C`), and then `CF5:C050`
-(`0x1F9A0`). MAIN draws no picture before its menu: OPEN.EXE has already cleared its
-title and faded to black. The title menu is one window on a black canvas. No song
-starts, so the title is silent (`CF5:600A` is not reached on this path).
+`main`(`0x1E43A`)은 `CF5:A7E8`을 호출하고, 이 함수는 팔레트 DS:`1050` 슬롯 0을
+즉시 설정한 뒤 캔버스를 두 번 지운다(`0x1E179`, `0x1E183`, `0x1E19C`). 그다음
+`CF5:C050`(`0x1F9A0`)을 호출한다. MAIN은 메뉴 전에 그림을 그리지 않는다.
+OPEN.EXE가 이미 자기 타이틀을 지우고 검은색으로 페이드해 두었다. 타이틀 메뉴는
+검은 캔버스 위의 창 하나다. 곡이 시작되지 않으므로 타이틀은 무음이다(이
+경로에서는 `CF5:600A`에 도달하지 않는다).
 
-`CF5:A3E4` is a code-entry prompt shown on the first run in a HERO session. Its result
-is ignored (`0x1E453` jumps unconditionally). The engine leaves it out.
+`CF5:A3E4`는 HERO 세션의 첫 실행 때 보이는 코드 입력 프롬프트다. 그 결과는
+무시된다(`0x1E453`이 무조건 점프한다). 엔진은 이를 생략한다.
 
-## The menu routine
+## 메뉴 루틴
 
-`CF5:2C92` (`0x165E2..0x16C5C`) takes the window x and y in AX and DX and a far
-string list in BX. On the stack it takes the visible rows, flags, a disabled-byte
-array, a minimum width in columns and a scroll pointer. Without a scroll bar:
+`CF5:2C92`(`0x165E2..0x16C5C`)는 AX와 DX로 창의 x와 y를, BX로 far 문자열 목록을
+받는다. 스택으로는 보이는 행 수, 플래그, 비활성 바이트 배열, 열 단위 최소 너비,
+스크롤 포인터를 받는다. 스크롤 막대가 없을 때:
 
-- width columns `W` = max(minimum, longest item of the whole list, 8); the window is
-  `(W+2)·8` wide;
-- rows `R` = min(items, visible), pitch 24, height `(24R+31) & ~15`; a window that
-  would reach row 384 moves up in sixteen-pixel steps;
-- buttons sit at `x+8`, `W·8` wide and 16 high, the first at
-  `y + (H−24R−16)/2 + 8 + 4`.
+- 너비 열 수 `W` = max(최소 너비, 전체 목록에서 가장 긴 항목, 8)이며, 창 너비는
+  `(W+2)·8`이다.
+- 행 수 `R` = min(항목 수, 보이는 행 수), 행 간격 24, 높이 `(24R+31) & ~15`.
+  행 384에 닿을 창은 16픽셀 단위로 위로 올라간다.
+- 버튼은 `x+8`에 놓이고 너비 `W·8`, 높이 16이며, 첫 버튼은
+  `y + (H−24R−16)/2 + 8 + 4`에 있다.
 
-`CF5:151A` frames the window with 8×8 three-plane tiles (DS:`0B6E`, tile set 2) and
-fills it with a 16×16 pattern (`CF5:53BE`, pattern 2); `0x16743` picks set 2 and
-pattern 2 outside battle. Each button (`CF5:1AC8`, style 0) repeats the 8×20 face
-tile at MARK member 0 `+0x1F90` and adds a bevel. Labels are centred in colour 7, or
-colour 2 when disabled. Flag `40` draws without saving the background.
+`CF5:151A`는 8×8 3플레인 타일(DS:`0B6E`, 타일 세트 2)로 창 테두리를 그리고
+16×16 패턴(`CF5:53BE`, 패턴 2)으로 안을 채운다. 전투 밖에서는 `0x16743`이 세트
+2와 패턴 2를 고른다. 각 버튼(`CF5:1AC8`, 스타일 0)은 MARK 멤버 0 `+0x1F90`의
+8×20 면 타일을 반복하고 베벨을 더한다. 레이블은 색 7로, 비활성일 때는 색 2로
+가운데 정렬한다. 플래그 `40`은 배경을 저장하지 않고 그린다.
 
-Input is the mouse only. A left press on a button shows a pressed look and plays
-effect 0 (`0x157D9`); release on it chooses. Holding the right button cancels. There
-is no keyboard path and no hover highlight.
+입력은 마우스뿐이다. 버튼 위에서 왼쪽 버튼을 누르면 눌린 모양을 보이고 효과음
+0을 재생하며(`0x157D9`), 그 위에서 떼면 선택된다. 오른쪽 버튼을 누르고 있으면
+취소된다. 키보드 경로도, 마우스를 올렸을 때의 강조도 없다.
 
-| Menu | Call | Window | Buttons |
+| 메뉴 | 호출 | 창 | 버튼 |
 |---|---|---|---|
-| Title, DS:`2D38` | `0x1F9C5` | (216,128) 136×112 | (224, 140+24i) 120×16 |
-| Options, DS:`34FC` | `0x1F93A` | (288,160) 80×96 | (296, 176+24i) 64×16 |
-| Monitor, DS:`303A` | `0x229DA` | (320,144) 80×64 | (328, 156+24i) 64×16 |
-| On/off, DS:`3008` | `0x22908` | (320,144) 80×64 | (328, 156+24i) 64×16 |
+| 타이틀, DS:`2D38` | `0x1F9C5` | (216,128) 136×112 | (224, 140+24i) 120×16 |
+| 옵션, DS:`34FC` | `0x1F93A` | (288,160) 80×96 | (296, 176+24i) 64×16 |
+| 모니터, DS:`303A` | `0x229DA` | (320,144) 80×64 | (328, 156+24i) 64×16 |
+| 켜기/끄기, DS:`3008` | `0x22908` | (320,144) 80×64 | (328, 156+24i) 64×16 |
 
-## Items
+## 항목
 
-- New game (`CF5:B536`) reads the new-game template and tables and returns. No
-  question, name or difficulty.
-- Resume opens the slot dialog (`CF5:B938`); a cancel returns to the title.
-- Options shows three rows, the field menu's items five to seven: monitor, BGM and
-  effects. Each opens a two-row window over it with the current choice disabled.
-  BGM on stays silent at the title, where no song is stored.
-- Opening exits with code 0, so HERO runs OPEN and then MAIN again.
-- A cancel shows the exit screen (`0x1E3A8`): PACKGRP 34 and 36, a click, exit code 3.
+- 새 게임(`CF5:B536`)은 새 게임 템플릿과 테이블을 읽고 돌아온다. 질문, 이름,
+  난이도는 없다.
+- 이어하기는 슬롯 대화 상자(`CF5:B938`)를 연다. 취소하면 타이틀로 돌아간다.
+- 옵션은 필드 메뉴의 다섯 번째부터 일곱 번째 항목인 모니터, BGM, 효과음의 세
+  행을 보인다. 각 행은 그 위에 현재 선택이 비활성화된 두 행짜리 창을 연다.
+  타이틀에는 저장된 곡이 없으므로 BGM을 켜도 조용하다.
+- 오프닝은 코드 0으로 종료하므로, HERO는 OPEN을 실행한 뒤 MAIN을 다시 실행한다.
+- 취소하면 종료 화면(`0x1E3A8`)이 나온다. PACKGRP 34와 36, 클릭 한 번, 종료
+  코드 3이다.
 
-## From new game to the first map
+## 새 게임에서 첫 맵까지
 
-`CF5:C456` fades to black (`0x1FDB8`), draws the base screen under black, and
-`CF5:4A10` fades in. Each fade is GRPDRV function 16h: sixteen steps that wait two
-vertical retraces each, about 0.53 s at 59.94 Hz. The rate is the standard VGA figure,
-not a measurement. Chapter 0's records then run until a script selects a map. MAIN
-itself shows no prologue. A load reaches the map through the same `C456`.
+`CF5:C456`은 검은색으로 페이드하고(`0x1FDB8`), 검은 화면 아래에서 기본 화면을
+그린 뒤, `CF5:4A10`이 페이드 인한다. 각 페이드는 GRPDRV 기능 16h이며, 단계마다
+수직 귀선을 두 번 기다리는 16단계로 59.94 Hz에서 약 0.53 s다. 이 주사율은 표준
+VGA 수치이며 측정값이 아니다. 그다음 스크립트가 맵을 고를 때까지 0장의 레코드가
+실행된다. MAIN 자체는 프롤로그를 보이지 않는다. 불러오기도 같은 `C456`을 거쳐
+맵에 이른다.
 
-## Engine
+## 엔진
 
-`tools/menu_windows.py` checks the four calls and the frame style, computes each window
-with the rules above and draws frame, pattern, buttons and bevels from MARK into local
-pictures with palette slot 0. The window draws the labels in MAIN's own glyphs
-([MAIN's text](original-main-font.md)) at MAIN's columns.
+`tools/menu_windows.py`는 네 호출과 테두리 양식을 검사하고, 위 규칙으로 각 창을
+계산해 MARK의 테두리, 패턴, 버튼, 베벨을 팔레트 슬롯 0으로 로컬 그림에 그린다.
+창은 MAIN 자체 글리프([MAIN의 글자](original-main-font.md))로 MAIN의 열 위치에
+레이블을 그린다.
 
-- After the opening, or at once without an intact opening, the menu opens.
-- In the original frames the title is black with MAIN's windows. Options and their
-  two-row windows open over the title's, and the current choice is disabled.
-- The engine layout keeps the opening's title picture and sets the rows under its
-  logo; the options and their choices replace the rows there.
-- A choice plays effect 0. Escape or a right click shows the exit screen, and the next
-  click closes the window.
-- New game and every load fade out and in over 0.53 s each, and the host waits
-  meanwhile.
-- Arrow keys, Return and the outline around the keyboard row are engine additions.
+- 오프닝이 끝난 뒤, 또는 온전한 오프닝이 없으면 즉시 메뉴가 열린다.
+- 원작 화면 틀에서는 타이틀이 검은 바탕에 MAIN의 창으로 나온다. 옵션과 그 두
+  행짜리 창은 타이틀 창 위에 열리고, 현재 선택은 비활성화된다.
+- 엔진 배치는 오프닝의 타이틀 그림을 유지하고 로고 아래에 행을 놓는다. 옵션과
+  그 선택지는 그 자리의 행을 대체한다.
+- 선택하면 효과음 0을 재생한다. Escape나 오른쪽 클릭은 종료 화면을 보이고, 다음
+  클릭에 창이 닫힌다.
+- 새 게임과 모든 불러오기는 각각 0.53 s에 걸쳐 페이드 아웃과 페이드 인을 하며,
+  그동안 호스트는 기다린다.
+- 화살표 키, Return, 키보드로 고른 행 둘레의 외곽선은 엔진이 추가한 것이다.
 
-## Not restored or not checked
+## 복원하지 않았거나 확인하지 않은 것
 
-- The pressed look and the mouse cursor shape.
-- The palace loader's own present and fade after the first map is chosen.
-- The 59.94 Hz retrace rate, and how long the disk reads took.
-- The engine plays effect 1 on a cancel; MAIN plays none.
+- 눌린 모양과 마우스 커서 모양.
+- 첫 맵이 정해진 뒤 궁전 로더가 직접 하는 화면 표시와 페이드.
+- 59.94 Hz 귀선 주사율과 디스크 읽기에 걸린 시간.
+- 엔진은 취소 때 효과음 1을 재생하지만 MAIN은 아무것도 재생하지 않는다.

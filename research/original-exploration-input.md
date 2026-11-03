@@ -1,152 +1,142 @@
-# Original exploration input and arrival
+# 원작 탐색 입력과 도착
 
-These are static derivations from the pinned MAIN profile. No original DOS
-executable was run. Original maps, direction tables, city values and decoded
-art stay in ignored local output; public regressions use synthetic geometry.
+이는 고정된 MAIN 프로파일의 정적 분석이다. 원작 DOS 실행 파일은 실행하지
+않았다. 원작 맵, 방향 표, 도시 값, 디코딩한 그림은 무시되는 로컬 출력에 두며,
+공개 회귀 테스트는 합성 기하를 사용한다.
 
-`OriginalExplorationInput` owns selection plans and arrival validation.
-`Runtime` owns the existing route producer and movement clock; a plan retains
-that exact route rather than asking another consumer to find a second path.
-`CampaignVM` owns current city, cache identity, source flags and invocation
-continuation. The host alone dispatches the event after movement settles.
+`OriginalExplorationInput`은 선택 계획과 도착 검증을 소유한다. `Runtime`은 기존
+경로 생성기와 이동 시계를 소유한다. 계획은 다른 소비자에게 두 번째 경로를 찾게
+하지 않고 그 경로를 정확히 유지한다. `CampaignVM`은 현재 도시, 캐시 식별값, 원작
+플래그, 호출 이어가기를 소유한다. 이동이 안정된 뒤 이벤트를 디스패치하는 것은
+호스트뿐이다.
 
-## World entry and direction domains
+## 세계지도 진입과 방향 도메인
 
-MAIN `20B46..20B7E` places player0 at the current city's source world position,
-using generic facing4, only when native entry byte7 is one (`20EF5..20F29`).
-Source-script entry through map selection clears that byte in `201BC..2022E`.
-`worldBootstrap` therefore requires an explicit entry mode: script entry adds
-no player, cache replay or RNG; native-city entry supplies one default player.
-The source world place producer `21EE6..21FCB` doubles
-logical x/y into its native halfstep coordinates. Runtime performs that
-conversion once. Saved return context at `7A76` remains distinct
-from this visible default placement; this model does not overwrite one with
-the other.
+MAIN `20B46..20B7E`는 네이티브 진입 byte7이 1일 때에만(`20EF5..20F29`) 일반
+facing4를 사용해 player0을 현재 도시의 원작 세계지도 위치에 둔다. 맵 선택을 통한
+원작 스크립트 진입은 `201BC..2022E`에서 그 바이트를 지운다. 따라서
+`worldBootstrap`은 명시적인 진입 모드를 요구한다. 스크립트 진입은 플레이어, 캐시
+재생, RNG를 추가하지 않고, 네이티브 도시 진입은 기본 플레이어 하나를 공급한다.
+원작 세계지도 배치 생성기 `21EE6..21FCB`는 논리 x/y를 두 배로 하여 네이티브
+반칸 좌표로 만든다. Runtime은 이 변환을 한 번만 수행한다. `7A76`에 저장된 복귀
+컨텍스트는 이 눈에 보이는 기본 배치와 구별된다. 이 모델은 한쪽으로 다른 쪽을
+덮어쓰지 않는다.
 
-MAIN `1C058..1C0DC` has one direct callsite at `24C6A`, in the settlement
-controller. World entry does not call it. `CampaignVM.replaySettlementCache` accepts only
-town/palace kinds0/2 and replays cached actors only when cached city/map
-identity matches the current script context and its dirty field is set. It clears that
-field, visits cache slots in order, skips FFFF and player0, and places every
-remaining entry with its stored generic facing. A context mismatch marks the
-cache dirty without replay. VM applies those cache effects and returns parsed
-actor rows, music and restoration status. The input helper consumes those
-rows into commands and placement draws without repeating the cache selector.
+MAIN `1C058..1C0DC`의 직접 호출 지점은 거점 컨트롤러 안의 `24C6A` 하나뿐이다.
+세계지도 진입은 이를 호출하지 않는다. `CampaignVM.replaySettlementCache`는
+마을/궁전 kinds0/2만 받아들이며, 캐시된 도시/맵 식별값이 현재 스크립트
+컨텍스트와 일치하고 더티 필드가 설정된 경우에만 캐시된 액터를 재생한다. 그 필드를
+지우고, 캐시 슬롯을 순서대로 방문하며, FFFF와 player0을 건너뛰고, 남은 모든
+항목을 저장된 일반 방향으로 배치한다. 컨텍스트가 일치하지 않으면 재생 없이
+캐시를 더티로 표시한다. VM은 그 캐시 효과를 적용하고 파싱된 액터 행, 음악, 복원
+상태를 반환한다. 입력 보조 함수는 캐시 선택자를 반복하지 않고 그 행을 커맨드와
+배치 추출로 소비한다.
 
-Opcode01/0A's script-facing byte is doubled at `1C3B0`/`1C5F1` before generic
-move/place. Generic cached/default facing therefore has its own typed command
-field, `sourcePlacementFacing`; it cannot be reconstructed by treating an odd
-raw8 value as a script byte. The world converter `20FA4` indexes eight words at
-DS:`2EE6`, exported locally as `worldPlacementDirections`. Settlement converter
-`24ECC` pairs generic raw values by clearing bit0 before its word lookup. The
-existing settlement route/canonical-direction conversion is the inverse of
-that four-word table, so the native canonical result is generic raw divided
-by two. Neither consumer embeds the original table values.
+명령 01/0A의 스크립트 방향 바이트는 일반 이동/배치 전에 `1C3B0`/`1C5F1`에서 두
+배가 된다. 따라서 일반 캐시/기본 방향은 별도의 타입 지정 커맨드 필드
+`sourcePlacementFacing`을 가진다. 홀수 raw8 값을 스크립트 바이트로 취급해서는
+이를 재구성할 수 없다. 세계지도 변환기 `20FA4`는 DS:`2EE6`의 워드 8개를
+인덱싱하며, 이 표는 로컬에서 `worldPlacementDirections`로 내보낸다. 거점 변환기
+`24ECC`는 워드 조회 전에 bit0을 지워 일반 원시 값을 쌍으로 묶는다. 기존 거점
+경로/정규 방향 변환은 그 4워드 표의 역이므로, 네이티브 정규 결과는 일반 원시
+값을 2로 나눈 값이다. 두 소비자 모두 원작 표 값을 내장하지 않는다.
 
-Successful world place consumes one RNG16 call (`21F70`) and sets the even
-standing period from that draw. Successful settlement place does the same
-(`26075`), followed by RNG3 for actors other than resolved player0
-(`260BA..260C8`). `placementEffects` owns this order for both bootstrap and
-script placement. Scripted world move `21FCE..22082` and settlement move
-`25F2A..25FDE` contain no RNG calls. The periods are retained facts; autonomous
-NPC behavior is not established merely by preserving its initial draw.
+성공한 세계지도 배치는 RNG16 호출 1회(`21F70`)를 소비하고 그 추출값으로 짝수
+정지 주기를 정한다. 성공한 거점 배치도 같은 일을 하며(`26075`), 이어서 확정된
+player0 이외의 액터에 대해 RNG3을 호출한다(`260BA..260C8`). `placementEffects`가
+부트스트랩과 스크립트 배치 양쪽에서 이 순서를 소유한다. 스크립트에 의한 세계지도
+이동 `21FCE..22082`와 거점 이동 `25F2A..25FDE`에는 RNG 호출이 없다. 이 주기는
+유지되는 사실이다. 초기 추출을 보존했다는 것만으로 자율 NPC 동작이 확립되지는
+않는다.
 
-## Destination and interaction plans
+## 목적지와 상호작용 계획
 
-World city selection requires the constructed city flags' low two bits to be
-set, and a non-sentinel source position. Initial city flags3 come from the city
-constructor (`1B03C..1B051`), not BBK's five state bytes. The VM owns subsequent
-opcode20 updates. A selected world destination uses Runtime's native two-
-halfstep route. Arrival (`23F3C..23F83`) writes current city before the
-kind2/kind5 `[255,newCity]` probe. That producer does not write the saved `7A76` return
-context; only the live actor owns its arrival position. No event is emitted
-when a plan is created. An unanswered probe asks to enter a type three or four
-city ([original-shop.md](original-shop.md)).
+세계지도 도시 선택에는 생성된 도시 플래그의 하위 두 비트가 설정되어 있고, 원작
+위치가 센티널 값이 아니어야 한다. 초기 도시 flags3은 BBK의 상태 바이트 다섯 개가
+아니라 도시 생성자(`1B03C..1B051`)에서 온다. 이후의 명령 20 갱신은 VM이
+소유한다. 선택된 세계지도 목적지는 Runtime의 네이티브 2반칸 경로를 사용한다.
+도착(`23F3C..23F83`)은 kind2/kind5 `[255,newCity]` 조회 전에 현재 도시를 쓴다. 그
+생성기는 저장된 `7A76` 복귀 컨텍스트를 쓰지 않는다. 도착 위치는 현재 액터만
+소유한다. 계획을 만들 때에는 이벤트를 내보내지 않는다. 응답이 없는 조회는 유형
+3 또는 4의 도시에 들어갈지 묻는다([original-shop.md](original-shop.md)).
 
-`currentCity` belongs to player object+10, `gameCity` to native game field4,
-and `city` to the script map context. The source2E and world-arrival producers
-write both current/game city. World/battle script map selection writes only
-game field4's low selector byte. Default world player placement reads the
-player field; the settlement marker kind2 probe reads game field4. Their values can
-differ and are not substituted for one another.
+`currentCity`는 플레이어 객체+10에, `gameCity`는 네이티브 게임 field4에, `city`는
+스크립트 맵 컨텍스트에 속한다. 원작 2E와 세계지도 도착 생성기는 현재/게임 도시를
+모두 쓴다. 세계지도/전투 스크립트 맵 선택은 게임 field4의 하위 선택자 바이트만
+쓴다. 기본 세계지도 플레이어 배치는 플레이어 필드를 읽고, 거점 마커 kind2 조회는
+게임 field4를 읽는다. 두 값은 다를 수 있으며 서로 대신 쓰지 않는다.
 
-Town and palace share the settlement controller: `244FA..24790` selects their
-different map resources, while the input and talk producers are shared.
-Native walk bytes come from the active Runtime map, including PMAP resources.
-Town ground7F emits no destination event. A selected marker is rechecked at
-arrival, then the kind2 probe receives `[marker,gameCity]` (`25255..25288`). Source
-bit80 blocks input. Marker identities are retained separately from the
-unrestored built-in behavior that may follow an unmatched event.
-For ordinary room markers and marker124, native fallback tests query return4
-or FFFF; marker125 accepts return0 as well (`252B8..253AF`). Source query
-wrappers produce0 for a match/busy continuation and FFFF for no match; a
-record directory ordinal must not be substituted for that return. The4 branch
-is retained as a source predicate without an established reachable producer.
-Marker126 has
-no built-in transition. The planner does not infer a room/map transition from
-marker text or graphics; the fallback is selected only by the source switch.
+마을과 궁전은 거점 컨트롤러를 공유한다. `244FA..24790`은 각각 다른 맵 리소스를
+선택하고, 입력과 대화 생성기는 공유한다. 네이티브 보행 바이트는 PMAP 리소스를
+포함해 활성 Runtime 맵에서 온다. 마을의 ground7F는 목적지 이벤트를 내보내지
+않는다. 선택된 마커는 도착 시 다시 확인되고, 그다음 kind2 조회가
+`[marker,gameCity]`를 받는다(`25255..25288`). 원작 bit80은 입력을 막는다. 마커
+식별값은 일치하지 않은 이벤트 뒤에 올 수 있는, 복원하지 않은 내장 동작과 별도로
+유지한다. 일반 방 마커와 marker124에 대해 네이티브 대체 경로 검사는 질의
+return4 또는 FFFF를 확인한다. marker125는 return0도 받아들인다
+(`252B8..253AF`). 원작 질의 래퍼는 일치/바쁨 이어가기에 0을, 불일치에 FFFF를
+만든다. 레코드 디렉터리 서수를 그 반환값 대신 써서는 안 된다. 4 분기는 도달
+가능한 생성기가 확정되지 않은 원작 술어로 유지한다. Marker126에는 내장 전이가
+없다. 계획기는 마커 텍스트나 그림에서 방/맵 전이를 추정하지 않는다. 대체 경로는
+원작 switch로만 선택된다.
 
-The fallbacks rewrite game object `7A6C` (+0/+1 position, +5 kind, +6 index,
-+7 entry byte, +9 default facing flag). Arrival first clears +9
-(`25228..25230`). An ordinary key enters room map `2000|key` at (8,15): it
-saves game map and the player's position into `7A76` (`1CB6:1924`, which ends
-at `24EB7..24EC6`) before writing the room (`252C5..25310`). Marker7C enters
-the world map indexed by player field `12` (`25320..25358`). Source `12`
-stores the new chapter there (`1C7D8..1C7DA`, `1EBA2..1EBA7`), and
-`CF5:777A` maps that chapter through DS:`0EBC` to its city group
-(`1B0CA..1B0DC`). Scripts select world index zero in every chapter; the
-built-in exit keeps the chapter index, and the world picture still follows
-the chapter mapping. Marker7D copies kind, index and position from
-`7A76` and sets +9 (`25368..253B4`). Every fallback sets entry byte one.
+대체 경로는 게임 객체 `7A6C`(+0/+1 위치, +5 종류, +6 인덱스, +7 진입 바이트, +9
+기본 방향 플래그)를 다시 쓴다. 도착은 먼저 +9를 지운다(`25228..25230`). 일반
+키는 (8,15) 위치로 방 맵 `2000|key`에 들어간다. 방을 쓰기 전에(`252C5..25310`)
+게임 맵과 플레이어 위치를 `7A76`에 저장한다(`1CB6:1924`, `24EB7..24EC6`에서
+끝남). Marker7C는 플레이어 필드 `12`로 인덱싱되는 세계지도에 들어간다
+(`25320..25358`). 원작 `12`는 새 장을 그곳에 저장하고(`1C7D8..1C7DA`,
+`1EBA2..1EBA7`), `CF5:777A`는 그 장을 DS:`0EBC`를 통해 도시 그룹에 대응시킨다
+(`1B0CA..1B0DC`). 스크립트는 모든 장에서 세계지도 인덱스 0을 선택한다. 내장
+출구는 장 인덱스를 유지하며, 세계지도 그림은 여전히 장 대응을 따른다.
+Marker7D는 `7A76`에서 종류, 인덱스, 위치를 복사하고 +9를 설정한다
+(`25368..253B4`). 모든 대체 경로는 진입 바이트를 1로 설정한다.
 
-The framework loop then enters the game-object map. Settlement entry with
-byte one places player `0200` at the game position with raw facing four when
-+9 is one, otherwise zero (`2464A..24691`), then replays the actor cache
-(`24C6A`). World entry uses the existing current-city default spawn. Between
-placement and replay, `24BD6..24C1A` selects the entry music and puts actor
-`0376` in palace room seven ([original-shop.md](original-shop.md)). The native
-host also follows the
-settlement wrapper's status-two rule (`264B2..264B7`): a script map selection
-from a town or palace event saves `7A76` before C86C. If no player actor is
-displayed then, the saved position is unknown and a later marker7D exit stops.
-A matched marker7D script followed by the built-in exit is not restored.
+그다음 프레임워크 루프가 게임 객체의 맵에 진입한다. 진입 바이트가 1인 거점
+진입은 +9가 1이면 원시 방향 4로, 아니면 0으로 플레이어 `0200`을 게임 위치에
+배치하고(`2464A..24691`), 이어서 액터 캐시를 재생한다(`24C6A`). 세계지도 진입은
+기존의 현재 도시 기본 배치 위치를 사용한다. 배치와 재생 사이에서
+`24BD6..24C1A`가 진입 음악을 선택하고 궁전 방 7에 액터 `0376`을 둔다
+([original-shop.md](original-shop.md)). 네이티브 호스트는 거점 래퍼의 상태 2
+규칙(`264B2..264B7`)도 따른다. 마을이나 궁전 이벤트에서의 스크립트 맵 선택은
+C86C 전에 `7A76`을 저장한다. 그 시점에 플레이어 액터가 표시되어 있지 않으면
+저장된 위치는 알 수 없으며, 이후의 marker7D 출구는 멈춘다. 일치한 marker7D
+스크립트 뒤에 내장 출구가 이어지는 경우는 복원하지 않았다.
 
-Actor approach (`25D9E..25E67`) builds the route to the actor's target tile and
-removes its final step through the shared route producer. The producer seeds its
-flood at the goal without testing it, so a blocked target tile is reachable. The world producer
-does the same (`21513..2152F`): one chapter-four messenger walks to a blocked cell beside a city. It does not find a
-new path to a separately chosen adjacent cell. The planner preserves that
-prefix. At arrival, `25B60..25C04` requires adjacency (or the same tile), and
-`26A48..26A85` faces both participants toward one another before kind3's
-person probe. When that probe finds no record, `26A8D..26A9C` makes the
-person say the DS:`397A` line. Those bytes read as the Shift-JIS string of a
-laugh, left over in the Korean build. What the Korean program draws for them was
-not checked, so the native host shows a short notice instead of inventing a
-rendering. Person374 runs the shop instead of kind3
+액터 접근(`25D9E..25E67`)은 액터의 목표 타일까지 경로를 만들고, 공유 경로
+생성기를 통해 마지막 걸음을 제거한다. 생성기는 목표를 검사하지 않고 그 지점에서
+플러드를 시작하므로, 막힌 목표 타일에도 도달할 수 있다. 세계지도 생성기도
+같다(`21513..2152F`). 4장의 한 전령은 도시 옆의 막힌 칸으로 걸어간다. 따로 고른
+인접 칸으로 가는 새 경로를 찾지 않는다. 계획기는 그 접두 경로를 보존한다. 도착
+시 `25B60..25C04`는 인접(또는 같은 타일)을 요구하고, `26A48..26A85`는 kind3의
+인물 조회 전에 두 참여자가 서로 마주 보게 한다. 그 조회가 레코드를 찾지 못하면
+`26A8D..26A9C`가 인물에게 DS:`397A`의 대사를 말하게 한다. 그 바이트는 한국어판에
+남은 웃음소리의 Shift-JIS 문자열로 읽힌다. 한국어 프로그램이 그 바이트를 어떻게
+그리는지는 확인하지 않았으므로, 네이티브 호스트는 렌더링을 지어내지 않고 짧은
+알림을 대신 보여 준다. Person374는 kind3 대신 도구상을 연다
 ([original-shop.md](original-shop.md)).
-`26AA1..26AAD` restores the target's saved facing after that invocation while
-the player keeps the new facing; the arrival returns that separate after-call
-effect. An actor that moved away cannot receive the stale interaction event.
+`26AA1..26AAD`는 그 호출 뒤 대상의 저장된 방향을 복원하고, 플레이어는 새 방향을
+유지한다. 도착은 그 별도의 호출 후 효과를 반환한다. 멀리 이동한 액터는 오래된
+상호작용 이벤트를 받을 수 없다.
 
-## Invocation boundary
+## 호출 경계
 
-World wrapper `221EE..2228B` and settlement wrapper `2643C..264CF` query their
-selected kind0/3/2 event once (wrapper selectors 0/1/2) and execute at most one matching invocation.
-Neither wrapper repeats on returned status5/6 or supplies automatic0 as a
-query fallback. The settlement wrapper returns the source query result;
-the world wrapper returns the interpreter status. Source query return is0/FFFF,
-and is separate from the matched record's directory ordinal. These values are different
-domains and must not be substituted for one another.
+세계지도 래퍼 `221EE..2228B`와 거점 래퍼 `2643C..264CF`는 선택된 kind0/3/2
+이벤트를 한 번 질의하고(래퍼 선택자 0/1/2), 일치하는 호출을 최대 한 번 실행한다.
+어느 래퍼도 반환된 status5/6에 대해 반복하지 않으며, automatic0을 질의 대체로
+공급하지 않는다. 거점 래퍼는 원작 질의 결과를 반환하고, 세계지도 래퍼는
+인터프리터 상태를 반환한다. 원작 질의 반환값은 0/FFFF이며, 일치한 레코드의
+디렉터리 서수와 별개다. 이 값들은 서로 다른 도메인이며 서로 대신 써서는 안 된다.
 
-The outer controller owns subsequent automatic probes. The settlement loop
-`247F8..24939` runs input/mode callbacks, checks its source control mask, then
-calls automatic0 once at `248A1..248A6`, checks the mask again, and advances its
-render/tick. The world loop `20CD2..20DF8` has the same order at
-`20D69..20D8C`. World entry also has an initial automatic0 call at `20F35`.
-This is a controller frame loop, not an unbounded VM dispatch chain. Source
-status2/7/8 and map transitions can end the caller before another tick.
+이후의 자동 조회는 바깥 컨트롤러가 소유한다. 거점 루프 `247F8..24939`는
+입력/모드 콜백을 실행하고, 원작 제어 마스크를 확인한 뒤, `248A1..248A6`에서
+automatic0을 한 번 호출하고, 마스크를 다시 확인한 다음 렌더/틱을 진행한다.
+세계지도 루프 `20CD2..20DF8`은 `20D69..20D8C`에서 같은 순서를 가진다. 세계지도
+진입에는 `20F35`의 초기 automatic0 호출도 있다. 이는 컨트롤러의 프레임 루프이며,
+끝없는 VM 디스패치 사슬이 아니다. 원작 status2/7/8과 맵 전이는 다음 틱 전에
+호출자를 끝낼 수 있다.
 
-Synthetic tests cover city-flag gates, exact path retention, delayed arrival,
-stale actor rejection, palace input, marker behavior, separate direction
-domains, cache ownership and RNG order. They establish native boundary
-semantics, not original framebuffer/input timing or complete campaign parity.
+합성 테스트는 도시 플래그 관문, 정확한 경로 유지, 지연된 도착, 오래된 액터 거부,
+궁전 입력, 마커 동작, 분리된 방향 도메인, 캐시 소유, RNG 순서를 다룬다. 이는
+네이티브 경계 의미를 확립할 뿐, 원작 프레임버퍼/입력 타이밍이나 완전한 캠페인
+동등성을 확립하지 않는다.

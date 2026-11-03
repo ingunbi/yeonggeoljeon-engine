@@ -1,76 +1,68 @@
-# Original strategy execution and AI estimates
+# 원작 책략 실행과 AI 추정
 
-The examined source dispatcher is `MAIN0x2E836..0x2EE1C`. The new native
-`OriginalStrategies.swift` controller consumes the movement/profile owner's
-availability, category, MP-cost, range and terrain-eligibility facts. Those
-original tables remain local imports. Target choice and area confirmation are
-explicit controller inputs.
+조사한 원작 분배기는 `MAIN0x2E836..0x2EE1C`이다. 새 네이티브
+`OriginalStrategies.swift` 컨트롤러는 이동/프로필 담당자가 제공하는 사용 가능
+여부, 분류, MP 비용, 사거리, 지형 자격 사실을 소비한다. 이 원작 테이블은 로컬
+가져오기로만 남는다. 대상 선택과 범위 확정은 명시적인 컨트롤러 입력이다.
 
-| Original ID range | Source operation |
+| 원작 ID 범위 | 원작 동작 |
 | --- | --- |
-| 0..14 | Damage context kind2; family is ID/5. The last two IDs of each family also visit enemy cardinal neighbors. |
-| 15..17 | Condition-mask2 success test with denominator2. ID17 also visits enemy cardinal neighbors. |
-| 18..20 | Success test with denominator4, then a word-width morale reduction and the ordinary morale setter. |
-| 21..29 | Single-target morale, troop, or combined healing in three groups. |
-| 30..35 | Area morale or troop healing, with radius/strength selected by the source ID remainder. |
+| 0..14 | 피해 컨텍스트 kind2. 계열은 ID/5다. 각 계열의 마지막 두 ID는 적의 상하좌우 이웃도 방문한다. |
+| 15..17 | 분모 2인 condition-mask2 성공 판정. ID17은 적의 상하좌우 이웃도 방문한다. |
+| 18..20 | 분모 4인 성공 판정 뒤, 워드 폭 사기 감소와 일반 사기 설정 루틴. |
+| 21..29 | 세 그룹으로 나뉜 단일 대상 사기, 병력, 또는 결합 회복. |
+| 30..35 | 범위 사기 또는 병력 회복. 반경/강도는 원작 ID 나머지로 고른다. |
 
-Damage uses the separate source damage producer, target HP/morale writeback,
-context EXP and retirement. It never uses a physical-damage replacement for an
-unimplemented strategy. Damage splash copies its center after the primary
-context; condition splash copies its center before the primary effect. Both
-visit cardinal offsets in imported source order and read current occupancy.
-Area healing retains its target-list order, beginning with the caster's cell.
+피해는 별도의 원작 피해 생성기, 대상 HP/사기 되쓰기, 컨텍스트 경험치, 퇴장을
+쓴다. 구현되지 않은 책략을 물리 피해로 대신하지 않는다. 피해 확산은 1차 컨텍스트
+뒤에 중심을 복사하고, 상태 확산은 1차 효과 전에 중심을 복사한다. 둘 다 가져온
+원작 순서대로 상하좌우 오프셋을 방문하며 현재 점유를 읽는다. 범위 회복은 시전자의
+칸부터 시작하는 대상 목록 순서를 유지한다.
 
-Actual healing (`0x2EE20..0x2F052`) adds caster-derived troop/morale bonuses,
-draws jitter, caps to the missing quantity and applies the original setters.
-The source caster-slot255 path omits those caster bonuses. Full morale with
-condition2 is a valid actual healing target even though the AI utility gate
-differs. Healing the same maximum morale can consume a condition-recovery draw.
+실제 회복(`0x2EE20..0x2F052`)은 시전자에서 나온 병력/사기 보너스를 더하고, 흔들림
+난수를 뽑고, 부족한 양으로 상한을 둔 뒤 원작 설정 루틴을 적용한다. 원작의
+caster-slot255 경로는 이 시전자 보너스를 생략한다. 사기가 가득 찬 condition2
+대상은 AI 효용 관문이 달라도 실제 회복의 유효한 대상이다. 같은 최대 사기를 회복할
+때도 상태 회복 난수를 소비할 수 있다.
 
-Completed damage commands use context EXP. Other completed commands award eight
-flat EXP, with twelve for single-target healing by class12 or18. Completion
-then subtracts the imported MP cost and sets acted-mask128. Invalid terrain,
-weather rejection, cancelled selection and rejected full single-target healing
-skip completion costs. The source checks MP before effects; the final byte
-subtraction retains wrapping if an intervening campaign effect changed MP.
+완료된 피해 명령은 컨텍스트 경험치를 쓴다. 완료된 다른 명령은 고정 경험치 8을
+주며, 병과12 또는 18의 단일 대상 회복은 12를 준다. 완료 처리는 이어서 가져온 MP
+비용을 빼고 acted-mask128을 설정한다. 부적합한 지형, 날씨에 의한 거부, 취소된
+선택, 가득 찬 단일 대상 회복의 거부는 완료 비용을 건너뛴다. 원작은 효과 전에 MP를
+확인한다. 중간에 캠페인 효과가 MP를 바꾸었다면 마지막 바이트 뺄셈은 순환(wrap)을
+그대로 유지한다.
 
-`OriginalStrategyOperation` owns a Codable program counter, retained target
-slots/center, completed target effects and pending retirement acknowledgement.
-`begin` performs availability and target/confirmation checks without gameplay
-RNG or effect mutation. Each `advance` commits one target context and yields its
-effect. A newly enqueued session retirement notice blocks the next advance until
-the host explicitly acknowledges that exact notice after source dialogue or
-choices finish. Repeated advances while waiting return the same notice without
-repeating damage, RNG, context EXP or final MP/flat-EXP/acted costs.
+`OriginalStrategyOperation`은 Codable 프로그램 카운터, 보존한 대상 슬롯/중심,
+완료된 대상 효과, 대기 중인 퇴장 확인을 소유한다. `begin`은 게임 진행 RNG나 효과
+변경 없이 사용 가능 여부와 대상/확정 검사를 수행한다. 각 `advance`는 대상
+컨텍스트 하나를 확정하고 그 효과를 내놓는다. 새로 대기열에 들어간 세션 퇴장 알림은,
+원작 대사나 선택지가 끝난 뒤 호스트가 바로 그 알림을 명시적으로 확인할 때까지 다음
+advance를 막는다. 기다리는 동안 반복한 advance는 피해, RNG, 컨텍스트 경험치,
+마지막 MP/고정 경험치/행동 완료 비용을 반복하지 않고 같은 알림을 반환한다.
 
-The pending operation's local effect index and the session's global retirement
-sequence are separate identities. A status retirement under suppression flag4
-does not create a campaign notice. Notice person identity records the original
-producer's evidence; later effects still read current runtime-slot state.
-Damage splash captures its center after the primary retirement script resumes;
-condition splash retains the center captured before the primary context. Each
-splash neighbor reads current terrain/occupancy, whereas area healing resumes
-the retained slot list. Host script RNG consumption and byte-MP changes remain
-visible to subsequent effects and final completion.
+대기 중인 동작의 로컬 효과 인덱스와 세션의 전역 퇴장 순번은 별개의 식별자다. 억제
+flag4 아래의 상태 퇴장은 캠페인 알림을 만들지 않는다. 알림의 인물 식별 정보는 원작
+생성기의 근거를 기록하며, 이후 효과는 여전히 현재 런타임 슬롯 상태를 읽는다. 피해
+확산은 1차 퇴장 스크립트가 재개된 뒤 중심을 캡처하고, 상태 확산은 1차 컨텍스트
+전에 캡처한 중심을 유지한다. 확산 이웃은 각각 현재 지형/점유를 읽고, 범위 회복은
+보존한 슬롯 목록에서 이어 간다. 호스트 스크립트의 RNG 소비와 바이트 MP 변경은 이후
+효과와 마지막 완료 처리에서도 보인다.
 
-The existing synchronous `castStrategy` convenience drives this same operation
-to completion and acknowledges retirement after its callback returns. An async
-host instead retains the operation across waits. A repeated finished advance
-returns the retained result without charging completion twice. These source
-dispatch semantics do not establish original GUI/animation parity or a full
-campaign playthrough.
+기존의 동기식 편의 함수 `castStrategy`는 같은 동작을 끝까지 진행시키고, 콜백이
+반환된 뒤 퇴장을 확인한다. 비동기 호스트는 대신 대기 사이에 동작을 보관한다. 이미
+끝난 advance를 반복하면 완료 비용을 두 번 부과하지 않고 보관한 결과를 반환한다.
+이러한 원작 분배 의미론은 원작 GUI/애니메이션 동등성이나 캠페인 전체 진행을
+입증하지 않는다.
 
-The AI estimates (`0x30824..0x30C57`) are implemented independently in
-`OriginalStrategyAI.swift`. They include utility thresholds/bonuses absent from
-actual healing, random morale weighting absent from actual morale damage, and
-word/byte truncation. The shared success producer (`0x2D80A..0x2D8F0`) retains
-the AI raw denominator byte130 rather than masking it to2. The status AI branch
-then draws `random(300)` even on estimated failure. These source behaviors are
-preserved rather than replaced with a corrected or generic AI rule.
+AI 추정(`0x30824..0x30C57`)은 `OriginalStrategyAI.swift`에 따로 구현되어 있다.
+여기에는 실제 회복에 없는 효용 문턱값/보너스, 실제 사기 피해에 없는 무작위 사기
+가중치, 워드/바이트 절단이 포함된다. 공유 성공 생성기(`0x2D80A..0x2D8F0`)는 AI의
+원시 분모 byte130을 2로 마스킹하지 않고 그대로 유지한다. 상태 AI 분기는 그 뒤
+추정이 실패해도 `random(300)`을 뽑는다. 이 원작 동작은 보정한 규칙이나 일반적인
+AI 규칙으로 대체하지 않고 보존한다.
 
-Public tests use synthetic profiles and persons. They verify actual command
-branching, primary/splash order, callback interleaving, shared writeback, action
-costs, full-target rejection, caster inclusion, source RNG ordering, serialized
-retirement suspension/resumption and the separation between AI utility and
-actual effects. No original tables, assets,
-text or disassembly are required by those tests or included in public sources.
+공개 테스트는 합성 프로필과 인물을 쓴다. 테스트는 실제 명령 분기, 1차/확산 순서,
+콜백 교차 실행, 공유 되쓰기, 행동 비용, 가득 찬 대상의 거부, 시전자 포함, 원작 RNG
+순서, 직렬화된 퇴장 중단/재개, AI 효용과 실제 효과의 분리를 확인한다. 이 테스트에는
+원작 테이블, 에셋, 텍스트, 역어셈블 결과가 필요하지 않으며 공개 소스에도 들어 있지
+않다.

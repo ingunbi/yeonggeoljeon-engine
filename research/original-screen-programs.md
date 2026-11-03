@@ -1,69 +1,72 @@
-# Opening and ending programs
+# 오프닝과 엔딩 프로그램
 
-`OPEN.EXE` and `END.EXE` are built from the same library: scene routines drive a
-graphics driver, a clock and six 64 KB work buffers. They were read statically; no
-original program was run, and nothing was compared with a running original.
+`OPEN.EXE`와 `END.EXE`는 같은 라이브러리로 만들어졌다. 장면 루틴이 그래픽 드라이버,
+시계, 64 KB 작업 버퍼 여섯 개를 구동한다. 정적으로 읽었으며, 원작 프로그램은
+실행하지 않았고 실행 중인 원작과 비교하지 않았다.
 
-`tools/screen_programs.py` transcribes the scene routines call by call, and
-`tools/opening_script.py` holds OPEN's operation list with addresses, coordinates
-and text pointers. `tools/prepare_screens.py` flattens them into local `screens.json`
-and `screens.bin`. `OriginalScreenPlayer` replays that list on the same model the
-source used: a 640 by 400 indexed canvas, a palette and the six buffers.
+`tools/screen_programs.py`는 장면 루틴을 호출 단위로 옮겨 적고,
+`tools/opening_script.py`는 주소, 좌표, 텍스트 포인터가 포함된 OPEN의 동작 목록을
+담는다. `tools/prepare_screens.py`는 이를 로컬 `screens.json`과 `screens.bin`으로
+평탄화한다. `OriginalScreenPlayer`는 원작이 쓴 것과 같은 모델, 즉 640×400 인덱스
+캔버스, 팔레트, 버퍼 여섯 개 위에서 그 목록을 재생한다.
 
-## Model
+## 모델
 
-| Operation | Source | Meaning |
+| 동작 | 원작 | 의미 |
 | --- | --- | --- |
-| put | driver function 0F | Interleaved pixels to the canvas. Mode 0 replaces, 3 ORs, 4 keys index 0. Clipped. |
-| get | driver function 10 | The canvas back to interleaved pixels in a buffer. |
-| stamp | driver function 13 | One-bit bitmap with the mono state. Mask plus sprite is a stamp with mode 2, then a put with mode 3. |
-| picture | driver function 19 | An NPK picture, decoded by the producer. |
-| dissolve | END `0:8642`, OPEN `0x8EDE`, `0x8F66` | One step of a 16 or 64 pattern transition between two buffers. |
-| bufmask, bufput, cell | END `0:0AC7`, `0:0288` | Compositing inside buffers. |
-| fade, fadestep | END `0:84C4`, OPEN `0x8B3E` | Each channel moves one step toward the target, four driver ticks a step. |
-| wait, tick, clock | END `0:A9FA`, `0:83B0` | Deadlines in centiseconds, absolute within a program. Later waits absorb overruns. |
-| cycle | OPEN `0x42C8` | Palette list on the 18.2 Hz tick. |
+| put | 드라이버 함수 0F | 인터리브 픽셀을 캔버스로. 모드 0은 대체, 3은 OR, 4는 인덱스 0을 투명 키로 쓴다. 클리핑한다. |
+| get | 드라이버 함수 10 | 캔버스를 다시 버퍼의 인터리브 픽셀로. |
+| stamp | 드라이버 함수 13 | 모노 상태를 쓰는 1비트 비트맵. 마스크와 스프라이트는 모드 2의 stamp 뒤 모드 3의 put이다. |
+| picture | 드라이버 함수 19 | 생성기가 디코딩한 NPK 그림. |
+| dissolve | END `0:8642`, OPEN `0x8EDE`, `0x8F66` | 두 버퍼 사이 16 또는 64패턴 전환의 한 단계. |
+| bufmask, bufput, cell | END `0:0AC7`, `0:0288` | 버퍼 내부 합성. |
+| fade, fadestep | END `0:84C4`, OPEN `0x8B3E` | 각 채널이 목표를 향해 한 단계씩 움직이며, 단계당 드라이버 틱 4번. |
+| wait, tick, clock | END `0:A9FA`, `0:83B0` | 센티초 단위 마감이며, 프로그램 안에서 절대값이다. 뒤의 대기가 초과분을 흡수한다. |
+| cycle | OPEN `0x42C8` | 18.2 Hz 틱에 맞춘 팔레트 목록. |
 
-Text becomes bitmaps in the producer, with the source font mapping, so the player
-never sees a string. Random numbers do not appear: every sprite path in both
-programs comes from tables and modulo arithmetic.
+텍스트는 생성기에서 원작 글꼴 대응을 거쳐 비트맵이 되므로, 재생기는 문자열을 전혀
+보지 않는다. 난수는 나오지 않는다. 두 프로그램의 모든 스프라이트 경로는 테이블과
+나머지 연산에서 나온다.
 
-## Exit screen
+## 종료 화면
 
-MAIN `0x1E3A8` fades to black, clears, draws PACKGRP members 34 and 36 at (216,80)
-and (184,200), fades to palette 4 of DS:`1050` and waits for one input (`CF5:2556`),
-after which main exits with code 3. The compiled program is `quit`. MAIN's fade goes
-through the graphics driver, two vertical retraces a step
-([title menu](original-title-menu.md)); this program still uses the four-tick step.
+MAIN `0x1E3A8`은 검은 화면으로 페이드하고, 화면을 지우고, PACKGRP 멤버 34와 36을
+(216,80)과 (184,200)에 그린 다음, DS:`1050`의 팔레트 4로 페이드하고 입력 하나를
+기다린다(`CF5:2556`). 그 뒤 main은 코드 3으로 종료한다. 컴파일된 프로그램은
+`quit`이다. MAIN의 페이드는 그래픽 드라이버를 거치며 단계당 수직 귀선 두 번이
+걸린다([타이틀 메뉴](original-title-menu.md)). 이 프로그램은 여전히 4틱 단계를
+쓴다.
 
-## Opening
+## 오프닝
 
-The demo has sixteen scenes and two songs. The title picture is the tenth scene,
-and the demo restarts from its first scene after a full run. Only a mouse button
-leaves it. The window plays one pass, and any click leaves; MAIN's menu then opens at
-once ([title menu](original-title-menu.md)). The source then fades its music out over
-about five seconds; here the music stops at once.
+데모는 장면 16개와 곡 2개로 이루어진다. 타이틀 그림은 열 번째 장면이며, 데모는
+끝까지 재생된 뒤 첫 장면부터 다시 시작한다. 마우스 버튼으로만 빠져나갈 수 있다.
+창은 한 번만 재생하며, 아무 곳이나 클릭하면 빠져나간다. 그러면 MAIN의 메뉴가 바로
+열린다([타이틀 메뉴](original-title-menu.md)). 원작은 그 뒤 약 5초에 걸쳐 음악을
+페이드아웃하지만, 여기서는 음악이 바로 멈춘다.
 
-The GAME copy of `OPGRP.R3` has damaged members, so the demo is compiled only when
-the caller selects an intact copy with `--title-opgrp`. Without one, the window
-starts at the title menu.
+GAME 사본의 `OPGRP.R3`에는 손상된 멤버가 있으므로, 호출자가 `--title-opgrp`로
+온전한 사본을 선택할 때만 데모를 컴파일한다. 사본이 없으면 창은 타이틀 메뉴에서
+시작한다.
 
-## Ending
+## 엔딩
 
-Selection three runs END2, every other value END1, and all of them then run the
-common credits. END1 has nine more scenes after the first, with colour palettes for
-selection zero and grey ones otherwise. Selection zero also adds a text and a flash.
-Nothing is skippable in the source. Here Escape leaves, and a click answers the final
-button loop. END then exits to DOS through `HERO.COM`; the window returns to the title.
+선택 3은 END2를, 다른 모든 값은 END1을 실행하며, 어느 쪽이든 그 뒤 공통 크레딧을
+실행한다. END1에는 첫 장면 뒤에 장면이 아홉 개 더 있으며, 선택 0에서는 컬러
+팔레트를, 그 밖에는 회색 팔레트를 쓴다. 선택 0은 텍스트 하나와 섬광도 추가한다.
+원작에서는 아무것도 건너뛸 수 없다. 여기서는 Escape로 빠져나가며, 클릭이 마지막
+버튼 루프에 응답한다. END는 그 뒤 `HERO.COM`을 거쳐 DOS로 나가고, 창은 타이틀로
+돌아간다.
 
-The first END1 scene still plays from its frames. A one-second fade to black joins
-it to the program, which starts where the source's own fade would have ended.
+첫 END1 장면은 여전히 자체 프레임으로 재생된다. 1초 동안 검은 화면으로 가는
+페이드가 이를 프로그램에 이어 붙이며, 프로그램은 원작 자체의 페이드가 끝났을
+지점에서 시작한다.
 
-## Not known
+## 알려지지 않은 것
 
-- Real blit, decode and disk time, which sets the length of the unpaced dissolve
-  steps. Deadlines absorb most of it.
-- One field of an END1 sprite record is never assigned (`0x7380`). It affects at
-  most one 16 by 16 patch on the first frame.
-- Whether framework flag bit 8 is set in normal play. The programs assume it is, so
-  the requested palettes apply.
+- 실제 블릿, 디코딩, 디스크 시간. 이 시간이 속도 조절이 없는 dissolve 단계의
+  길이를 정한다. 대부분은 마감이 흡수한다.
+- END1 스프라이트 레코드의 필드 하나는 값이 할당되지 않는다(`0x7380`). 이는 첫
+  프레임의 16×16 조각 하나에만 영향을 줄 수 있다.
+- 일반 플레이에서 프레임워크 플래그 비트 8이 설정되는지 여부. 프로그램은 설정되어
+  있다고 가정하므로 요청한 팔레트가 적용된다.

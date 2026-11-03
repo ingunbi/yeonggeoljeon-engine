@@ -1,364 +1,352 @@
-# Field and battle screens, HUD and in-canvas prompts
+# 필드와 전투 화면, HUD, 캔버스 안 프롬프트
 
-Static derivations from the pinned Korean DOS/V MAIN profile; no original
-program was run. Offsets are MAIN.EXE file offsets. The story producer
-(`tools/prepare_story.py`) reads these facts from MAIN bytes and refuses a
-build whose instruction shapes differ from the examined profile.
+고정한 한국어판 DOS/V MAIN 프로필에서 얻은 정적 분석이며, 원작 프로그램은
+실행하지 않았다. 오프셋은 MAIN.EXE 파일 오프셋이다. 스토리 생성기
+(`tools/prepare_story.py`)는 이 사실을 MAIN 바이트에서 읽으며, 기계어 명령
+형태가 조사한 프로필과 다른 빌드는 거부한다.
 
-## Original screen routines
+## 원작 화면 루틴
 
-The field screen routine `CF5:C456` (`0x1FDA6..0x1FE2C`) loads AX with zero
-and calls `CF5:520E`, which blits PACKGRP member 0 (a 640×400 picture) at the
-origin. The map is then drawn into the frame's black window, the source
-viewport `(16,16,512,320)` that the scene and map producers already record.
-The battle routine (`0x1FE2E..0x1FE69`) calls the same blitter with AX one, so
-member 1 is the battle frame. See [Battle screen](#battle-screen).
+필드 화면 루틴 `CF5:C456`(`0x1FDA6..0x1FE2C`)은 AX에 0을 넣고 `CF5:520E`를
+호출한다. 이 함수는 PACKGRP 멤버 0(640×400 그림)을 원점에 블릿한다. 이어
+지도는 화면 틀의 검은 창, 곧 장면·지도 생성기가 이미 기록하는 원작 뷰포트
+`(16,16,512,320)` 안에 그려진다. 전투 루틴(`0x1FE2E..0x1FE69`)은 AX를 1로 하여
+같은 블리터를 호출하므로 멤버 1이 전투 화면 틀이다. [전투 화면](#전투-화면)을
+참고한다.
 
-`CF5:51B2` draws portrait 0 into the upper-right slot. The call at
-`0x1FE15` passes its x and y in AX and DX; the slot is 64×80.
+`CF5:51B2`는 초상 0을 오른쪽 위 칸에 그린다. `0x1FE15`의 호출은 x와 y를 AX와
+DX로 넘기며, 칸은 64×80이다.
 
-Four HUD writers share one instruction shape: push height and clear colour,
-load x, y and width into AX, DX and BX, call the rectangle clear `CF5:52EE`,
-then push a text column (in 8-pixel cells), the same y and DS:`6390`, and call
-the text cursor `CF5:091E`. The producer accepts a writer only when its text
-row equals its cleared row.
+HUD 기록 루틴 네 개는 같은 기계어 명령 형태를 공유한다. 높이와 지움 색을
+push하고, x, y, 너비를 AX, DX, BX에 넣고, 사각형 지우기 `CF5:52EE`를 호출한 뒤,
+텍스트 열(8픽셀 칸 단위), 같은 y, DS:`6390`을 push하고 텍스트 커서
+`CF5:091E`를 호출한다. 생성기는 텍스트 행이 지운 행과 같은 기록 루틴만
+받아들인다.
 
-| Field | Writer | Value | Format |
+| 항목 | 기록 루틴 | 값 | 형식 |
 |---|---|---|---|
-| caption | `0x1FC5E..0x1FC8E` | DS:`DB4C`, written by source `0D` through `CF5:C340` | `%s` |
-| money | `0x1FCB2..0x1FCE8` | player object `7A80+0` through `CF5:220A` | `%5u` |
-| level | `0x1FCEA..0x1FD22` | person 0 (DS:`7A94`) `+21` through `CF5:7572` | `%4u` |
-| territory | `0x1FD24..0x1FD62` | city of player `7A80+10` through `CF5:210E`/`2118` | `%6s` |
+| 캡션 | `0x1FC5E..0x1FC8E` | DS:`DB4C`, 원작 `0D`가 `CF5:C340`을 거쳐 기록 | `%s` |
+| 금 | `0x1FCB2..0x1FCE8` | 플레이어 객체 `7A80+0`, `CF5:220A` 경유 | `%5u` |
+| 레벨 | `0x1FCEA..0x1FD22` | 인물 0(DS:`7A94`) `+21`, `CF5:7572` 경유 | `%4u` |
+| 영토 | `0x1FD24..0x1FD62` | 플레이어 `7A80+10`의 도시, `CF5:210E`/`2118` 경유 | `%6s` |
 
-## Script text
+## 스크립트 텍스트
 
-The interpreter `CF5:8794` sends three text opcodes three ways
-(`0x1C1E4..0x1C24E` is the case chain):
+인터프리터 `CF5:8794`는 텍스트 명령 세 개를 세 가지 방식으로 보낸다
+(`0x1C1E4..0x1C24E`가 case 분기 사슬이다).
 
-| Opcode | Handler | Effect |
+| 명령 | 핸들러 | 효과 |
 |---|---|---|
-| `08` | `0x1C572` | Narration window `CF5:C15A`; it waits for input. |
-| `0B` | `0x1C602` | `CF5:CF04` calls the selector `CF5:3C5E` in mode 0. |
-| `0D` | `0x1C671` | `CF5:C340` copies the text to DS:`DB4C` and redraws the caption. |
-| `0E` | `0x1C6A8` | A stock text from DS:`24FE`, then the `0B` call (`0x1C6F4`). |
+| `08` | `0x1C572` | 서술 창 `CF5:C15A`. 입력을 기다린다. |
+| `0B` | `0x1C602` | `CF5:CF04`가 선택기 `CF5:3C5E`를 모드 0으로 호출한다. |
+| `0D` | `0x1C671` | `CF5:C340`이 텍스트를 DS:`DB4C`에 복사하고 캡션을 다시 그린다. |
+| `0E` | `0x1C6A8` | DS:`24FE`의 고정 텍스트를 쓰고, 이어 `0B` 호출(`0x1C6F4`)을 한다. |
 
-Mode 0 has no button. It holds through `CF5:25A6(2)`, which calls `CF5:2570(16)`:
-sixteen units of six driver ticks, about 1.59 seconds, or less if any input arrives
-(`0x178B1`, `0x15EC0..0x15EF4`). So `0B` and `0E` are short boxes such as a place
-name or a gain, and `0D` is the chapter title that stays in the HUD. Each chapter
-opens with a `0E` box and a `0D` with the same text. Only `0D` writes DS:`DB4C`; the
-title menu clears it (`0x1F9B7`), a map load keeps it, and MSAVE stores it as the
-slot title (`0x1E80B`, read back at `0x1ED38`).
+모드 0에는 버튼이 없다. `CF5:25A6(2)`로 유지되며, 이 함수는 `CF5:2570(16)`을
+호출한다. 드라이버 틱 6개짜리 단위 16개, 약 1.59초이며, 입력이 오면 더 짧다
+(`0x178B1`, `0x15EC0..0x15EF4`). 따라서 `0B`와 `0E`는 지명이나 획득 같은 짧은
+상자이고, `0D`는 HUD에 남는 장 제목이다. 각 장은 같은 텍스트의 `0E` 상자와
+`0D`로 시작한다. DS:`DB4C`에 쓰는 것은 `0D`뿐이다. 타이틀 메뉴는 이를 지우고
+(`0x1F9B7`), 지도 로드는 유지하며, MSAVE는 이를 세이브 슬롯 제목으로 저장한다
+(`0x1E80B`, `0x1ED38`에서 다시 읽음).
 
-The producers check these call sites and the mode 0 wait before exporting
-(`MESSAGE_BOX_ROUTES` in `tools/prepare_scene.py`). Earlier builds swapped them:
-they showed `0B` text as the caption and `0D` as narration. The native runtime
-closes a `0B` or `0E` line after the 96 ticks; input closes it sooner. The window
-centres these boxes and puts narration low in the map window, where dialogue sits,
-so a picture above it stays visible. The native slot title is the caption; an
-imported original slot restores its title as the caption.
+생성기는 내보내기 전에 이 호출 위치와 모드 0 대기를 확인한다
+(`tools/prepare_scene.py`의 `MESSAGE_BOX_ROUTES`). 이전 빌드는 둘을 뒤바꿔
+`0B` 텍스트를 캡션으로, `0D`를 서술로 보여 주었다. 네이티브 런타임은 `0B`나
+`0E` 줄을 96틱 뒤에 닫으며, 입력이 있으면 더 일찍 닫는다. 창은 이 상자들을
+가운데에 두고, 서술은 대화가 놓이는 지도 창 아래쪽에 두어 그 위의 그림이 계속
+보이게 한다. 네이티브 세이브 슬롯 제목은 캡션이며, 가져온 원작 세이브 슬롯은 그
+제목을 캡션으로 복원한다.
 
-Local `story.json` keeps each writer's rectangle, clear colour, text origin,
-format and source offsets under `screens`. Public tests use synthetic MAIN
-bytes; the optional real-file test checks that every HUD rectangle lies
-outside the viewport and inside the 640×400 frame.
+로컬 `story.json`은 각 기록 루틴의 사각형, 지움 색, 텍스트 원점, 형식, 원작
+오프셋을 `screens` 아래에 보관한다. 공개 테스트는 합성 MAIN 바이트를 쓴다.
+선택적 실제 파일 테스트는 모든 HUD 사각형이 뷰포트 밖, 640×400 화면 틀 안에
+있는지 확인한다.
 
-## Native mapping
+## 네이티브 대응
 
-Outside the title, ending and battle palette, the campaign view draws the
-member 0 frame, clears the viewport, draws the stage inside it, and fills the
-HUD from native state: portrait 0, player money, person 0's level and the
-name of the current city in the current chapter. Captions go to the caption
-box instead of the old top-left text. `--verify-play` and `--verify-campaign`
-frames use the same path.
+타이틀, 엔딩, 전투 팔레트 밖에서 캠페인 뷰는 멤버 0 화면 틀을 그리고, 뷰포트를
+지우고, 그 안에 스테이지를 그린 뒤, 네이티브 상태로 HUD를 채운다. 초상 0,
+플레이어 금, 인물 0의 레벨, 현재 장의 현재 도시 이름이다. 캡션은 예전의 왼쪽
+위 텍스트 대신 캡션 상자로 간다. `--verify-play`와 `--verify-campaign` 프레임도
+같은 경로를 쓴다.
 
-Prompts that the original draws with its selector and window primitives are
-shown by a native overlay inside the viewport:
+원작이 선택기와 창 기본 루틴으로 그리는 프롬프트는 뷰포트 안의 네이티브
+오버레이로 보인다.
 
-- the 3D save question, its decline check and the retry prompt, with Yes
-  first, as in `0x164A9..0x165C4`;
-- scenario choices and record menus;
-- MAIN's title menu and the right-click field menu, with unrestored items
-  disabled;
-- party selection, which toggles rows through the source selection rules
-  (fixed prefix, capacity) and confirms on its last row;
-- field and battle dialogue and retirement lines, which wait for one input;
-- the item shop ([original-shop.md](original-shop.md)).
+- 3D 저장 질문, 그 거절 확인과 재시도 프롬프트. `0x164A9..0x165C4`처럼 예가
+  먼저 온다.
+- 시나리오 선택지와 레코드 메뉴.
+- MAIN의 타이틀 메뉴와 오른쪽 클릭 필드 메뉴. 복원하지 않은 항목은
+  비활성화한다.
+- 출전 선택. 원작 선택 규칙(고정 앞부분, 정원)에 따라 행을 토글하며 마지막
+  행에서 확정한다.
+- 필드·전투 대화와 퇴장 대사. 입력 한 번을 기다린다.
+- 도구상([original-shop.md](original-shop.md)).
 
-All of these share `CanvasTheme`, an engine design with no original basis: one
-surface color, rounded cards, a gold accent and the system font. The MARK Yes
-and No pictures are no longer drawn by these windows. The canvas now fills the
-window and centres. The old status bar under it is gone: script progress stays
-in `--verify-play` reports, and the window shows only an error, a notice or a
-state the player must know. In battle the turn, the selected unit and hints float
-over the map window, and a finished hint fades after four seconds. Replay frames
-keep the older dialogue drawing in `Renderer`.
+이들은 모두 원작 근거가 없는 엔진 디자인인 `CanvasTheme`을 공유한다. 한 가지
+바탕색, 둥근 카드, 금색 강조, 시스템 글꼴이다. 이 창들은 더 이상 MARK의 예·
+아니요 그림을 그리지 않는다. 이제 캔버스가 창을 채우고 가운데에 놓인다. 그
+아래에 있던 예전 상태 표시줄은 없어졌다. 스크립트 진행은 `--verify-play`
+보고서에 남고, 창은 오류, 알림, 또는 플레이어가 알아야 할 상태만 보여 준다.
+전투에서는 턴, 선택한 부대, 힌트가 지도 창 위에 떠 있고, 끝난 힌트는 4초 뒤
+페이드된다. 입력 재생 프레임은 `Renderer`의 예전 대화 그리기를 유지한다.
 
-Arrow keys move the selection, Return or Space chooses, and Escape or a right
-click cancels where the menu allows it. Long lists scroll inside the
-viewport. Scene dialogue is drawn in the same panel position by the renderer.
+화살표 키는 선택을 옮기고, Return이나 Space는 고르며, Escape나 오른쪽 클릭은
+메뉴가 허용하는 곳에서 취소한다. 긴 목록은 뷰포트 안에서 스크롤된다. 장면
+대화는 렌더러가 같은 패널 위치에 그린다.
 
-## Battle screen
+## 전투 화면
 
-The battle setup (`0x2895E`, object DS:`E1BC`) receives its map window from
-`0x270B4`: `(16,32,416,352)`, thirteen by eleven 32-pixel cells. Larger maps
-scroll. The scroll position is kept in half cells at `+8` and `+0A`, and every
-writer clears its low bit, so the window aligns to whole cells.
+전투 준비(`0x2895E`, 객체 DS:`E1BC`)는 `0x270B4`에서 지도 창을 받는다.
+`(16,32,416,352)`, 32픽셀 칸 13×11개다. 더 큰 지도는 스크롤된다. 스크롤
+위치는 `+8`과 `+0A`에 반 칸 단위로 보관되고, 모든 기록 코드가 그 최하위 비트를
+지우므로 창은 온전한 칸 단위로 정렬된다.
 
-Two routines move it. `0x2927E` centres on a half-cell position and clamps to
-the map. `0x2997E` runs for unit moves: it does nothing while the unit is within
-six half cells of the centred position, then recentres under the same clamps
-with two further edge rules. The original animates two half cells per step; the
-native view jumps to the target.
+이를 옮기는 루틴은 둘이다. `0x2927E`는 반 칸 위치를 중심에 두고 지도 범위로
+제한한다. `0x2997E`는 부대 이동 때 실행된다. 부대가 중심 위치에서 반 칸 6개
+안에 있는 동안은 아무것도 하지 않고, 그 밖으로 나가면 같은 제한에 가장자리
+규칙 두 개를 더해 다시 중심을 맞춘다. 원작은 한 걸음에 반 칸 2개씩 움직이는
+애니메이션을 보이고, 네이티브 뷰는 목표로 바로 넘어간다.
 
-| Element | Source | Native use |
+| 요소 | 원작 | 네이티브 용도 |
 |---|---|---|
-| Frame | PACKGRP member 1, `0x1FE39` | Drawn behind the map window |
-| 기능 button | `(16,8,64,16)`, pressed art at `0x27CB5` | Opens the menu below |
-| Title box | Text at column 28, width 22, `0x28A52` | Map name line |
-| Force box | Column 56, width 10, y 40, `0x294C6` | Force of the list's side |
-| 아군 / 적군 | `(528,32)` and `(560,32)`, 32×32, `0x287B0` | Switch the list |
-| Unit list | `(448,72)`, ten 20-pixel rows, `0x29386..0x2968E` | Rows below |
-| Minimap | Base `(456,280)`, 4 pixels per cell, `0x2898C` | Rows below |
+| 화면 틀 | PACKGRP 멤버 1, `0x1FE39` | 지도 창 뒤에 그린다 |
+| 기능 버튼 | `(16,8,64,16)`, 눌린 그림 `0x27CB5` | 아래 메뉴를 연다 |
+| 제목 상자 | 텍스트 열 28, 너비 22, `0x28A52` | 지도 이름 줄 |
+| 세력 상자 | 열 56, 너비 10, y 40, `0x294C6` | 목록 쪽 진영의 세력 |
+| 아군 / 적군 | `(528,32)`와 `(560,32)`, 32×32, `0x287B0` | 목록 전환 |
+| 부대 목록 | `(448,72)`, 20픽셀 행 10개, `0x29386..0x2968E` | 아래 설명 |
+| 미니맵 | 기준 `(456,280)`, 칸당 4픽셀, `0x2898C` | 아래 설명 |
 
-Map names come from HEXZMAP member 58, one line per map. `0x282DC..0x28364`
-copies double-byte characters only, so digits and spaces end a name, then
-appends the DS:`3DFF` suffix. Force names are the fifteen DS:`0F1E` entries plus
-the DS:`3EB0` suffix. Force fourteen borrows the side leader's force.
+지도 이름은 HEXZMAP 멤버 58에서 오며, 지도마다 한 줄이다.
+`0x282DC..0x28364`는 2바이트 문자만 복사하므로 숫자와 공백에서 이름이 끝나고,
+이어 DS:`3DFF` 접미사를 붙인다. 세력 이름은 DS:`0F1E` 항목 15개에 DS:`3EB0`
+접미사를 붙인 것이다. 세력 14는 그 진영 대장의 세력을 빌린다.
 
-The list has a friendly side of slots 0 to 14 and an enemy side of slots 15 to
-44. Rows are built at `0x29500..0x295D0`: on the friendly side, live units of
-force zero come first. Other live units follow on both sides, and retired units
-come last with the DS:`3EB6` text. The enemy side skips the first pass, so a live
-enemy of force zero is not listed. Name colours come from `0x2C668..0x2C6DF`.
+목록은 슬롯 0부터 14까지의 아군 쪽과 슬롯 15부터 44까지의 적군 쪽으로 나뉜다.
+행은 `0x29500..0x295D0`에서 만든다. 아군 쪽에서는 세력 0의 살아 있는 부대가
+먼저 온다. 양쪽 모두 그다음에 다른 살아 있는 부대가 오고, 퇴장한 부대는
+DS:`3EB6` 텍스트와 함께 마지막에 온다. 적군 쪽은 첫 번째 패스를 건너뛰므로
+세력 0의 살아 있는 적은 목록에 나오지 않는다. 이름 색은 `0x2C668..0x2C6DF`에서
+정한다.
 
-A live row shows a gauge from `0x28806`. The bar is 88 pixels wide and is black
-under a repeated 8×10 MARK tile. The tile depends on tenths of current over
-maximum troops: seven or more, three or more, or below three. The text is
-`%4u/%4u`.
+살아 있는 부대의 행은 `0x28806`의 게이지를 보인다. 막대는 너비 88픽셀이며,
+반복되는 8×10 MARK 타일 아래는 검은색이다. 타일은 현재 병력을 최대 병력으로
+나눈 값의 10분의 1 단위에 따라 7 이상, 3 이상, 3 미만으로 달라진다. 텍스트는
+`%4u/%4u`이다.
 
-The minimap needs no separate art. `0xD86E..0xD9BF` ranks the four most frequent
-colours of each 16×16 map tile, with ties going to the higher colour index, so
-an absent colour resolves to fifteen. Each tile then becomes two by two pixels
-through `0xD5FC`. The producer applies the same rule to the map tiles. Units are
-4×4 marks in colour 2 for slots below 15 and colour 1 for the others
-(`0x2988A`). The visible cells are outlined in colour 6 (`0x291CC`).
+미니맵에는 별도 그림이 필요 없다. `0xD86E..0xD9BF`는 16×16 지도 타일마다 가장
+자주 나오는 색 네 개의 순위를 매기며, 동률이면 색 번호가 큰 쪽이 앞서므로 없는
+색은 15로 정해진다. 이어 각 타일은 `0xD5FC`를 거쳐 2×2픽셀이 된다. 생성기는
+지도 타일에 같은 규칙을 적용한다. 부대는 4×4 표시로, 슬롯 15 미만은 색 2,
+나머지는 색 1이다(`0x2988A`). 보이는 칸은 색 6으로 테두리를 그린다(`0x291CC`).
 
-The 기능 button lists nine DS:`3AA0` items. The native menu shows all nine and
-enables 턴 종료, 총퇴각, 승리조건 and 게임종료, whose handlers are restored; the others
-stay disabled.
+기능 버튼은 DS:`3AA0` 항목 9개를 나열한다. 네이티브 메뉴는 9개를 모두 보이고,
+핸들러를 복원한 턴 종료, 총퇴각, 승리조건, 게임종료를 활성화하며, 나머지는
+비활성으로 둔다.
 
-### Victory conditions
+### 승리 조건
 
-`0x27876` draws a 320×192 window at `(64,96)` with two inner boxes. The header
-joins the chapter label, from DS:`3C78`, and the battle name through DS:`3C82`, and
-the right side prints DS:`3C8F`. The text box shows the interpreter's objective
-buffer at `D4DC+0x3C8`, which source opcode `30` fills. The drawer at `0x16110`
-fills a line up to 34 half-width columns, never splits a double-byte character and
-stops at a line feed. The window calls it from row 152 in steps of 32 while the row
-stays above 216, so two lines fit.
+`0x27876`은 `(64,96)`에 안쪽 상자 두 개가 있는 320×192 창을 그린다. 머리글은
+DS:`3C78`의 장 표시와 DS:`3C82`를 거친 전투 이름을 잇고, 오른쪽에는 DS:`3C8F`를
+출력한다. 텍스트 상자는 원작 명령 `30`이 채우는 인터프리터의 목표 버퍼
+`D4DC+0x3C8`을 보인다. `0x16110`의 그리기 루틴은 한 줄을 반각 34열까지 채우고,
+2바이트 문자를 나누지 않으며, 줄 바꿈에서 멈춘다. 창은 행이 216보다 위에 있는
+동안 행 152부터 32씩 내려가며 이를 호출하므로 두 줄이 들어간다.
 
-The routine has one flag. The menu passes zero, and the turn box then shows the
-current turn over the limit through DS:`3C98`. The first friendly phase passes one,
-and it shows only the limit through DS:`3CB0`. Both wait on the button, which is the
-third MARK member 0 picture at `0x19F0`.
+이 루틴에는 플래그가 하나 있다. 메뉴는 0을 넘기며, 이때 턴 상자는 DS:`3C98`을
+거쳐 현재 턴/제한 턴을 보인다. 첫 아군 페이즈는 1을 넘기며, DS:`3CB0`을 거쳐
+제한만 보인다. 둘 다 버튼을 기다리며, 버튼은 `0x19F0`의 MARK 멤버 0 세 번째
+그림이다.
 
-The friendly phase routine at `0x27A3E` opens the window while the round is zero,
-then shows the DS:`3D20` side notice every friendly phase. Replays skip this opening
-because it changes no game state.
+`0x27A3E`의 아군 페이즈 루틴은 라운드가 0인 동안 이 창을 열고, 그 뒤 아군
+페이즈마다 DS:`3D20` 진영 알림을 보인다. 입력 재생은 게임 상태를 바꾸지 않는
+이 첫 창을 건너뛴다.
 
-The formatter at `0x172D8` sends `%u` and `%w` to the same branch.
+`0x172D8`의 포매터는 `%u`와 `%w`를 같은 분기로 보낸다.
 
-### Terrain window
+### 지형 창
 
-A left click reaches `0x27C7A`. With a unit under the pointer it starts the
-command routine; otherwise it calls `0x2A5F4` with the pointer's cell. A hidden
-enemy (mask `0x20` clear) does not count as a unit here (`0x27BB2..0x27BC7`).
+왼쪽 클릭은 `0x27C7A`에 이른다. 포인터 아래에 부대가 있으면 커맨드 루틴을
+시작하고, 아니면 포인터의 칸으로 `0x2A5F4`를 호출한다. 숨은 적(마스크 `0x20`이
+꺼짐)은 여기서 부대로 치지 않는다(`0x27BB2..0x27BC7`).
 
-The routine works in sixteen-pixel units. Column `2x-scrollX+1` and row
-`2(y+1)-scrollY` give the cell's corner. The 128×80 window opens two units right
-of the cell, or eight units left from column 14, and three units higher from row
-12. It copies the 32×32 cell from the screen to its own `(8,16)`, prints the
-terrain name below that, and prints the DS:`3F62` heading to the right.
+이 루틴은 16픽셀 단위로 동작한다. 열 `2x-scrollX+1`과 행 `2(y+1)-scrollY`가
+칸의 모서리다. 128×80 창은 칸에서 두 단위 오른쪽에 열리며, 열 14부터는 여덟
+단위 왼쪽에, 행 12부터는 세 단위 위에 열린다. 창은 화면의 32×32 칸을 자기
+`(8,16)`에 복사하고, 그 아래에 지형 이름을, 오른쪽에 DS:`3F62` 제목을 출력한다.
 
-The value below the heading comes from DS:`405E`, the table the damage producer
-already uses. An entry of 255 prints DS:`3F6B`, and both forms then get DS:`3F6D`,
-so a cell a unit cannot enter reads `-%`. Terrains 8, 13 and 14 add the DS:`3F75`
-text on the bottom row. Those are the same three terrains the turn order treats
-as recovery cells. The window stays until any input.
+제목 아래 값은 피해 생성기가 이미 쓰는 표 DS:`405E`에서 온다. 항목이 255이면
+DS:`3F6B`를 출력하고, 두 형태 모두 이어 DS:`3F6D`를 붙이므로 부대가 들어갈 수
+없는 칸은 `-%`로 읽힌다. 지형 8, 13, 14는 맨 아래 행에 DS:`3F75` 텍스트를
+더한다. 턴 순서 처리가 회복 칸으로 다루는 세 지형과 같다. 창은 어떤 입력이든
+들어올 때까지 남는다.
 
-The routine also watches clicks on a block of cells at the top left and compares
-their bit pattern with DS:`3F56`. A match sets mask 2 of DS:`3A3C`, which enables
-a unit diagnostic text at `0x2D3C7`. This hidden switch is not restored.
+이 루틴은 왼쪽 위 칸 묶음에 대한 클릭도 지켜보고, 그 비트 패턴을 DS:`3F56`과
+비교한다. 일치하면 DS:`3A3C`의 마스크 2를 켜고, 이는 `0x2D3C7`의 부대 진단
+텍스트를 활성화한다. 이 숨은 스위치는 복원하지 않았다.
 
-### Message modes
+### 메시지 모드
 
-The message routine at `0x175AE` takes a mode. Modes 0 and 3 wait a fixed number of
-timer units and close early on input. Mode 1 waits for the button and mode 2 asks
-yes or no. The native view gives mode 0 messages a two-second timeout. The real
-duration depends on a timer rate that was not established.
+`0x175AE`의 메시지 루틴은 모드를 받는다. 모드 0과 3은 정해진 수의 타이머
+단위만큼 기다리며 입력이 있으면 일찍 닫힌다. 모드 1은 버튼을 기다리고 모드 2는
+예/아니요를 묻는다. 네이티브 뷰는 모드 0 메시지에 2초 제한 시간을 준다. 실제
+지속 시간은 밝혀지지 않은 타이머 속도에 달려 있다.
 
-Eighty-four call sites reach this routine. A static sweep compared each text offset
-with the producers. Battle lines now play as native notices over the map:
+이 루틴에 이르는 호출 위치는 84곳이다. 정적 전수 조사로 각 텍스트 오프셋을
+생성기와 비교했다. 전투 대사는 이제 지도 위의 네이티브 알림으로 나온다.
 
-| Line | Site | When |
+| 대사 | 위치 | 시점 |
 |---|---|---|
-| Ambush, by side | `0x31926` | A hidden attacker or damage caster shows itself. |
-| Level and learned | `0x1A92F`, `0x1A9A0` | One per level, then mode 1 for that level's strategies. Only the first thirty strategy rows teach. |
-| Strategy used | `0x2E8B8` | A computer caster, before its effect. |
-| Intent lines | `0x2E922`, `0x2EA68`, `0x2EBA4`, `0x2ECFA` | A player's caster. The native view shows them on the status line while choosing. |
-| Confused, worse, missed | `0x2D596`, `0x2D5BF`, `0x2D8E3` | The outcome of a confusion or morale strategy. |
-| Morale down, healed, still confused | `0x2EC92`, `0x2ED61`, `0x2EF7E` | Outcome lines. |
-| Recovered | `0x2B6F7` | The upkeep or morale roll clears confusion. |
-| Terrain recovery | `0x2B500`..`0x2B594` | A player's unit gained troops or morale at upkeep. The source window with its gauges is a native notice here. |
-| Failed strategy | `0x31E6B` | A zero-damage strategy with the enlarged view off. |
-| Turn and weather | `0x28139` | Here before the player's phase line, not before round events. |
-| Delay retreat | `0x281AA` | The round reaches the turn limit. |
-| Closing bonus | `0x27FB1` | Over the field after a win with a bonus byte. |
+| 매복, 진영별 | `0x31926` | 숨은 공격자나 피해 책략 시전자가 모습을 드러낸다. |
+| 레벨과 습득 | `0x1A92F`, `0x1A9A0` | 레벨마다 하나, 이어 그 레벨의 책략을 모드 1로. 책략 행 처음 30개만 가르친다. |
+| 책략 사용 | `0x2E8B8` | 컴퓨터 시전자, 효과 전. |
+| 의도 대사 | `0x2E922`, `0x2EA68`, `0x2EBA4`, `0x2ECFA` | 플레이어의 시전자. 네이티브 뷰는 고르는 동안 상태 줄에 보인다. |
+| 혼란, 악화, 빗나감 | `0x2D596`, `0x2D5BF`, `0x2D8E3` | 혼란 또는 사기 책략의 결과. |
+| 사기 저하, 치료, 혼란 지속 | `0x2EC92`, `0x2ED61`, `0x2EF7E` | 결과 대사. |
+| 회복 | `0x2B6F7` | 유지 단계나 사기 판정이 혼란을 푼다. |
+| 지형 회복 | `0x2B500`..`0x2B594` | 플레이어 부대가 유지 단계에서 병력이나 사기를 얻었다. 원작의 게이지가 있는 창은 여기서 네이티브 알림이다. |
+| 책략 실패 | `0x31E6B` | 확대 화면을 끈 상태의 피해 0 책략. |
+| 턴과 날씨 | `0x28139` | 여기서는 라운드 이벤트 앞이 아니라 플레이어 페이즈 대사 앞에 나온다. |
+| 지연 총퇴각 | `0x281AA` | 라운드가 턴 제한에 이른다. |
+| 종료 보너스 | `0x27FB1` | 보너스 바이트가 있는 승리 뒤 필드 위에. |
 
-Texts left out are the hidden command mode (`0x23E13`, `0x274B4`..`0x27720`), the
-disk prompts replaced by native slot windows, and a leftover Shift-JIS string at
-`0x33F01`. A counter's ambush line draws over the old scene in the source, and over
-the map here.
+빠진 텍스트는 숨은 커맨드 모드(`0x23E13`, `0x274B4`..`0x27720`), 네이티브
+세이브 슬롯 창으로 대체한 디스크 프롬프트, `0x33F01`에 남은 Shift-JIS
+문자열이다. 반격의 매복 대사는 원작에서는 이전 장면 위에, 여기서는 지도 위에
+그린다.
 
-### Unit commands
+### 부대 커맨드
 
-A click on a unit starts `0x2D9D4`, which owns one unit's whole turn.
+부대를 클릭하면 `0x2D9D4`가 시작되며, 이 루틴이 한 부대의 턴 전체를 맡는다.
 
-The move step (`0x30ED2`) refuses a unit in source order: not friendly, not under
-player control (mask 4 or order mode other than 7), confused (mask 2), finished
-(mask `0x80`). Each refusal has its own text, and the unit's move range stays
-visible behind it. A ready unit shows its range and waits for a cell. Its own
-cell skips the move. A cell outside the range shows the DS:`4D3C` text.
+이동 단계(`0x30ED2`)는 원작 순서대로 다음 부대를 거부한다. 아군이 아님,
+플레이어 조종이 아님(마스크 4 또는 7이 아닌 지시 모드), 혼란(마스크 2), 행동
+끝남(마스크 `0x80`). 거부마다 텍스트가 따로 있으며, 그 뒤로 부대의 이동 범위가
+계속 보인다. 준비된 부대는 범위를 보이고 칸을 기다린다. 자기 칸을 고르면
+이동을 건너뛴다. 범위 밖 칸은 DS:`4D3C` 텍스트를 보인다.
 
-The command window then opens beside the unit. `0x2AA26` places it one cell to
-the right. Past x 224 it moves left by 160, and below y 272 it stops there. Each
-nested window steps sixteen pixels from its parent, in the direction it was
-pushed.
+이어 커맨드 창이 부대 옆에 열린다. `0x2AA26`은 창을 한 칸 오른쪽에 둔다. x 224를
+넘으면 160만큼 왼쪽으로 옮기고, y 272 아래로는 내려가지 않고 거기서 멈춘다.
+중첩된 창은 저마다 부모 창에서 밀려난 방향으로 16픽셀씩 옮겨 간다.
 
-The DS:`430C` table has eight entries, but the routine only uses four of them
-plus a fifth from `E5AA+0`. That byte is set to `FF` at `0x335A8`, and a static
-search found no other writer, so the native window omits 개문, 결괴 and 방화.
+DS:`430C` 표에는 항목이 8개 있지만, 루틴은 그중 4개와 `E5AA+0`에서 오는 다섯
+번째 하나만 쓴다. 그 바이트는 `0x335A8`에서 `FF`로 설정되고, 정적 검색으로 다른
+기록 코드를 찾지 못했으므로 네이티브 창은 개문, 결괴, 방화를 뺀다.
 
-| Entry | Handler | Native behaviour |
+| 항목 | 핸들러 | 네이티브 동작 |
 |---|---|---|
-| 공격 | `0x30DC2`, picker `0x29ADE` | Red cells; a click on an enemy attacks |
-| 책략 | `0x2DB5C` | List, then the existing target selection |
-| 도구 | `0x2DE42` | 사용한다, 준다, 버린다, 본다, then an item list |
-| 대기 | `0x2DDA2` | Sets mask `0x80` through the existing wait |
+| 공격 | `0x30DC2`, 대상 선택기 `0x29ADE` | 빨간 칸. 적을 클릭하면 공격한다 |
+| 책략 | `0x2DB5C` | 목록, 이어 기존 대상 선택 |
+| 도구 | `0x2DE42` | 사용한다, 준다, 버린다, 본다, 이어 도구 목록 |
+| 대기 | `0x2DDA2` | 기존 대기를 거쳐 마스크 `0x80`을 켠다 |
 
-The picker has its own refusals: nobody in range, the wrong side, and a cell
-outside the range. It returns to the window when cancelled.
+대상 선택기에는 따로 거부가 있다. 범위 안에 아무도 없음, 잘못된 진영, 범위 밖
+칸이다. 취소하면 창으로 돌아간다.
 
-The strategy list shows every ability the level allows, in id order, with its
-cost. An ability the unit cannot pay for stays listed but disabled, and so do the
-five fire abilities in rain. Class 17 has no list.
+책략 목록은 레벨이 허용하는 모든 능력을 id 순서로 비용과 함께 보인다. 부대가
+비용을 낼 수 없는 능력은 목록에 남지만 비활성이며, 비가 올 때의 불 계열 능력
+다섯 개도 마찬가지다. 병과 17에는 목록이 없다.
 
-The item menu needs at least one held item. 사용한다 runs the
-[item use routine](original-items.md). 본다 shows the name and the DS:`21C8`
-description. 버린다 clears the first matching slot and does not end the turn.
-준다 picks a friendly unit in range code 1. It fills the receiver's first empty
-slot, clears the giver's first match and ends the unit's action, and it refuses
-when the receiver is full. Item records keep twelve name bytes, and the
-constructor at `0x1B162` stores the record's own index, which selects the
-description.
+도구 메뉴는 가진 도구가 하나 이상 있어야 한다. 사용한다는
+[도구 사용 루틴](original-items.md)을 실행한다. 본다는 이름과 DS:`21C8` 설명을
+보인다. 버린다는 처음 일치하는 칸을 비우며 턴을 끝내지 않는다. 준다는 범위
+코드 1 안의 아군 부대를 고른다. 받는 쪽의 첫 빈칸을 채우고 주는 쪽의 처음
+일치하는 칸을 비운 뒤 그 부대의 행동을 끝내며, 받는 쪽이 가득 차 있으면
+거부한다. 도구 레코드는 이름 바이트 12개를 가지며, `0x1B162`의 생성 함수는
+레코드 자신의 인덱스를 저장하고, 이 인덱스가 설명을 고른다.
 
-A hidden unit (mask `0x20` clear) keeps its cell and gets the two DS:`4866`
-entries instead. 기습 uses the attack handler. 해제 asks the DS:`48AA` question and
-sets the mask, after which the normal window opens.
+숨은 부대(마스크 `0x20`이 꺼짐)는 칸을 그대로 두고, 대신 DS:`4866` 항목 두 개를
+받는다. 기습은 공격 핸들러를 쓴다. 해제는 DS:`48AA` 질문을 묻고 마스크를
+켜며, 그 뒤 보통 창이 열린다.
 
-Cancelling the window clears mask `0x40` and returns the unit to its origin
-(`0x2DE08`).
+창을 취소하면 마스크 `0x40`을 끄고 부대를 원래 자리로 돌린다(`0x2DE08`).
 
-### Native input
+### 네이티브 입력
 
-- Arrow keys and the wheel scroll the map or the list under the pointer.
-- A click on the minimap centres there.
-- A click on a list row centres on that unit and shows its details.
-- A right click or Escape steps back one level. With nothing selected it opens
-  the 기능 menu.
-- Return ends the turn when no unit is selected. During strategy targeting it
-  confirms the target.
+- 화살표 키와 휠은 포인터 아래의 지도나 목록을 스크롤한다.
+- 미니맵을 클릭하면 그곳을 중심에 둔다.
+- 목록 행을 클릭하면 그 부대를 중심에 두고 세부 정보를 보인다.
+- 오른쪽 클릭이나 Escape는 한 단계 뒤로 간다. 아무것도 선택하지 않았으면
+  기능 메뉴를 연다.
+- Return은 선택한 부대가 없을 때 턴을 끝낸다. 책략 대상 지정 중에는 대상을
+  확정한다.
 
-The list and scroll positions are view state. They are not part of a save and
-do not change replays.
+목록과 스크롤 위치는 뷰 상태다. 저장에 포함되지 않으며 입력 재생을 바꾸지
+않는다.
 
-## Modern layout
+## 모던 배치
 
-The app starts on an engine layout, and 보기 → 원작 화면 틀 (⌘⇧F) switches to the
-original frames at any time, including during a battle. The choice is kept
-between runs. Replays and `--battle` always use the original frames. This layout
-is engine presentation and has no original basis. Game rules, routes, text and art
-are unchanged.
+앱은 엔진 배치로 시작하며, 보기 → 원작 화면 틀 (⌘⇧F)은 전투 중을 포함해
+언제든 원작 화면 틀로 바꾼다. 이 선택은 실행 사이에 유지된다. 입력 재생과
+`--battle`은 항상 원작 화면 틀을 쓴다. 이 배치는 엔진의 표현이며 원작 근거가
+없다. 게임 규칙, 경로, 텍스트, 그림은 바뀌지 않는다.
 
-- The window opens at 1024×640 and keeps the 8:5 shape.
-- In the field the 512×320 map window fills the canvas, at exactly twice its
-  pixels at that size. Clicks map back through `CanvasFieldMap`. A card shows the
-  leader's portrait, the current territory, money and level; a chip shows the
-  source caption; a button opens the field menu, which a secondary click also
-  opens. The card hides while a shop window is open, because that window shows
-  the money. Pictures such as illustrations and the title keep the 640×400 canvas.
-- A battle uses `OriginalBattleLayout.modern()`: a slim bar with the function
-  button, title and turn over a map of fifteen by twelve cells instead of the
-  source's thirteen by eleven, and a sidebar with the force, list tabs, seven unit
-  rows, a card for the inspected, selected or hovered unit (portrait, class, level,
-  troops, MP, morale and experience) and the small map, which takes the largest
-  whole cell size that fits its panel. The card replaces the unit chip over the map. Command and terrain windows open right next to their cell. The
-  same scroll and follow rules run on the larger window, so what is on screen at a
-  given moment differs from the source, and the source's window placement rules
-  apply only to the original frames.
+- 창은 1024×640으로 열리며 8:5 비율을 유지한다.
+- 필드에서는 512×320 지도 창이 캔버스를 채우며, 그 크기에서 정확히 픽셀 2배다.
+  클릭은 `CanvasFieldMap`을 거쳐 원래 좌표로 되돌린다. 카드는 대장의 초상, 현재
+  영토, 금, 레벨을 보이고, 칩은 원작 캡션을 보이며, 버튼은 필드 메뉴를 연다.
+  보조 클릭으로도 필드 메뉴가 열린다. 도구상 창이 열려 있는 동안에는 그 창이
+  금을 보이므로 카드를 숨긴다. 삽화나 타이틀 같은 그림은 640×400 캔버스를
+  유지한다.
+- 전투는 `OriginalBattleLayout.modern()`을 쓴다. 원작의 13×11칸 대신 15×12칸
+  지도 위에 기능 버튼, 제목, 턴이 있는 얇은 막대를 두고, 사이드바에는 세력,
+  목록 탭, 부대 행 7개, 살펴보거나 선택하거나 포인터를 올린 부대의 카드(초상,
+  병과, 레벨, 병력, MP, 사기, 경험치), 작은 지도를 둔다. 작은 지도는 패널에
+  맞는 가장 큰 정수 칸 크기를 쓴다. 카드는 지도 위의 부대 칩을 대신한다. 커맨드
+  창과 지형 창은 해당 칸 바로 옆에 열린다. 더 큰 창에서도 같은 스크롤·추적
+  규칙이 실행되므로 특정 순간에 화면에 보이는 것은 원작과 다르며, 원작의 창
+  위치 규칙은 원작 화면 틀에만 적용된다.
 
-## Field icons
+## 필드 아이콘
 
-The original frame has four icon cells at x 544 and 584, y 240 and 288, 40 wide and
-48 high (DS:`3514`). The handlers at DS:`3636` run in that order. The modern layout
-shows them as buttons at the top right, and the original frames accept clicks on
-the cells.
+원작 화면 틀에는 x 544와 584, y 240과 288에 너비 40, 높이 48의 아이콘 칸 네 개가
+있다(DS:`3514`). DS:`3636`의 핸들러가 그 순서대로 실행된다. 모던 배치는 이를
+오른쪽 위 버튼으로 보이고, 원작 화면 틀은 그 칸의 클릭을 받는다.
 
-| Cell | Handler | Action |
+| 칸 | 핸들러 | 동작 |
 |---|---|---|
-| 0 | `0x23A88` | 스토리 정보 shows the scenario's objective text, set by source opcode text. |
-| 1 | `0x23982` | A two-item menu for the person screen and item exchange. |
-| 2 | `0x23AF8` | The whole map on a world map, and a refusal anywhere else (`0x23D7D`). |
-| 3 | `0x22CD2` | The field menu. |
+| 0 | `0x23A88` | 스토리 정보는 원작 명령 텍스트로 설정한 시나리오 목표 텍스트를 보인다. |
+| 1 | `0x23982` | 인물 화면과 도구 교환을 고르는 두 항목 메뉴. |
+| 2 | `0x23AF8` | 세계지도에서는 전체 지도, 다른 곳에서는 거부(`0x23D7D`). |
+| 3 | `0x22CD2` | 필드 메뉴. |
 
-The person screen (`0x23230`) lists the joined people of the first person's force,
-in person order (`0x23289..0x232BC`). Its detail (`0x22DB8`) has the name, class,
-level, troops, attack and defense at morale 100, three rated scalars and the items.
-The native window shows the scalars it can name, and it shows the detail beside the
-list instead of after a choice. Its 경험치, 지력 and 소지품 labels are engine words.
+인물 화면(`0x23230`)은 첫 인물의 세력에 합류한 인물을 인물 순서로 나열한다
+(`0x23289..0x232BC`). 세부 화면(`0x22DB8`)에는 이름, 병과, 레벨, 병력, 사기
+100일 때의 공격력과 방어력, 등급이 매겨진 수치 세 개, 도구가 있다. 네이티브 창은
+이름을 붙일 수 있는 수치를 보이며, 세부 정보를 선택 뒤가 아니라 목록 옆에
+보인다. 경험치, 지력, 소지품 표시는 엔진이 붙인 말이다.
 
-Item exchange (`0x23560`) shows two people and moves a clicked item across. A full
-receiver refuses with sound two (`0x2386F..0x238AC`). Otherwise the receiver takes
-its first empty slot and the giver loses its first match (`0x238CB..0x238F3`). The
-native window takes the same transfer in three steps: who gives, which item, and
-who receives.
+도구 교환(`0x23560`)은 인물 두 명을 보이고, 클릭한 도구를 반대편으로 옮긴다.
+받는 쪽이 가득 차 있으면 소리 2와 함께 거부한다(`0x2386F..0x238AC`). 그렇지
+않으면 받는 쪽은 첫 빈칸에 받고, 주는 쪽은 처음 일치하는 칸을 잃는다
+(`0x238CB..0x238F3`). 네이티브 창은 같은 이동을 주는 인물, 도구, 받는 인물의 세
+단계로 받는다.
 
-The whole map (`0x23B60..0x23D5A`) lists cities with both low flag bits and a
-placed position, in city order, beside a small map. Choosing one starts the same
-walk as clicking it. The source small map is a separate picture; the native window
-scales the world picture instead.
+전체 지도(`0x23B60..0x23D5A`)는 하위 플래그 비트 두 개가 모두 켜져 있고 위치가
+놓인 도시를 도시 순서로 작은 지도 옆에 나열한다. 하나를 고르면 그 도시를
+클릭했을 때와 같은 이동이 시작된다. 원작의 작은 지도는 별도 그림이고, 네이티브
+창은 대신 세계지도 그림의 크기를 조정해 쓴다.
 
-## Limits
+## 한계
 
-- The original font, text colours and the window frames drawn by the
-  dialogue and selector primitives are not restored. The overlay panels are
-  engine presentation, not original pixels.
-- Panel positions are engine choices that keep the frame visible; they are
-  not source coordinates.
-- The command windows use the native panel, not the `0x3310` window pixels.
-  Unit walks and attack effects play as described in
-  [original-battle-sprites.md](original-battle-sprites.md).
-- A discarded item leaves the native list at once. The source list is built once
-  per entry, so it keeps showing the discarded item until the menu closes.
-- The third button beside 아군 and 적군 has no restored handler.
-- The native view opens the friendly list at battle start. The list object
-  starts closed at `0x289CD`; when the original first opens it was not traced.
-- `0x2C52C` forces force zero under a condition on a segment byte that is not
-  traced, so that branch is not restored. Hover highlighting is replaced by the
-  inspected row.
-- Scroll animation, the original scroll input at `0x28F9C..0x29067` and the
-  text font metrics are not reproduced. Follow runs once per finished action,
-  not per step.
-- Frames are offscreen captures. They do not verify macOS input delivery or
-  original-runtime pixel parity.
+- 원작 글꼴, 텍스트 색, 대화·선택기 기본 루틴이 그리는 창 테두리는 복원하지
+  않았다. 오버레이 패널은 엔진의 표현이며 원작 픽셀이 아니다.
+- 패널 위치는 화면 틀이 보이도록 엔진이 고른 것이며 원작 좌표가 아니다.
+- 커맨드 창은 `0x3310` 창 픽셀이 아니라 네이티브 패널을 쓴다. 부대 걷기와 공격
+  효과는 [original-battle-sprites.md](original-battle-sprites.md)에 적은 대로
+  재생된다.
+- 버린 도구는 네이티브 목록에서 바로 사라진다. 원작 목록은 진입할 때마다 한 번
+  만들어지므로, 메뉴가 닫힐 때까지 버린 도구를 계속 보인다.
+- 아군과 적군 옆의 세 번째 버튼은 핸들러를 복원하지 않았다.
+- 네이티브 뷰는 전투 시작 때 아군 목록을 연다. 목록 객체는 `0x289CD`에서 닫힌
+  상태로 시작하며, 원작이 언제 처음 여는지는 추적하지 않았다.
+- `0x2C52C`는 추적하지 않은 세그먼트 바이트에 대한 조건 아래 세력 0을 강제하므로
+  그 분기는 복원하지 않았다. 포인터를 올렸을 때의 강조는 살펴보는 행으로
+  대체한다.
+- 스크롤 애니메이션, `0x28F9C..0x29067`의 원작 스크롤 입력, 텍스트 글꼴
+  메트릭은 재현하지 않았다. 추적은 한 걸음마다가 아니라 끝난 행동마다 한 번
+  실행된다.
+- 프레임은 화면 밖 캡처다. macOS 입력 전달이나 원작 런타임과의 픽셀 일치를
+  검증하지 않는다.

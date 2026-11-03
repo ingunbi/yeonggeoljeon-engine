@@ -1,47 +1,44 @@
-# Original ending producer and first scene
+# 원작 엔딩 생성기와 첫 장면
 
-This work statically reads the caller-selected Korean DOS build. It never runs
-or modifies the original programs. The examined END executable SHA-256 is
-`6a961179ee3b34d869ed3031523d616d79f1d863d61f4f4f6af8cebd1fe8dc77`.
-END has a `1600`-byte MZ header and DGROUP file base `CE40`.
+이 작업은 호출자가 고른 한국어 DOS 빌드를 정적으로 읽는다. 원작 프로그램은
+실행하거나 수정하지 않는다. 조사한 END 실행 파일의 SHA-256은
+`6a961179ee3b34d869ed3031523d616d79f1d863d61f4f4f6af8cebd1fe8dc77`이다.
+END의 MZ 헤더는 `1600`바이트이고 DGROUP 파일 기준 위치는 `CE40`이다.
 
-MAIN opcode `2A` submits the selected byte through the framework INT65 call
-with subfunction `0400` and immediately returns interpreter status eight
-(`0x1D176..0x1D196`). This wrapper is not a direct graphics loader. END reads
-that selection using subfunction `0401` (`0x4667..0x4709`). Value three selects
-the separate END2 branch and every other value selects END1. The script issues
-0, 1, 2 and 3. Values 1 and 2 behave alike, and they diverge from 0 later on. Resource file names alone do not establish
-which ending was selected. Exhausting a script member never selects an ending.
+MAIN 명령 `2A`는 프레임워크 INT65 호출의 하위 기능 `0400`으로 선택 바이트를
+넘기고, 곧바로 해석기 상태 8을 돌려준다(`0x1D176..0x1D196`). 이 래퍼는 그래픽을
+직접 읽는 로더가 아니다. END는 하위 기능 `0401`로 그 선택을 읽는다
+(`0x4667..0x4709`). 값 3은 별도의 END2 분기를, 그 밖의 모든 값은 END1을
+고른다. 스크립트는 0, 1, 2, 3을 낸다. 값 1과 2는 똑같이 동작하며, 나중에 0과
+갈라진다. 리소스 파일 이름만으로는 어떤 엔딩이 선택되었는지 입증할 수 없다.
+스크립트 멤버를 끝까지 실행해도 엔딩이 선택되지는 않는다.
 
-The restored common opening uses END1 archive member 19 as a 544×176 NPK
-background at `(48,104)`. Member 20 supplies two 224×160 interleaved planar
-color frames. Member one supplies the corresponding one-bit masks: a set mask
-bit preserves the old background, so color index zero cannot be treated as
-transparent. These extents and frame offsets are source blit operands
-(`0x4769..0x4895`, `0x4A20..0x4AAB`). The exporter owns mask-to-alpha conversion
-and retains opaque black pixels.
+복원한 공통 도입부는 END1 아카이브 멤버 19를 `(48,104)`의 544×176 NPK 배경으로
+쓴다. 멤버 20은 224×160 인터리브 planar 색 프레임 두 장을 준다. 멤버 1은 그에
+대응하는 1비트 마스크를 준다. 마스크 비트가 켜져 있으면 이전 배경이 보존되므로,
+색 인덱스 0을 투명으로 취급할 수 없다. 이 크기와 프레임 오프셋은 원작 블릿
+피연산자다(`0x4769..0x4895`, `0x4A20..0x4AAB`). 마스크를 알파로 바꾸는 변환은
+내보내기 도구가 소유하며, 불투명한 검은 픽셀을 유지한다.
 
-The source initially positions the figure at `(368,120)`. Its movement loop
-subtracts four before each presentation, producing 32 positions from x360
-through x236, while alternating the two frames. Every six iterations advances
-to the next pair of source text lines (`0x49BB..0x4B7D`). The waits occur before
-the prepared frame is copied into VRAM. The first movement commits at deadline
-325, the next 31 at intervals of 125, followed by a 100-unit final hold. The
-source reads DOS time with INT21 AH2C (`0x27A2..0x27BA`) and calculates elapsed
-centiseconds (`0xBE92..0xC033`), establishing 100 source ticks per second.
-The restored interval ends at deadline 4300.
+원작은 처음에 인물 그림을 `(368,120)`에 놓는다. 이동 루프는 화면에 표시하기
+전마다 4를 빼서, 두 프레임을 번갈아 쓰며 x360부터 x236까지 32개 위치를 만든다.
+여섯 번 반복할 때마다 원작 텍스트의 다음 두 줄로 넘어간다(`0x49BB..0x4B7D`).
+기다림은 준비한 프레임을 VRAM에 복사하기 전에 일어난다. 첫 이동은 기한 325에
+확정되고, 다음 31개는 125 간격으로 확정되며, 그 뒤에 100단위의 마지막 정지가
+온다. 원작은 INT21 AH2C로 DOS 시간을 읽고(`0x27A2..0x27BA`) 경과한 1/100초를
+계산하므로(`0xBE92..0xC033`), 원작 틱은 초당 100이다. 복원한 구간은 기한
+4300에서 끝난다.
 
-Text uses the original pointer list and fonts, exported locally only. The source
-font mapping uses 30-byte Korean records, fourteen 16-pixel rows after a
-two-byte identity; ASCII uses sixteen 8-pixel rows. Both receive the original
-one-pixel rightward bold expansion, one-byte horizontal padding and 20-pixel
-line pitch (`0xA24C..0xA52B`). The normal source palette is selected from END's
-DGROUP. Framework display flag eight substitutes a separate palette; that
-alternate display mode remains outside this first export.
+텍스트는 원작 포인터 목록과 글꼴을 쓰며, 로컬로만 내보낸다. 원작 글꼴 매핑은
+30바이트 한글 레코드를 쓰며, 2바이트 식별자 뒤에 16픽셀 행 14개가 온다. ASCII는
+8픽셀 행 16개를 쓴다. 둘 다 원작의 오른쪽 1픽셀 굵게 확장, 가로 1바이트 여백,
+20픽셀 줄 간격을 받는다(`0xA24C..0xA52B`). 일반 원작 팔레트는 END의 DGROUP에서
+고른다. 프레임워크 표시 플래그 8은 별도의 팔레트로 바꾼다. 그 대체 표시 모드는
+이번 첫 내보내기 범위 밖이다.
 
-`tools/prepare_ending.py` emits only local PNG/JSON data. `Ending.swift` owns
-asset validation, exact frame ordering, source clock units and source-bound
-checkpoints for this first scene. Its frontier at END file `0x4B9A` is where the
-scene programs take over ([original-screen-programs.md](original-screen-programs.md)).
-The picture opens from its middle (`0:8B18`), two rows a tick. Nothing here
-establishes original DOS framebuffer parity.
+`tools/prepare_ending.py`는 로컬 PNG/JSON 데이터만 내보낸다. `Ending.swift`는 이
+첫 장면의 에셋 검증, 정확한 프레임 순서, 원작 시계 단위, 원작에 묶인
+체크포인트를 소유한다. END 파일 `0x4B9A`의 경계는 장면 프로그램이 이어받는
+지점이다([original-screen-programs.md](original-screen-programs.md)). 그림은
+가운데에서부터(`0:8B18`) 틱마다 두 행씩 열린다. 여기서 원작 DOS 프레임버퍼와의
+일치를 입증하는 것은 없다.

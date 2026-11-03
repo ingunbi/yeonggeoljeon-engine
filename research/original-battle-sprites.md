@@ -1,119 +1,114 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
-# Native battle-map sprites
+# 네이티브 전투 맵 스프라이트
 
-The new reader reconstructs caller-owned HEXZCHR data without running the
-original program or importing an external engine. All original tables, pixels,
-PNG files, contact sheets and converted catalogs stay in ignored local build
-paths. The public repository contains only new readers, typed selection rules,
-synthetic tests and these source-derived format facts.
+새 리더는 원작 프로그램을 실행하거나 외부 엔진을 가져오지 않고, 호출자가 소유한
+HEXZCHR 데이터를 재구성한다. 원작 표, 픽셀, PNG 파일, 콘택트 시트, 변환한
+카탈로그는 모두 무시 목록에 든 로컬 빌드 경로에 둔다. 공개 저장소에는 새 리더,
+타입 지정 선택 규칙, 합성 테스트, 그리고 원작에서 도출한 이 형식 사실만 들어 있다.
 
-HEXZCHR has47 archive members. Each member decodes to1024 bytes: eight independent
-16 by16 four-plane tiles. Four consecutive tiles form a32 by32 frame in row-major
-quadrant order; the remaining four form its second frame. The source loader
-reads each128-byte tile separately and expands it with a32-byte mask. A mask bit
-is the complement of the OR of all four planes, so precisely palette index0 is
-transparent. The local converter reuses the resource-format owner's LS11 and
-planar readers and the palette owner's battle slot3 conversion.
+HEXZCHR에는 아카이브 멤버가 47개 있다. 각 멤버는 1024바이트로 풀리며, 이는
+독립된 16 x 16 4플레인 타일 여덟 개다. 연속한 타일 네 개가 행 우선 사분면
+순서로 32 x 32 프레임 하나를 이루고, 나머지 네 개가 두 번째 프레임을 이룬다. 원작
+로더는 128바이트 타일을 하나씩 따로 읽어 32바이트 마스크로 확장한다. 마스크
+비트는 네 플레인 전체 OR의 보수이므로, 정확히 팔레트 인덱스 0만 투명하다. 로컬
+변환기는 리소스 형식 담당 모듈의 LS11·플레인 리더와 팔레트 담당 모듈의 전투
+슬롯 3 변환을 재사용한다.
 
-The native member selector first handles condition flag2 using the side-specific
-condition sprite. Otherwise person0 uses a class-relative special bank, persons4
-and8 use fixed special members, and ordinary units use twice their class plus
-native enemy-side identity. Faction is the live runtime slot, independent of a
-shared person's affiliation byte. A source reference outside the available
-archive remains unsupported; it does not fall back to another unit's art.
+네이티브 멤버 선택기는 먼저 상태 플래그 2를 진영별 상태 스프라이트로 처리한다.
+그 밖에는 인물 0이 병과 기준 특수 뱅크를, 인물 4와 8이 고정 특수 멤버를 쓰고,
+일반 부대는 병과의 두 배에 네이티브 적 진영 식별값을 더한 멤버를 쓴다. 진영은
+현재 런타임 슬롯이며, 공유 인물의 소속 바이트와 무관하다. 사용 가능한 아카이브
+밖을 가리키는 원작 참조는 계속 지원하지 않으며, 다른 부대의 그림으로 대체하지
+않는다.
 
-Facing is a whole-frame horizontal flip under live script flag10. The source
-reverses pixels and swaps tile columns, preserving frame and tile-row identities.
-It supplies no separate north/south artwork. East movement clears the flip, west
-movement sets it, and vertical movement retains the preceding facing. Byte8
-remains the independent AI priority and is never interpreted as a facing field.
+방향은 현재 스크립트 플래그 10에 따른 프레임 전체 좌우 반전이다. 원작은 픽셀을
+뒤집고 타일 열을 맞바꾸며, 프레임과 타일 행의 식별은 유지한다. 북쪽/남쪽용
+그림은 따로 제공하지 않는다. 동쪽 이동은 반전을 지우고, 서쪽 이동은 반전을
+세우며, 세로 이동은 이전 방향을 유지한다. 바이트 8은 독립된 AI 우선순위로 남으며
+방향 필드로 해석하지 않는다.
 
-For a standing unit, native battle-object byte5 selects the alternate frame;
-acted flag80 also forces that second frame. The selector requires this phase
-explicitly. Movement chooses frame0 below eight within each sixteen-pixel span
-and frame1 for the next eight. The engine owns presentation time and movement
-state; this catalog does not invent a wall-clock phase or change live flags as a
-side effect of drawing. A movement-flags helper exposes the exact facing update
-for the live-state owner.
+서 있는 부대는 네이티브 전투 객체 바이트 5가 다른 프레임을 고르며, 행동 완료
+플래그 80도 그 두 번째 프레임을 강제한다. 선택기는 이 위상을 명시적으로
+요구한다. 이동 중에는 16픽셀 구간마다 8 미만에서 프레임 0을, 다음 8에서 프레임
+1을 고른다. 표시 시간과 이동 상태는 엔진이 담당한다. 이 카탈로그는 실제 시각
+기반 위상을 지어내지 않으며, 그리기의 부수 효과로 현재 플래그를 바꾸지 않는다.
+이동 플래그 도우미는 현재 상태 담당 모듈에 정확한 방향 갱신을 제공한다.
 
-`prepare_battle_sprites.py` writes `battle-sprites.json` with188 local map PNG
-files:47 members by two frames by two orientations. `OriginalBattleSprites` validates
-all frame identities, dimensions, palette slot and contained relative paths.
-Its returned selection supplies one already oriented PNG path plus explicit
-member, frame and flipped facts. The AppKit owner scales these32-pixel images
-with nearest-neighbor sampling at the unit's32-pixel map cell. Native viewport
-clipping, hidden-unit gates, special draw effects and palette transformations
-remain renderer responsibilities.
+`prepare_battle_sprites.py`는 로컬 맵 PNG 파일 188개와 함께
+`battle-sprites.json`을 쓴다. 멤버 47개 x 프레임 2개 x 방향 2개다.
+`OriginalBattleSprites`는 모든 프레임 식별값, 크기, 팔레트 슬롯, 그리고 범위를
+벗어나지 않는 상대 경로를 검증한다. 반환된 선택 결과는 이미 방향을 맞춘 PNG 경로
+하나와 멤버, 프레임, 반전 여부를 명시적으로 제공한다. AppKit 담당 모듈은 이
+32픽셀 이미지를 부대의 32픽셀 맵 칸에 최근접 이웃 샘플링으로 맞춘다. 네이티브
+뷰포트 클리핑, 숨은 부대 판정, 특수 그리기 효과, 팔레트 변환은 여전히 렌더러의
+책임이다.
 
-Source investigation covers the unit loader, tile-mask builder, sprite-flip
-producer, standing frame selection and both movement frame branches. The local
-manifest retains their precise file offsets, original hashes and archive-member
-bounds. All47 original members decode and synthetic tests check tile ordering,
-transparency, pixel mirroring, selection precedence, source direction changes,
-frame boundaries and malformed catalog identities/paths. This is static source
-reconstruction; no original DOS framebuffer or timing comparison was performed.
+원작 조사는 부대 로더, 타일 마스크 생성 루틴, 스프라이트 반전 생성기, 서 있는
+프레임 선택, 이동 프레임 두 분기를 다룬다. 로컬 매니페스트는 이들의 정확한 파일
+오프셋, 원작 해시, 아카이브 멤버 경계를 보존한다. 원작 멤버 47개가 모두 풀리며,
+합성 테스트는 타일 순서, 투명도, 픽셀 좌우 반전, 선택 우선순위, 원작의 방향 전환,
+프레임 경계, 잘못된 카탈로그 식별값/경로를 검사한다. 이는 원작을 정적으로
+재구성한 것이며, 원작 DOS 프레임버퍼나 타이밍 비교는 하지 않았다.
 
-The optional duel catalog adds156 local PNG files from HEXICHR:78 original
-members by two orientations. Each member contains36 consecutive planar tiles,
-composed into one96 by96 frame using six columns and six rows. Its loader mode
-owns picture identity: modes0/1 load the first ten frames of a participant's
-fifteen-frame bank; mode2 replaces participant1's buffer with the last five
-mirrored death frames; mode3 replaces it with three shifted, unmirrored flee
-frames. The bank comes from source special-person selectors, two exceptional
-person identities, or generic participant side. Special-person table bytes stay
-in the local converted catalog; public tests supply different synthetic values.
-`OriginalDuelSprites.select(person:loadMode:frame:)` requires that load mode
-explicitly, since the same pose index refers to different pixels after a reload.
-The HEXBCHR enlarged combat art has its own catalog, `combat-view.json`.
+선택 사항인 일기토 카탈로그는 HEXICHR에서 로컬 PNG 파일 156개를 더한다. 원작
+멤버 78개 x 방향 2개다. 각 멤버에는 연속한 플레인 타일 36개가 있으며, 6열
+6행으로 96 x 96 프레임 하나를 이룬다. 그림 식별은 로더 모드가 정한다. 모드 0/1은
+참가자의 15프레임 뱅크 중 처음 10프레임을 읽는다. 모드 2는 참가자 1의 버퍼를
+좌우 반전된 마지막 사망 프레임 5개로 바꾼다. 모드 3은 이를 위치를 옮긴, 반전하지
+않은 도주 프레임 3개로 바꾼다. 뱅크는 원작의 특수 인물 선택자, 예외 인물 식별값
+두 개, 또는 일반 참가자 진영에서 정한다. 특수 인물 표 바이트는 로컬 변환
+카탈로그에 남고, 공개 테스트는 다른 합성 값을 넣는다.
+`OriginalDuelSprites.select(person:loadMode:frame:)`는 그 로드 모드를 명시적으로
+요구한다. 다시 읽은 뒤에는 같은 자세 인덱스가 다른 픽셀을 가리키기 때문이다.
+HEXBCHR 확대 교전 그림은 별도 카탈로그 `combat-view.json`을 가진다.
 
-`OriginalScriptDuel` owns the current load modes alongside poses and positions.
-New duel setup initializes modes0/1; source motion3 reloads participant1 with
-mode2 before its death pose, and motion4 reloads participant1 with mode3 before
-its fleeing movement. The renderer consumes those state facts and never infers
-the buffer contents from the last opcode.
+`OriginalScriptDuel`은 자세, 위치와 함께 현재 로드 모드를 담당한다. 새 일기토
+설정은 모드 0/1로 초기화한다. 원작 동작 3은 사망 자세 전에 참가자 1을 모드 2로
+다시 읽고, 동작 4는 도주 이동 전에 참가자 1을 모드 3으로 다시 읽는다. 렌더러는
+이 상태 사실을 소비하며, 마지막 명령으로부터 버퍼 내용을 추론하지 않는다.
 
-Native duel composition uses a416 by208 viewport at DOS pixel(16,32). A
-participant's96 by96 graphic starts at(16+16*x,32+16*y), using its signed native
-tile position. The default row3 therefore anchors at y80. The camera producer
-already shifts the participant positions; subtracting the camera byte again
-would move the actor twice. Native signed out-of-view coordinates remain valid
-and are clipped to the viewport. The tile compositor draws participant1 first
-and participant0 above it. `OriginalDuelSprites.sourceRect`, `sourceViewport`
-and `sourceDrawOrder` own these conversions for the AppKit consumer.
-The campaign window plays each duel opcode step by step over the combat view's
-background; see [duel scene](original-duel.md).
+네이티브 일기토 합성은 DOS 픽셀 (16,32)에 놓인 416 x 208 뷰포트를 쓴다.
+참가자의 96 x 96 그림은 부호 있는 네이티브 타일 위치를 써서
+(16+16*x,32+16*y)에서 시작한다. 따라서 기본 행 3은 y 80에 고정된다. 카메라
+생성기가 이미 참가자 위치를 옮기므로, 카메라 바이트를 다시 빼면 액터가 두 번
+움직인다. 화면 밖의 부호 있는 네이티브 좌표도 유효하며 뷰포트로 잘린다. 타일
+합성기는 참가자 1을 먼저, 그 위에 참가자 0을 그린다.
+`OriginalDuelSprites.sourceRect`, `sourceViewport`, `sourceDrawOrder`가 AppKit
+사용 측을 위해 이 변환을 담당한다.
+캠페인 창은 교전 화면 배경 위에서 일기토 명령을 한 단계씩 재생한다. [일기토
+장면](original-duel.md)을 참고한다.
 
-## Action effects
+## 행동 효과
 
-`HEXGRP` member zero sits 0x8000 into the battle work buffer. `2AC83` and `3128F`
-read effects at member offset `0x1280` and shots at `0x3680`. Pixels interleave
-four plane bytes per eight pixels. There are nine 32 by 32 effects of two frames
-(fire, water, rock, three banner troops and more, then the crossed swords) and
-five 16 by 16 shots: arrows up, right, down, left and a thrown stone. Effect eight
-uses one pass; the others use two.
+`HEXGRP` 멤버 0은 전투 작업 버퍼의 0x8000 위치에 놓인다. `2AC83`과 `3128F`는
+멤버 오프셋 `0x1280`에서 효과를, `0x3680`에서 투사체를 읽는다. 픽셀은 8픽셀마다
+플레인 바이트 네 개를 교차 배치한다. 2프레임짜리 32 x 32 효과가 아홉 개(불, 물,
+바위, 깃발 든 병사 셋 등, 마지막으로 교차한 검) 있고, 16 x 16 투사체가 다섯
+개(위, 오른쪽, 아래, 왼쪽 화살과 던진 돌) 있다. 효과 8은 패스 한 번을 쓰고,
+나머지는 두 번을 쓴다.
 
-`1CB6:75E0` (`2AB40`) draws an effect at a half-cell position. Each frame holds a
-`CF5:2502` interval of two, and that helper multiplies by six. So a frame is
-twelve ticks. A tick comes from the driver, which adds `0x35` to a byte per PIT
-interrupt (`SBOPL2 0x255`): about 16.6 milliseconds. Six ticks match the town step
-of 99.488 milliseconds found earlier. Sounds come from DS:`3F7E` below effect
-eight, then 41 for the clash and 37 for effect nine, which draws effect zero.
+`1CB6:75E0`(`2AB40`)은 반 칸 단위 위치에 효과를 그린다. 각 프레임은
+`CF5:2502` 간격 2만큼 유지되고, 이 도우미가 6을 곱한다. 따라서 한 프레임은
+12틱이다. 틱은 드라이버에서 오며, 드라이버는 PIT 인터럽트마다 한 바이트에
+`0x35`를 더한다(`SBOPL2 0x255`). 약 16.6밀리초다. 6틱은 앞서 찾은 마을 걸음
+99.488밀리초와 맞는다. 소리는 효과 8 미만이면 DS:`3F7E`에서 오고, 충돌은 41,
+효과 9는 37이며, 효과 9는 효과 0을 그린다.
 
-`31FEB..3216D` runs before the damage producer. Classes three to five fire two
-shots of four pixels per tick, sound 19; class five throws stones. Other classes
-clash at the midpoint of the two cells. The options high nibble doubles either.
-Strategies of kinds two and three play the subtype's high nibble on the target
-(`31DE7`). Items play effect four, or nine when thrown (`2E3B1`, `2E68D`).
+`31FEB..3216D`는 피해 생성기보다 먼저 실행된다. 병과 3~5는 틱마다 4픽셀씩
+나아가는 투사체 두 발을 쏘며, 소리는 19다. 병과 5는 돌을 던진다. 다른 병과는 두
+칸의 중점에서 충돌한다. 옵션 상위 니블은 어느 쪽이든 두 배로 한다. 종류 2와 3의
+책략은 대상 위에 하위 유형의 상위 니블 효과를 재생한다(`31DE7`). 도구는 효과
+4를, 던질 때는 9를 재생한다(`2E3B1`, `2E68D`).
 
-Walking (`2CBDD..2CDB1`) adds a step of 1, 2, 4, 8 or 16 pixels per draw, chosen
-by the options low nibble. The slowest step waits one tick per two pixels: 16
-ticks a cell. The other steps have no wait and ran as fast as the machine drew.
-The engine halves the time per doubling; that part is its own choice.
+걷기(`2CBDD..2CDB1`)는 그릴 때마다 1, 2, 4, 8, 16픽셀 중 옵션 하위 니블이 고른
+폭만큼 나아간다. 가장 느린 폭은 2픽셀마다 1틱을 기다리므로 한 칸에 16틱이다.
+다른 폭은 대기가 없어 기계가 그리는 속도대로 실행되었다. 엔진은 폭이 두 배가 될
+때마다 시간을 절반으로 줄이며, 이 부분은 엔진 자체의 선택이다.
 
-`OriginalBattleAnimator` plays these as cues that never change game state. In the
-campaign window the flow holds before an action commits, so its dialogue and
-results wait for the picture. Verification and `--battle` skip the cues, and both
-paths run the same game steps in the same order.
+`OriginalBattleAnimator`는 이를 게임 상태를 절대 바꾸지 않는 연출 신호로
+재생한다. 캠페인 창에서는 행동이 확정되기 전에 흐름이 멈추므로, 그 대사와 결과는
+그림을 기다린다. 검증과 `--battle`은 연출 신호를 건너뛰며, 두 경로 모두 같은 게임
+단계를 같은 순서로 실행한다.
 
-Not restored: random offsets on shots. The close-up that follows these effects is
-in [original-combat-view.md](original-combat-view.md).
+복원하지 않은 것: 투사체의 무작위 오프셋. 이 효과 뒤에 이어지는 근접 화면은
+[original-combat-view.md](original-combat-view.md)에 있다.

@@ -1,77 +1,72 @@
-# Campaign directories, framing and explicit routing
+# 캠페인 디렉터리, 프레이밍, 명시적 라우팅
 
-The currently examined Korean DOS/V `MAIN.EXE` has SHA-256
-`731c8d26a39fcd4e9fa41b142db9bd5913a496a2da5eaa1db798b7867850815f`.
-The engine reads it as data, never executes or modifies it. Original resources,
-dialogue, command operands and real-file reports are local build outputs only.
+현재 조사한 한국어 DOS/V `MAIN.EXE`의 SHA-256은
+`731c8d26a39fcd4e9fa41b142db9bd5913a496a2da5eaa1db798b7867850815f`이다.
+엔진은 이 파일을 데이터로 읽을 뿐 실행하거나 수정하지 않는다. 원작 자원, 대사, 명령
+피연산자, 실제 파일 보고서는 로컬 빌드 출력으로만 둔다.
 
-## Source facts and derivations
+## 원작 사실과 도출 내용
 
-The five `SNR?D.R3` carriers contain 18 LS11 members. Each member begins with
-16-bit block offsets and an `FFFF` directory sentinel. Each block begins with
-ten-byte descriptors: eight condition bytes and a block-relative 16-bit script
-entry pointer, followed by a ten-byte all-`FF` sentinel. The importer preserves
-conditions without inventing their evaluation. The examined files contain 225
-blocks and 2,144 record identities.
+`SNR?D.R3` 컨테이너 다섯 개에는 LS11 멤버 18개가 들어 있다. 각 멤버는 16비트 블록
+오프셋들과 `FFFF` 디렉터리 종결 표시로 시작한다. 각 블록은 10바이트 기술자들로
+시작한다. 기술자는 조건 바이트 8개와 블록 기준 16비트 스크립트 진입 포인터로
+이루어지며, 그 뒤에 전부 `FF`인 10바이트 종결 표시가 온다. 가져오기 도구는 조건을
+보존하되 그 평가 방식을 지어내지 않는다. 조사한 파일에는 블록 225개와 레코드 식별자
+2,144개가 있다.
 
-A descriptor points into a shared block instruction stream. It does not own
-bytes only until the next descriptor's entry pointer. Source MAIN's cursor can
-fall through another record entry and continues until the source `FF`. The new
-reader retains `nextEntryPoint` as a fact while bounding execution by the block
-end; aliases remain separate condition/record identities. MAIN's directory and
-record producers are at file ranges `0x1D80A..0x1D825` and `0x1BACC..0x1BB4A`.
+기술자는 블록이 공유하는 명령 스트림 안을 가리킨다. 기술자가 다음 기술자의 진입
+포인터 직전까지의 바이트만 소유하는 것은 아니다. 원작 MAIN의 커서는 다른 레코드
+진입점을 지나쳐 원작 `FF`까지 계속 진행할 수 있다. 새 리더는 `nextEntryPoint`를
+사실로 보관하면서 실행 범위를 블록 끝으로 제한하며, 별칭은 별개의 조건/레코드
+식별자로 남는다. MAIN의 디렉터리 생성기와 레코드 생성기는 파일 범위
+`0x1D80A..0x1D825`와 `0x1BACC..0x1BB4A`에 있다.
 
-Instruction framing is owned by `tools/scenario_format.py`. The source operand
-skip table begins at MAIN file offset `0x3A2C2`, but it is not a complete execution
-format by itself. The source skip code uses 16-bit special sizes for opcodes
-`03` and `22`, and variable lists for `20`, `21` and `32`. The actual `1D` handler
-at `0x1C9E8..0x1CA14` reads a word and two bytes, although the skip-table count is
-only two. Using that narrower skip count to parse execution would shift all
-following instruction boundaries. Attribute opcode `1C` also branches by its
-selector. The dispatcher is at `0x1C1EA..0x1C35D`; the separate skip path is at
-`0x1C169..0x1C1C5`.
+명령 프레이밍은 `tools/scenario_format.py`가 담당한다. 원작 피연산자 건너뛰기
+테이블은 MAIN 파일 오프셋 `0x3A2C2`에서 시작하지만, 그 자체로 완전한 실행 형식은
+아니다. 원작 건너뛰기 코드는 명령 `03`과 `22`에 16비트 특수 크기를, `20`, `21`,
+`32`에 가변 목록을 쓴다. `0x1C9E8..0x1CA14`의 실제 `1D` 처리기는 워드 하나와 바이트
+두 개를 읽지만, 건너뛰기 테이블의 개수는 2뿐이다. 이 더 좁은 건너뛰기 개수로 실행을
+해석하면 뒤따르는 모든 명령 경계가 어긋난다. 속성 명령 `1C`도 선택자에 따라
+분기한다. 분배기는 `0x1C1EA..0x1C35D`에, 별도의 건너뛰기 경로는
+`0x1C169..0x1C1C5`에 있다.
 
-All 2,144 source record entry traversals reach an `FF` through the implemented
-framing rules. This establishes frame coverage for this examined artifact; it
-does not establish the semantics, reachability or successful playback of those
-records. Opcode visit counts include repeated visits to shared instruction tails.
+원작 레코드 진입점 2,144개를 순회하면 구현한 프레이밍 규칙으로 모두 `FF`에
+도달한다. 이는 조사한 이 산출물에 대한 프레이밍 적용 범위를 입증할 뿐, 그
+레코드들의 의미, 도달 가능성, 성공적인 재생을 입증하지 않는다. 명령 방문 횟수에는
+공유 명령 꼬리를 반복 방문한 횟수가 포함된다.
 
-The `SNR?M.R3` files have matching group offset directories. One directory's
-16-bit offsets roll over at 65,536 bytes. The exporter records the raw values
-and derives the minimum strictly ascending file positions, rejecting spans that
-would be ambiguous or exceed the file. This is a structural derivation; the
-original seek implementation has not been verified in this project.
+`SNR?M.R3` 파일에는 이에 대응하는 그룹 오프셋 디렉터리가 있다. 그중 한 디렉터리의
+16비트 오프셋은 65,536바이트에서 한 바퀴 돈다. 내보내기 도구는 원시 값을 기록하고
+엄격히 증가하는 최소 파일 위치를 도출하며, 모호하거나 파일을 넘는 구간은 거부한다.
+이는 구조적 도출이며, 원작의 seek 구현은 이 프로젝트에서 검증하지 않았다.
 
-## Implemented native preview and router
+## 구현한 네이티브 미리보기와 라우터
 
-The existing palace-command interpreter is reused with explicit source resource,
-member and allowed-map parameters. It does not interpret the wider framing catalog
-as an executable campaign. A preview retains an explicit unsupported boundary
-when a command is not implemented. Records requiring an inherited map or actor
-state remain data-only; an imagined initial state is not supplied.
+기존 궁전 명령 인터프리터를 명시적인 원작 자원, 멤버, 허용 지도 매개변수와 함께
+재사용한다. 이 인터프리터는 더 넓은 프레이밍 목록을 실행 가능한 캠페인으로 해석하지
+않는다. 미리보기는 구현되지 않은 명령을 만나면 명시적인 미지원 경계를 남긴다.
+물려받은 지도나 액터 상태가 필요한 레코드는 데이터로만 남으며, 상상한 초기 상태를
+제공하지 않는다.
 
-The current extraction exposes three completely supported record previews and
-47 partial previews. Most records are data-only. Source trigger conditions are
-not automatically selected. A manually requested conditional preview has a
-different selection origin from an unconditional preview.
+현재 추출 결과에는 완전히 지원되는 레코드 미리보기 3개와 부분 미리보기 47개가 있다.
+대부분의 레코드는 데이터로만 존재한다. 원작 발동 조건은 자동으로 선택하지 않는다.
+수동으로 요청한 조건부 미리보기는 무조건 미리보기와 선택 출처가 다르다.
 
-The native router retains selected record identity, preview boundaries, pending
-battle identity and result provenance. It does not choose a successor merely
-because a record ended. Experimental combat outcomes are recorded as research
-results and never become original campaign flags, including when a development
-override is requested. Even a claimed verified combat result cannot supply an
-unimplemented source result-to-flag mapping.
+네이티브 라우터는 선택된 레코드 식별자, 미리보기 경계, 대기 중인 전투 식별자, 결과
+출처를 보관한다. 레코드가 끝났다는 이유만으로 다음 레코드를 고르지 않는다. 실험적
+전투 결과는 연구 결과로 기록되며, 개발용 재정의를 요청한 경우를 포함해 원작 캠페인
+플래그가 되지 않는다. 검증되었다고 주장하는 전투 결과라도 구현되지 않은 원작의
+결과-플래그 대응을 대신할 수 없다.
 
-## Verification
+## 검증
 
-Public synthetic tests cover shared tails, low-byte framing errors, variable
-lists, malformed directories, missing terminators, resource identity and rollover
-bounds. The opt-in real-file campaign test checks all examined directories and
-that full framing coverage is distinct from preview support. Repeated real-file
-exports produce identical JSON values and preserve hashes of all 69 input files.
+공개 합성 테스트는 공유 꼬리, 하위 바이트 프레이밍 오류, 가변 목록, 잘못된
+디렉터리, 누락된 종결자, 자원 식별, 롤오버 경계를 다룬다. 선택적으로 실행하는 실제
+파일 캠페인 테스트는 조사한 모든 디렉터리를 검사하고, 완전한 프레이밍 적용 범위가
+미리보기 지원과 구별되는지 확인한다. 실제 파일 내보내기를 반복해도 같은 JSON 값이
+나오며 입력 파일 69개의 해시가 모두 보존된다.
 
-Native self-tests exercise condition refusal, explicit conditional preview,
-no automatic successor, pending battle identity, isolated experimental outcomes,
-duplicate identities and snapshot round trips. Native record rendering is an
-additional integration check; a catalog alone does not establish a playable full
-campaign.
+네이티브 자체 테스트는 조건 거부, 명시적 조건부 미리보기, 자동 후속 선택 없음, 대기
+중인 전투 식별자, 격리된 실험 결과, 중복 식별자, 스냅숏 왕복을 시험한다. 네이티브
+레코드 렌더링은 추가 통합 검사이며, 목록만으로는 플레이 가능한 캠페인 전체를
+입증하지 않는다.

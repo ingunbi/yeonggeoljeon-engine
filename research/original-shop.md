@@ -1,112 +1,112 @@
-# Item shop and city entry
+# 도구상과 도시 진입
 
-Static derivations from the pinned Korean DOS/V MAIN profile; no original
-program was run. Offsets are MAIN.EXE file offsets. Shop lines, item names and
-prices stay in local GameData (`shop.json`, `combat.json`, `exploration.json`).
+고정한 한국어 DOS/V MAIN 프로파일에서 얻은 정적 분석이다. 원작 프로그램은
+실행하지 않았다. 오프셋은 MAIN.EXE 파일 오프셋이다. 도구상 대사, 도구 이름,
+가격은 로컬 GameData(`shop.json`, `combat.json`, `exploration.json`)에 둔다.
 
-## Reaching a shop
+## 도구상에 이르기
 
-A selected world city walks there first. Arrival (`0x23F3C..0x23F83`) writes the
-current city, then probes kind two and five records with `[255,city]`. If no
-record answers, `0x23F96..0x2402B` looks at the city type at offset 0x18. Types
-three and four show a yes/no question (`0x23FBC..0x23FE7`) built from the city
-name, a word from DS:`371E` and the format at DS:`3722`. Yes writes game kind
-zero, the city index and entry byte one, and sets the game position to (11,13).
-Other city types only pass through. The source also skips the question while
-player field 0C, which holds the cursor enable, is zero. A native arrival always
-comes from a pointer input, so the host does not model that case.
+세계지도에서 도시를 고르면 먼저 그곳까지 걸어간다. 도착(`0x23F3C..0x23F83`)은
+현재 도시를 쓰고, `[255,city]`로 종류 2와 5의 레코드를 조사한다. 응답하는
+레코드가 없으면 `0x23F96..0x2402B`가 오프셋 0x18의 도시 유형을 본다. 유형 3과
+4는 도시 이름, DS:`371E`의 단어, DS:`3722`의 서식으로 만든 예/아니오
+질문(`0x23FBC..0x23FE7`)을 보인다. 예는 게임 종류 0, 도시 인덱스, 진입 바이트
+1을 쓰고 게임 위치를 (11,13)으로 정한다. 다른 도시 유형은 지나가기만 한다. 원작은
+커서 활성 여부를 담은 플레이어 필드 0C가 0인 동안에도 질문을 건너뛴다. 네이티브
+도착은 항상 포인터 입력에서 오므로 호스트는 그 경우를 모형화하지 않는다.
 
-Walk marker seven in a town enters palace room seven by the usual room entry.
-Native entry (`0x24BD6..0x24C1A`) then:
+마을의 걷기 표지는 `0x7C`보다 작으면 그 값이 그대로 궁전 방 번호가 된다
+(`0x2525B..0x252F7`: `1CB6:19CE`가 읽은 표지를 `CF5:C0D8`로 `game+6`에 쓴다).
+그다음 네이티브 진입(`0x24BD6..0x24C1A`)은 다음을 한다.
 
-- selects music 0x0F and places actor `0376` at (15,11) with raw facing four in
-  room seven;
-- selects music five in a town, or music one for city 11 of chapter 3.
+- 방 종류가 7인 방에서는 음악 0x0F를 고르고 액터 `0376`을 원값 방향 4로
+  (15,11)에 놓는다. 방 종류는 `0x24A5F`에서 `[bp-1]`에 넣는 DS:`3838[game+6]`이고,
+  종류 7은 궁전 10·11번 방이다. 마을마다 이 두 방 중 하나로 가는 표지가 꼭 하나
+  있다. 예전 판본은 `[bp-1]`을 방 번호로 읽어 7번 방(종류 3)에 상인을 세웠다.
+- 마을에서는 음악 5를, 3장의 도시 11에서는 음악 1을 고른다.
 
-Other rooms keep their music. Actor `0376` is person 374. `0x25FE0` drops the
-placement when the person's field 1C bit 0x80 is clear. For this actor class it
-draws the standing period and no second number (`0x2607D..0x260B8`).
+다른 방은 원래 음악을 유지한다. 액터 `0376`은 인물 374다. `0x25FE0`은 그 인물의
+필드 1C 비트 0x80이 꺼져 있으면 배치를 버린다. 이 액터 종류에 대해서는 서 있는
+주기를 그리고 두 번째 숫자는 그리지 않는다(`0x2607D..0x260B8`).
 
-The merchant stands on a blocked walk cell. A talk still reaches them because
-the route producer `0x25C06` seeds its flood at the goal without testing it, and
-the final step is trimmed as for every actor.
+상인은 막힌 걷기 칸 위에 서 있다. 그래도 말을 걸 수 있는 것은 경로 생성기
+`0x25C06`이 목표 칸을 검사하지 않고 그곳에서 채우기를 시작하고, 모든 액터와
+마찬가지로 마지막 걸음을 잘라 내기 때문이다.
 
-Stock rows exist for some cities whose town map has no marker seven. How those
-rows are reached, if at all, was not traced.
+마을 맵에 표지 7이 없는 일부 도시에도 재고 행이 있다. 그 행에 어떻게 이르는지,
+이르기는 하는지는 추적하지 않았다.
 
-## Routine
+## 루틴
 
-Talking to actor `0376` runs `2CB4:3602` (`0x36B42`) instead of a kind three
-record (`0x26A66..0x26A77`). The merchant's saved facing is restored afterwards
-(`0x26AA1`). The native operation `OriginalShopOperation` has one case per
-blocking source call, so an input file answers exactly what the routine asks.
+액터 `0376`에게 말을 걸면 종류 3 레코드 대신 `2CB4:3602`(`0x36B42`)를
+실행한다(`0x26A66..0x26A77`). 상인의 저장된 방향은 그 뒤 복원된다(`0x26AA1`).
+네이티브 동작 `OriginalShopOperation`은 원작의 블로킹 호출마다 경우 하나를
+가지므로, 입력 파일은 루틴이 묻는 것에 정확히 답한다.
 
-The stock row is the player's city plus the chapter's city base
-(`0x36B47..0x36B61`), eight bytes per row at DS:`56A2`, ending at the first 0xFF.
+재고 행은 플레이어 도시에 장의 도시 기준값을 더한 번호이며
+(`0x36B47..0x36B61`), DS:`56A2`에 행마다 8바이트로 있고 첫 0xFF에서 끝난다.
 
-| Step | Source | Result |
+| 단계 | 원작 | 결과 |
 |---|---|---|
-| Greeting, then question and top menu at (0xE8,0x80) | `0x36B7B..0x36BDE` | Buy or sell. Cancel says goodbye and returns. |
-| Stock list at (0x1A0,0x60), eight rows | `0x362E0..0x36351` | Cancel returns to the top menu. |
-| Offer with the item window | `0x36356..0x364BA` | No returns to the list. |
-| Money check | `0x364BD..0x364DA` | Short money refuses and returns to the list. It runs before the receiver is chosen. |
-| Receiver list | `0x364E0..0x36643` | Cancel returns to the stock list. |
-| Full receiver | `0x36646..0x36680` | Yes returns to the receiver list, No to the stock list. |
-| Slots and confirm | `0x36683..0x36775` | No returns to the receiver list. |
-| Purchase | `0x36778..0x367D4` | Fills the first empty slot, sets money, asks again. Yes returns to the stock list. |
-| Owner list | `0x367E2..0x36892` | Cancel returns to the top menu. |
-| Owner with nothing | `0x3689F..0x368C1` | Refuses and returns to the owner list. |
-| Held items | `0x368C9..0x36958` | Cancel returns to the top menu. |
-| Offer with the item window | `0x3695B..0x36AD9` | No returns to the held items. |
-| Sale | `0x36AE5..0x36B3A` | Pays, clears the slot, asks again. Yes returns to the owner list. |
+| 인사, 이어서 (0xE8,0x80)의 질문과 최상위 메뉴 | `0x36B7B..0x36BDE` | 사기 또는 팔기. 취소하면 작별 인사를 하고 돌아간다. |
+| (0x1A0,0x60)의 재고 목록, 8행 | `0x362E0..0x36351` | 취소하면 최상위 메뉴로 돌아간다. |
+| 도구 창을 띄운 가격 제시 | `0x36356..0x364BA` | 아니오는 목록으로 돌아간다. |
+| 금전 확인 | `0x364BD..0x364DA` | 돈이 모자라면 거절하고 목록으로 돌아간다. 받는 인물을 고르기 전에 실행된다. |
+| 받는 인물 목록 | `0x364E0..0x36643` | 취소하면 재고 목록으로 돌아간다. |
+| 받는 인물이 가득 참 | `0x36646..0x36680` | 예는 받는 인물 목록으로, 아니오는 재고 목록으로 돌아간다. |
+| 슬롯과 확인 | `0x36683..0x36775` | 아니오는 받는 인물 목록으로 돌아간다. |
+| 구매 | `0x36778..0x367D4` | 첫 빈 슬롯을 채우고, 금전을 정하고, 다시 묻는다. 예는 재고 목록으로 돌아간다. |
+| 소유자 목록 | `0x367E2..0x36892` | 취소하면 최상위 메뉴로 돌아간다. |
+| 가진 것이 없는 소유자 | `0x3689F..0x368C1` | 거절하고 소유자 목록으로 돌아간다. |
+| 보유 도구 | `0x368C9..0x36958` | 취소하면 최상위 메뉴로 돌아간다. |
+| 도구 창을 띄운 가격 제시 | `0x3695B..0x36AD9` | 아니오는 보유 도구로 돌아간다. |
+| 판매 | `0x36AE5..0x36B3A` | 대금을 치르고, 슬롯을 비우고, 다시 묻는다. 예는 소유자 목록으로 돌아간다. |
 
-The people lists hold every person, in person order, whose field 1C has low five
-bits zero and bit 0x80 set (`0x365B7..0x365D9`).
+인물 목록에는 필드 1C의 하위 5비트가 0이고 비트 0x80이 켜진 모든 인물이 인물
+순서대로 들어 있다(`0x365B7..0x365D9`).
 
-The buying price is item byte 0x0E (BAKDATA record byte 13) times ten
-(`0x36C06`, `0x36372..0x36374`). The selling price is that byte times three,
-shifted right twice, times ten (`0x36981..0x36988`). Money writes go through
-`CF5:224C`, which caps the word at 10000 (`0x15B9F..0x15BA8`).
+구매 가격은 도구 바이트 0x0E(BAKDATA 레코드 바이트 13)에 10을 곱한 값이다
+(`0x36C06`, `0x36372..0x36374`). 판매 가격은 그 바이트에 3을 곱하고 오른쪽으로 두
+번 시프트한 뒤 10을 곱한 값이다(`0x36981..0x36988`). 금전 쓰기는 `CF5:224C`를
+거치며, 이 루틴은 워드를 10000으로 제한한다(`0x15B9F..0x15BA8`).
 
-Three jump tables at `0x363AE`, `0x3650C` and `0x369C2` pick the word after an
-item name for ids 6 to 62. Ids outside that range take the open word. The tables
-are exported as they are, including entries that do not match the name's final
-consonant. Color codes (ESC C digit) are dropped from exported lines.
+`0x363AE`, `0x3650C`, `0x369C2`의 점프 표 세 개가 id 6부터 62까지에 대해 도구
+이름 뒤에 붙는 단어를 고른다. 그 범위 밖의 id는 받침 없는 형태의 단어를 쓴다.
+표는 이름의 받침과 맞지 않는 항목까지 포함해 그대로 내보낸다. 색 코드(ESC C
+숫자)는 내보낸 대사에서 뺀다.
 
-## Windows
+## 창
 
-`CF5:151A` takes y, x, width and height at stack offsets 0x10, 0x12, 0x0E and
-0x0C. That places the receiver's slot window at x 216, y 160, 112 wide and 144
-high, with text at column 28 from y 168 in 16-pixel rows. The item window is at
-x 112, y 160, 320 wide (`0x362C9`), and the value 0x80 is taken as its height.
+`CF5:151A`는 스택 오프셋 0x10, 0x12, 0x0E, 0x0C에서 y, x, 너비, 높이를 받는다.
+이에 따라 받는 인물의 슬롯 창은 x 216, y 160, 너비 112, 높이 144에 놓이고,
+글자는 열 28에서 y 168부터 16픽셀 행으로 놓인다. 도구 창은 x 112, y 160, 너비
+320이며(`0x362C9`), 값 0x80을 높이로 간주한다.
 
-These are source positions. The native view does not use them: a visit stays in
-one engine window with the merchant's line, the list, a detail pane for the
-highlighted row, and the answers along the bottom. The steps, their order and
-what each answer does are the routine's. The window shows more than the source
-does at a given step: prices in the lists, slot counts, the highlighted item's
-description and the money after a purchase. A short-money row stays selectable
-and draws its price in the warning color, because the source refuses after the
-offer. Esc at a question answers No; the source question has no such key.
+이는 원작의 위치다. 네이티브 화면은 이를 쓰지 않는다. 방문하는 동안 엔진 창 하나에
+상인의 대사, 목록, 강조된 행의 상세 패널, 아래쪽의 답변이 함께 놓인다. 단계, 그
+순서, 각 답변이 하는 일은 루틴을 따른다. 이 창은 같은 단계에서 원작보다 많은 것을
+보인다. 목록의 가격, 슬롯 수, 강조된 도구의 설명, 구매 후 금전이다. 돈이 모자란
+행도 선택할 수 있으며 가격을 경고 색으로 그린다. 원작이 가격 제시 뒤에 거절하기
+때문이다. 질문에서 Esc는 아니오로 답한다. 원작 질문에는 그런 키가 없다.
 
-## Verification
+## 검증
 
-Synthetic self-tests cover prices, the row lookup, every branch above, the money
-cap, the blocked goal and the city question. Python tests cover the site checks.
-A local replay went from a chapter-one town out to the world map, entered a
-stocked city, walked into room seven, bought, refused, sold, and left through the
-room and town exits. A native save in the room resumed to the same final state,
-apart from the stage command cursor. Older replays kept their final checkpoints.
+합성 자체 테스트는 가격, 행 조회, 위의 모든 분기, 금전 상한, 막힌 목표, 도시
+질문을 다룬다. Python 테스트는 코드 위치 검사를 다룬다. 로컬 입력 재생은 1장
+마을에서 세계지도로 나가, 재고가 있는 도시에 들어가고, 방 7로 걸어 들어가, 사고,
+거절하고, 팔고, 방과 마을 출구로 나왔다. 이때 방 7의 상인은 예전 판본이 잘못 세운
+것이다. 상인 방을 10·11번으로 바로잡은 뒤에는 이 입력 재생을 다시 하지 않았다. 방 안에서 한 네이티브 저장은 스테이지
+명령 커서를 제외하면 같은 최종 상태로 이어졌다. 이전 입력 재생들은 최종
+체크포인트를 유지했다.
 
-A local harness drove a real `NSWindow` with real `NSEvent` objects through hit
-testing, the first responder chain and live timers, for this shop visit and for
-a new game through the first battle's end of turn. The harness process was not
-the active app, so AppKit's handling of a first click on an inactive app was not
-covered and mouse events entered at the hit-tested view. Nothing here was
-compared with the running original.
+로컬 하니스는 이 도구상 방문과, 새 게임에서 첫 전투의 턴 종료까지에 대해, 실제
+`NSEvent` 객체로 실제 `NSWindow`를 히트 테스트, 첫 응답자 체인, 실제 타이머를 거쳐
+조작했다. 하니스 프로세스는 활성 앱이 아니었으므로, 비활성 앱에 대한 첫 클릭을
+AppKit이 처리하는 방식은 다루지 않았고 마우스 이벤트는 히트 테스트된 뷰에서
+들어갔다. 여기서 실행 중인 원작과 비교한 것은 없다.
 
-## Not restored
+## 복원하지 않은 것
 
-- The original window frames, positions and font.
-- The source's temporary player field 0A change around the confirm questions
-  (`CF5:6656`, `CF5:ACF6`), whose purpose was not traced.
+- 원작 창의 화면 틀, 위치, 글꼴.
+- 확인 질문 전후에 원작이 플레이어 필드 0A를 임시로 바꾸는 동작(`CF5:6656`,
+  `CF5:ACF6`). 그 목적은 추적하지 않았다.

@@ -1,52 +1,50 @@
-# Original exploration resources
+# 원작 탐색 리소스
 
-`prepare_world.py` writes a separate local `exploration.json`. Original pixels,
-maps, city records, table values and initial actor references remain ignored
-local output. Its shared settlement-map reader also serves palace extraction;
-neither consumer reparses a different representation of the same source layout.
+`prepare_world.py`는 별도의 로컬 `exploration.json`을 쓴다. 원작 픽셀, 맵, 도시
+레코드, 테이블 값, 초기 행위자 참조는 무시되는 로컬 출력으로 남는다. 공유하는
+거점 지도 판독기는 궁전 추출에도 쓰이며, 어느 사용처도 같은 원작 배치를 다른
+표현으로 다시 파싱하지 않는다.
 
-SMAP has twelve LS11 members. Like PMAP, each has 640 picture-cell references,
-620 separate staggered walk cells, and a count followed by three-byte prop
-instances. Town background uses SMAPBGPL member zero, props use SSCCHR1 bank
-zero, and default town colors use MAIN palette slot zero. Town logical geometry
-remains 31×20 with 16px steps and an 8px odd-column stagger; the background is
-32×20 tiles. The script/current-city loader is `0x244FA..0x24790`.
+SMAP에는 LS11 멤버가 12개 있다. PMAP처럼 각 멤버에는 그림 칸 참조 640개, 이와
+별도인 엇갈린 보행 칸 620개, 그리고 개수 뒤에 이어지는 3바이트 소품 인스턴스가
+있다. 마을 배경은 SMAPBGPL 멤버 0을, 소품은 SSCCHR1 뱅크 0을, 기본 마을 색은
+MAIN 팔레트 슬롯 0을 쓴다. 마을의 논리 형태는 여전히 31×20이며, 16px 단위로
+움직이고 홀수 열은 8px 엇갈린다. 배경은 32×20 타일이다. 스크립트/현재 도시
+로더는 `0x244FA..0x24790`이다.
 
-MMAP has four LS11 members. MMAPBGPL has one LS11 member holding 255 planar
-16px tiles. MAIN DS:`2F06` has five chapter-indexed **byte** width/height pairs;
-DS:`2F9C` has five 16-bit member selectors. The world loader is
-`0x21D6C..0x21E30`, and the dimension getter is `0x21072..0x210A1`.
+MMAP에는 LS11 멤버가 4개 있다. MMAPBGPL에는 planar 16px 타일 255개를 담은 LS11
+멤버 하나가 있다. MAIN DS:`2F06`에는 장 번호로 색인하는 **바이트** 너비/높이
+쌍이 5개 있고, DS:`2F9C`에는 16비트 멤버 선택값이 5개 있다. 세계지도 로더는
+`0x21D6C..0x21E30`이고, 크기 조회 함수는 `0x21072..0x210A1`이다.
 
-Each world member begins with width×height picture bytes, followed by one
-MSB-first walk bit per logical cell. Logical width and height are half the
-picture dimensions. A zero bit is passable. Original packed bits are retained
-alongside decoded walk bytes; the latter use the native blocked mask `80`.
-Source movement makes two 16px halfsteps per 32px logical step. Neighbor order
-comes from signed-word tables DS:`2F1C` and DS:`2F2C`.
+각 세계지도 멤버는 너비×높이 그림 바이트로 시작하고, 그 뒤에 논리 칸마다 MSB
+우선 보행 비트가 하나씩 온다. 논리 너비와 높이는 그림 크기의 절반이다. 0 비트는
+지나갈 수 있다. 원작의 패킹된 비트는 해독한 보행 바이트와 함께 보존하며, 보행
+바이트는 네이티브 막힘 마스크 `80`을 쓴다. 원작 이동은 32px 논리 걸음마다 16px
+반걸음을 두 번 한다. 이웃 순서는 부호 있는 워드 테이블 DS:`2F1C`와 DS:`2F2C`에서
+온다.
 
-City constructors read chapter group DS:`0EBC`, group count DS:`1360`, group
-base DS:`1366`, global position pairs DS:`136C`, and town member DS:`1408`
-(`0x1AF7A..0x1B039`). BBKSDAT1 has four uncompressed `380`-byte groups of
-32×23 constant bytes and 32×5 initial-state bytes. City names copy eight bytes.
-An original `(FF,FF)` position remains an unplaced sentinel, with nullable
-coordinates and separately preserved raw values; it is not clamped onto a map.
+도시 생성자는 장 그룹 DS:`0EBC`, 그룹 수 DS:`1360`, 그룹 기준 DS:`1366`, 전역
+위치 쌍 DS:`136C`, 마을 멤버 DS:`1408`을 읽는다(`0x1AF7A..0x1B039`). BBKSDAT1에는
+압축하지 않은 `380`바이트 그룹이 4개 있으며, 각 그룹은 32×23 상수 바이트와
+32×5 초기 상태 바이트로 되어 있다. 도시 이름은 8바이트를 복사한다. 원작의
+`(FF,FF)` 위치는 배치되지 않았음을 뜻하는 표지값으로 남으며, 좌표는 null일 수
+있고 원시 값은 따로 보존한다. 맵 안으로 값을 제한해 넣지 않는다.
 
-Town actors use SSCCHR2's four 32×40 frames under palette slot zero. World
-actors use eight SSCCHR1 patterns under palette slot one, with no horizontal
-flip and anchor `height-32`. Direction base frames come from DS:`2FA6`;
-walking phase is added to that base. The person constructor writes object
-field `2B` as BAKDATA state byte one plus two (`0x1AAEE..0x1AAF3`). The world
-allocator passes that field as the bank (`0x1FC24..0x1FC46`), and the bank
-loader reads the SSCCHR1 member equal to it (`0x18942..0x189AE`,
-`0x18448..0x1847D`). Script opcode `2F` writes the same field directly; the
-examined scenarios write values two to six. Format two of `exploration.json`
-keys world banks by member (`2..7`); `peopleBanks` keeps the raw state byte
-and the constructed bank separately. A non-person world actor would use member
-three; script placement covers person actors only. Native person state owns
-later changes, and the town sprite reference stays constant byte sixteen.
+마을 행위자는 팔레트 슬롯 0으로 SSCCHR2의 32×40 프레임 4개를 쓴다. 세계지도
+행위자는 팔레트 슬롯 1로 SSCCHR1 패턴 8개를 쓰며, 좌우 뒤집기는 없고 기준점은
+`height-32`다. 방향별 기준 프레임은 DS:`2FA6`에서 오고, 걷기 단계가 그 기준에
+더해진다. 인물 생성자는 객체 필드 `2B`에 BAKDATA 상태 바이트 1에 2를 더한 값을
+쓴다(`0x1AAEE..0x1AAF3`). 세계지도 할당자는 그 필드를 뱅크로 넘기고
+(`0x1FC24..0x1FC46`), 뱅크 로더는 그 값과 같은 번호의 SSCCHR1 멤버를 읽는다
+(`0x18942..0x189AE`, `0x18448..0x1847D`). 스크립트 명령 `2F`는 같은 필드를 직접
+쓰며, 조사한 시나리오는 2부터 6까지의 값을 쓴다. `exploration.json` 형식 2는
+세계지도 뱅크를 멤버(`2..7`)를 키로 삼아 담는다. `peopleBanks`는 원시 상태
+바이트와 만들어진 뱅크를 따로 보관한다. 인물이 아닌 세계지도 행위자라면 멤버
+3을 쓸 것이다. 스크립트 배치는 인물 행위자만 다룬다. 이후의 변경은 네이티브
+인물 상태가 소유하며, 마을 스프라이트 참조는 상수 바이트 16으로 고정된다.
 
-These are static source and format observations for the pinned MAIN digest,
-not a DOS framebuffer comparison. Default palettes are supported; grayscale,
-dynamic palette changes, citizens and interactive exploration have additional
-execution requirements. PNG rendering and complete file export do not establish
-full campaign playability.
+이는 고정한 MAIN 다이제스트에 대한 원작과 형식의 정적 관찰이며, DOS 프레임버퍼
+비교가 아니다. 기본 팔레트는 지원한다. 회색조, 동적 팔레트 변경, 주민, 상호작용
+탐색에는 추가 실행 요건이 있다. PNG 렌더링과 파일 전체 내보내기는 캠페인 전체의
+플레이 가능성을 입증하지 않는다.

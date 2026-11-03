@@ -1,63 +1,62 @@
-# MAIN's text
+# MAIN의 텍스트
 
-Static derivation from `MAIN.EXE`. A subagent wrote the first reading with the same
-disassembly tools; the engine's checks are synthetic. No original program was run,
-and nothing was compared with a DOS framebuffer. Offsets are MAIN file offsets
-unless written `seg:off` or `DS:off`.
+`MAIN.EXE`의 정적 분석이다. 첫 판독은 같은 역어셈블 도구로 서브에이전트가 작성했고,
+엔진의 검사는 합성 데이터를 쓴다. 원작 프로그램은 실행하지 않았고, DOS
+프레임버퍼와 비교하지 않았다. 오프셋은 `seg:off`나 `DS:off`로 적지 않은 한 MAIN
+파일 오프셋이다.
 
-## Glyphs
+## 글리프
 
-MAIN keeps no font in memory. For each character `CF5:0D44` (`0x14694`) opens
-`ALL_FONT.16P` (DS:`0DD8`) or `hankaku.fnt` (DS:`0AC0`), reads one record and closes.
+MAIN은 글꼴을 메모리에 두지 않는다. 문자마다 `CF5:0D44`(`0x14694`)가
+`ALL_FONT.16P`(DS:`0DD8`)나 `hankaku.fnt`(DS:`0AC0`)를 열고, 레코드 하나를 읽은 뒤
+닫는다.
 
-| Code | File | Record |
+| 코드 | 파일 | 레코드 |
 |---|---|---|
-| `A1A1..FDFE` | ALL_FONT.16P | 30 bytes: the KS code (low byte first), then 14 rows of 2 bytes. Index `(hi − (A4 if hi ≥ B0 else A1))·94 + lo − A1` (`0x14666`), read at `30·idx + 2`. |
-| other | HANKAKU.FNT | 16 rows of 1 byte at `16·(c − 20h)` for `20..7F`, else glyph 0 (blank). |
+| `A1A1..FDFE` | ALL_FONT.16P | 30바이트: KS 코드(하위 바이트 먼저), 그다음 2바이트 행 14개. 인덱스는 `(hi − (A4 if hi ≥ B0 else A1))·94 + lo − A1`(`0x14666`)이며, `30·idx + 2`에서 읽는다. |
+| 그 밖 | HANKAKU.FNT | `20..7F`이면 `16·(c − 20h)`에 있는 1바이트 행 16개, 그 밖에는 글리프 0(공백). |
 
-The Hangul index and record are those END uses. MAIN differs from END in three ways:
-it draws without the bold pixel, a syllable is 14 rows rather than a 20-pixel line,
-and there is no left padding. FONT.R3 holds 87 glyphs that MAIN registers with the
-graphics driver and never draws, a leftover of the Japanese version.
+한글 인덱스와 레코드는 END가 쓰는 것과 같다. MAIN은 END와 세 가지가 다르다. 굵게
+하는 픽셀 없이 그리고, 음절 하나가 20픽셀 줄이 아니라 14행이며, 왼쪽 여백이 없다.
+FONT.R3에는 MAIN이 그래픽 드라이버에 등록하지만 그리지는 않는 글리프 87개가 있으며,
+이는 일본어판의 잔재다.
 
-## putc and drawing
+## putc와 그리기
 
-`CF5:0A2E` (`0x1437E`) takes leads `A1..C8` with a trail `A1..FE`. Any other byte is a
-one-byte code; a dropped lead's trail becomes one too. `0A` and `0D` move the cursor.
-`1B` starts an escape. Other control bytes do nothing. A cell's top-left is
-(8·column, y). A syllable advances two columns, any other code one, and a new line
-moves down 18 pixels.
+`CF5:0A2E`(`0x1437E`)는 선행 바이트 `A1..C8`과 후행 바이트 `A1..FE`를 받는다. 그 밖의
+바이트는 1바이트 코드다. 버려진 선행 바이트의 후행 바이트도 1바이트 코드가 된다.
+`0A`와 `0D`는 커서를 옮긴다. `1B`는 이스케이프를 시작한다. 다른 제어 바이트는
+아무것도 하지 않는다. 칸의 왼쪽 위는 (8·column, y)다. 음절은 두 열, 다른 코드는 한
+열 전진하며, 새 줄은 18픽셀 아래로 내려간다.
 
-`CF5:0E24` (`0x14774`) draws mode 4 nearly everywhere: set pixels take the foreground
-and clear pixels keep the canvas. Mode 0 paints clear pixels in colour 0, and a
-background other than 0 paints them in that colour. An optional outline is a 3×3
-dilation in the outline colour under the glyph. Labels and the HUD use colour 7;
-disabled buttons use colour 2.
+`CF5:0E24`(`0x14774`)는 거의 모든 곳에서 모드 4로 그린다. 켜진 픽셀은 전경색을 받고
+꺼진 픽셀은 캔버스를 유지한다. 모드 0은 꺼진 픽셀을 색 0으로 칠하며, 배경이 0이
+아니면 그 색으로 칠한다. 선택적 외곽선은 글리프 아래에 외곽선 색으로 그린 3×3
+팽창이다. 레이블과 HUD는 색 7을, 비활성 버튼은 색 2를 쓴다.
 
-`printf` (`CF5:0F18`) pads `%Nu`/`%Ns` on the left to N bytes. HUD cursors:
+`printf`(`CF5:0F18`)는 `%Nu`/`%Ns`를 왼쪽에 채워 N바이트로 맞춘다. HUD 커서:
 
-| Field | Writer | Cursor | Format |
+| 필드 | 출력 루틴 | 커서 | 형식 |
 |---|---|---|---|
-| caption | `0x1FC5E` | (24, 360) | `%s` of DS:`DB4C` |
-| money | `0x1FCB2` | (576, 136) | `%5u` |
-| level | `0x1FCEA` | (584, 160) | `%4u` |
-| territory | `0x1FD24` | (568, 200) | `%6s` |
+| 캡션 | `0x1FC5E` | (24, 360) | DS:`DB4C`의 `%s` |
+| 돈 | `0x1FCB2` | (576, 136) | `%5u` |
+| 레벨 | `0x1FCEA` | (584, 160) | `%4u` |
+| 영토 | `0x1FD24` | (568, 200) | `%6s` |
 
-Button labels start at column x/8 + (w/8 − bytes)/2 of their button (`CF5:1AC8`).
+버튼 레이블은 버튼의 x/8 + (w/8 − bytes)/2 열에서 시작한다(`CF5:1AC8`).
 
-## Engine
+## 엔진
 
-`tools/prepare_story.py` checks MAIN's file names, the record counts and sample
-record identities, then copies both files into local GameData under `fonts/`.
-`OriginalFont` follows `putc` and the glyph lookup. In the original frames it draws
-the HUD values, the caption and the title-menu labels, at MAIN's cursors and in mode 4.
+`tools/prepare_story.py`는 MAIN의 파일 이름, 레코드 개수, 표본 레코드 식별자를
+확인한 뒤 두 파일을 로컬 GameData의 `fonts/` 아래로 복사한다. `OriginalFont`는
+`putc`와 글리프 조회를 따른다. 원작 화면 틀에서는 HUD 값, 캡션, 타이틀 메뉴
+레이블을 MAIN의 커서 위치에 모드 4로 그린다.
 
-## Not restored
+## 복원하지 않은 것
 
-- Dialogue and every engine window (`CanvasTheme`) keep the system font. The battle
-  screen's texts in the original frames still use it too.
-- Escapes, outlines and modes other than 4 are not used by these callers, so they are
-  not implemented.
-- After a new line, MAIN drops the next space (DS:`64DE`), including the first pad space
-  of `%5u`. A HUD value could then sit 8 pixels further left, depending on what was
-  printed last. This was not observed and is not modelled.
+- 대사와 모든 엔진 창(`CanvasTheme`)은 시스템 글꼴을 유지한다. 원작 화면 틀의 전투
+  화면 텍스트도 여전히 시스템 글꼴을 쓴다.
+- 이스케이프, 외곽선, 4 이외의 모드는 이 호출자들이 쓰지 않으므로 구현하지 않았다.
+- 새 줄 뒤에 MAIN은 다음 공백 하나를 버린다(DS:`64DE`). `%5u`의 첫 채움 공백도
+  포함된다. 그러면 마지막으로 무엇을 출력했느냐에 따라 HUD 값이 8픽셀 더 왼쪽에
+  놓일 수 있다. 이는 관측하지 않았고 모델링하지 않았다.

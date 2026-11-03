@@ -1,61 +1,57 @@
-# Battle engine: source facts and prototype policy
+# 전투 엔진: 원작 사실과 프로토타입 정책
 
-The battle catalog and runtime have different responsibilities. Original file
-readers retain source placement, faction, terrain and unresolved statistics.
-The native battle model validates an executable grid and acts on **export-local
-placement identities**. A person identifier, source record ordinal, and actual
-DOS runtime slot retain separate meanings. Original placement allocation can
-depend on unresolved campaign conditions; its runtime slot remains unknown.
-A person identifier never substitutes for a placement identity. An unknown source value is not
-automatically a zero or an engine default.
+전투 카탈로그와 런타임은 책임이 다르다. 원작 파일 읽기 코드는 원작의 배치, 진영,
+지형, 미해결 능력치를 보관한다. 네이티브 전투 모델은 실행 가능한 격자를
+검증하고 **내보내기 범위 안의 배치 식별자**에 따라 동작한다. 인물 식별자, 원작
+레코드 순번, 실제 DOS 런타임 슬롯은 각각 다른 의미를 유지한다. 원작의 배치
+할당은 미해결 캠페인 조건에 달려 있을 수 있으며, 그 런타임 슬롯은 알려지지 않은
+채 남는다. 인물 식별자는 결코 배치 식별자를 대신하지 않는다. 알 수 없는 원작
+값이 자동으로 0이나 엔진 기본값이 되지는 않는다.
 
-## Original-rule support
+## 원작 규칙 지원
 
-The examined Korean DOS/V `MAIN.EXE` has SHA-256
-`731c8d26a39fcd4e9fa41b142db9bd5913a496a2da5eaa1db798b7867850815f`.
-Earlier source-bound static notes establish N/E/S/W neighbor order at file
-`0x2FCD2..0x2FF19` (direction table DS:4D1C), class-dependent terrain costs and
-hostile occupancy checks at `0x2FF1C..0x302A3`, and synchronous scripted movement
-at `0x2F954..0x2FA4F`. These observations do not establish normal player turn
-rules, combat damage, enemy AI or battle victory conditions.
-The reference is the previous local investigation's
-`research/town-motion/battle-cinematic.md`, source-observations section; its
-separate engine-integration discussion is not an implementation input here.
+조사한 한국어판 DOS/V `MAIN.EXE`의 SHA-256은
+`731c8d26a39fcd4e9fa41b142db9bd5913a496a2da5eaa1db798b7867850815f`이다.
+이전의 원작 기반 정적 분석 노트는 파일 `0x2FCD2..0x2FF19`의 북/동/남/서 이웃
+순서(방향 표 DS:4D1C), `0x2FF1C..0x302A3`의 병과별 지형 비용과 적대 점유 검사,
+`0x2F954..0x2FA4F`의 동기식 스크립트 이동을 확립한다. 이 관찰은 일반 플레이어
+턴 규칙, 전투 피해, 적 AI, 전투 승리 조건을 확립하지 않는다.
+참고 자료는 이전 로컬 조사의 `research/town-motion/battle-cinematic.md` 중 원작
+관찰 절이며, 그 문서의 별도 엔진 통합 논의는 여기서 구현 입력으로 쓰지 않는다.
 
-`BattlePolicy.original` therefore reports an unsupported result. It never
-silently substitutes the prototype policy. No claim of original combat parity
-is made by a successful prototype battle.
+그래서 `BattlePolicy.original`은 지원하지 않음 결과를 보고한다. 프로토타입
+정책으로 조용히 대체하는 일은 없다. 프로토타입 전투가 성공해도 원작 전투와
+일치한다고 주장하지 않는다.
 
-## Explicit experimentalV1 policy
+## 명시적 experimentalV1 정책
 
-This is a small deterministic engine policy for exercising selection, routing,
-movement, attack, wait, turn changes, AI and outcomes while source rules are
-still under investigation. Callers must select it explicitly and display that
-it is an experimental policy, not the original game's combat.
+원작 규칙을 아직 조사하는 동안 선택, 경로 찾기, 이동, 공격, 대기, 턴 교대, AI,
+결과를 시험해 보기 위한 작은 결정적 엔진 정책이다. 호출자는 이를 명시적으로
+골라야 하며, 원작 게임의 전투가 아니라 실험 정책이라는 점을 표시해야 한다.
 
-- The board is an established orthogonal grid. All cells have prototype cost 1.
-  Original terrain IDs remain source data and do not imply prototype passability.
-- All living occupied cells block movement. One unit may move once, then attack
-  or wait. Attacking consumes both remaining movement and the action.
-- Every unit has separate effective prototype values: max HP 100, attack 25,
-  defense 5, movement 4, Manhattan attack range 1. Original statistics are kept
-  unchanged in the definition and are not overwritten with these values.
-- Damage is `max(1, attack - defense)`, without randomness or counterattacks.
-- Controlled side 0 and enemy side 1 alternate. Unknown factions are unsupported.
-- Enemy decisions use ascending slot order, attack the lowest-HP adjacent enemy
-  (tie: lower slot), or move to minimize opponent distance (ties: lower movement
-  cost, then y, then x), attack, or wait. This is not original enemy AI.
-- Victory or defeat means elimination of the currently active opposing or
-  controlled roster respectively. Hidden reinforcement definitions are not
-  automatically activated and original script objectives are not implemented.
+- 판은 확립된 직교 격자다. 모든 칸의 프로토타입 비용은 1이다. 원작 지형 ID는
+  원작 데이터로 남으며 프로토타입의 통과 가능 여부를 뜻하지 않는다.
+- 살아 있는 부대가 차지한 칸은 모두 이동을 막는다. 부대 하나는 한 번 이동한 뒤
+  공격하거나 대기할 수 있다. 공격하면 남은 이동과 행동을 모두 소비한다.
+- 모든 부대는 별도의 프로토타입 실효값을 가진다. 최대 HP 100, 공격 25, 방어 5,
+  이동력 4, 맨해튼 공격 범위 1이다. 원작 능력치는 정의에 바뀌지 않은 채
+  보관되며 이 값으로 덮어쓰지 않는다.
+- 피해는 `max(1, attack - defense)`이며, 무작위성이나 반격은 없다.
+- 조종하는 진영 0과 적 진영 1이 번갈아 움직인다. 알 수 없는 진영은 지원하지
+  않는다.
+- 적의 결정은 슬롯 오름차순으로 하며, HP가 가장 낮은 인접 적을 공격하거나(동률:
+  낮은 슬롯), 상대와의 거리를 최소로 하도록 이동한 뒤(동률: 낮은 이동 비용, 다음
+  y, 다음 x) 공격하거나 대기한다. 이것은 원작 적 AI가 아니다.
+- 승리와 패배는 각각 현재 활성인 상대 명단과 조종 명단의 전멸을 뜻한다. 숨은
+  증원 정의는 자동으로 활성화하지 않으며, 원작 스크립트 목표는 구현하지 않았다.
 
-If a source battle has unresolved campaign-dependent placement conditions, the
-exporter may retain those records in `conditionalUnits` with unknown activation
-and mark `rosterScope` as `unconditional-placement-records-only` and
-`originalRosterComplete` as false. The prototype can exercise the established
-unconditional subset, but does not evaluate the conditions as false. The native
-definition and snapshot retain this coverage distinction and unresolved count.
+원작 전투에 캠페인에 따라 달라지는 미해결 배치 조건이 있으면, 내보내기 도구는
+그 레코드를 활성화 여부를 알 수 없는 상태로 `conditionalUnits`에 보관하고,
+`rosterScope`를 `unconditional-placement-records-only`로,
+`originalRosterComplete`를 false로 표시할 수 있다. 프로토타입은 확립된 무조건
+부분집합을 시험할 수 있지만, 조건을 거짓으로 평가하지는 않는다. 네이티브 정의와
+스냅숏은 이 범위 구분과 미해결 개수를 보관한다.
 
-Snapshots and event traces retain the policy and effective-stat origin.
-Synthetic regression tests contain no original game text, graphics or battle
-data. Real-file checks are separate local opt-in evidence.
+스냅숏과 이벤트 추적은 정책과 실효 능력치의 출처를 보관한다. 합성 회귀
+테스트에는 원작 게임 텍스트, 그래픽, 전투 데이터가 없다. 실제 파일 검사는
+별도의 로컬 선택적 증거다.

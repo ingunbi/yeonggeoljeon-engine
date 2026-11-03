@@ -1,64 +1,59 @@
-# Source retirement dispatcher
+# 원작 퇴장 디스패처
 
-The examined MAIN SHA-256 remains the profile recorded in
-`original-campaign-vm.md`. Only static original-file inspection is used. Original
-programs are not executed or modified; extracted text stays in ignored output.
+조사한 MAIN의 SHA-256은 `original-campaign-vm.md`에 기록한 프로필 그대로다.
+원작 파일의 정적 조사만 썼다. 원작 프로그램은 실행하거나 수정하지 않으며,
+추출한 텍스트는 무시되는 출력에 둔다.
 
-`MAIN 0x2BA64..0x2BAFE` accepts only live status two, performs sprite/cache and
-reference cleanup, sets status four, then suppresses the following dispatcher
-when live flag four is set. This is the common retirement producer; a shared
-person's troop count and another live alias's status are separate facts.
+`MAIN 0x2BA64..0x2BAFE`는 생존 상태 2만 받아들이고, 스프라이트/캐시와 참조
+정리를 한 뒤 상태 4를 설정하며, 생존 플래그 4가 켜져 있으면 뒤따르는
+디스패처를 막는다. 이것이 공통 퇴장 생성기다. 공유된 인물의 병력 수와 다른 생존
+별칭의 상태는 별개의 사실이다.
 
-After cleanup the source repeatedly tests the first enabled objective pair
-before the second. They select event seven or eight. A missing objective
-record falls back to automatic event zero. Source interpreter statuses five or
-six request another source lookup; other statuses leave that loop
-(`0x2BB10..0x2BBB3`). When neither objective pair applies, the separate automatic
-loop is still evaluated. That inner loop does not duplicate the outer result
-guard.
+정리 뒤 원작은 활성화된 첫 번째 목표 쌍을 두 번째보다 먼저 반복해서 검사한다.
+두 쌍은 이벤트 7이나 8을 고른다. 목표 레코드가 없으면 자동 이벤트 0으로
+대체한다. 원작 인터프리터 상태 5나 6은 원작 조회를 한 번 더 요청하며, 다른
+상태는 그 루프를 벗어난다(`0x2BB10..0x2BBB3`). 어느 목표 쌍도 해당하지 않을
+때에도 별도의 자동 루프는 여전히 평가한다. 그 안쪽 루프는 바깥쪽 결과 검사를
+중복하지 않는다.
 
-If the battle result remains zero, the source next queries event twelve for the
-retiring slot's current person. On no match, a friendly source slot below
-fifteen also queries event twelve with literal identity `0400`
-(`0x2BBC2..0x2BC08`). Objective or generic script handling suppresses the default
-presentation. Automatic handling alone does not. Slot identity persists across
-waits, while current person and battle result are reread after source scripts.
-No guessed enemy-elimination victory is inserted.
+전투 결과가 0으로 남아 있으면, 원작은 이어 퇴장하는 슬롯의 현재 인물로 이벤트
+12를 조회한다. 일치하는 것이 없으면, 15 미만의 아군 원작 슬롯은 리터럴 식별자
+`0400`으로도 이벤트 12를 조회한다(`0x2BBC2..0x2BC08`). 목표 스크립트나 일반
+스크립트가 처리하면 기본 표시를 막는다. 자동 처리만으로는 막지 않는다. 슬롯
+식별은 대기를 거쳐도 유지되고, 현재 인물과 전투 결과는 원작 스크립트 뒤에 다시
+읽는다. 추측한 적 전멸 승리는 넣지 않는다.
 
-With no handler, only source person zero selects raw result three and music
-four. The source then selects its quote bank and optional leader message;
-ordinary unhandled people receive a retreat quote and popup. A later result
-check suppresses the ordinary popup under raw result three. The source's rare
-status-five branch is retained as a typed effect without inventing a personal
-flag mutation (`0x2BC08..0x2BCA4`).
+핸들러가 없으면 원작 인물 0만 raw 결과 3과 음악 4를 고른다. 이어 원작은 대사
+뱅크와 선택적인 대장 메시지를 고른다. 처리되지 않은 보통 인물은 퇴장 대사와
+팝업을 받는다. 뒤의 결과 검사는 raw 결과 3에서 보통 팝업을 막는다. 원작의 드문
+상태 5 분기는 개인 플래그 변경을 지어내지 않고 타입이 정해진 효과로 보관한다
+(`0x2BC08..0x2BCA4`).
 
-The helper `1CB6:79FA`, file `0x2AF5A..0x2B067`, is a quote producer, not a
-person-state setter. It reads HEXGRP member `bank+1`, searches its byte-person
-list in source order, normalizes four punctuation pairs and displays the first
-matching quote. Missing or empty quotes are retained without replacement text.
-The local exporter also reads three message templates from the original MAIN.
+도우미 `1CB6:79FA`(파일 `0x2AF5A..0x2B067`)는 인물 상태 설정 함수가 아니라
+대사 생성기다. HEXGRP 멤버 `bank+1`을 읽고, 그 바이트 인물 목록을 원작 순서로
+찾고, 문장 부호 쌍 네 개를 정규화한 뒤 처음 일치하는 대사를 보인다. 없거나 빈
+대사는 대체 텍스트 없이 그대로 보관한다. 로컬 내보내기 도구는 원작 MAIN에서
+메시지 템플릿 세 개도 읽는다.
 
-`OriginalRetirementOperation` owns the resumable sequence. A pending probe,
-effect or presentation repeats until acknowledged. The session owns canonical
-retirement notices and their sequence identities. The host owns actually
-running selected scripts, applying effects and presenting text. The source
-lookup owner never infers completion from a found record.
+`OriginalRetirementOperation`이 재개 가능한 순서를 맡는다. 대기 중인 조회, 효과,
+표시는 확인될 때까지 반복된다. 세션은 정규 퇴장 알림과 그 순서 식별자를 맡는다.
+호스트는 고른 스크립트를 실제로 실행하고, 효과를 적용하고, 텍스트를 표시하는
+일을 맡는다. 원작 조회 담당 코드는 레코드를 찾았다는 사실로 완료를 추정하지
+않는다.
 
-The VM's `queryInvocation`/`takeInvocationReturn` API bounds one original
-interpreter call. It stops at `FF`, explicit phase/block/chapter transitions,
-map/show/movement returns or terminal program returns, before automatically
-consuming another record. Source busy wrappers select continuation entry zero
-without re-evaluating their event predicate (`0x1BB4E..0x1BB70`,
-`0x1BF30..0x1BF52`). A subsequent real source wrapper call resumes that cursor;
-an idle native frame alone does not. Retirement tests exercise this boundary
-through a source choice and Codable state restoration.
+VM의 `queryInvocation`/`takeInvocationReturn` API는 원작 인터프리터 호출 한
+번의 경계를 정한다. 다른 레코드를 자동으로 소비하기 전에 `FF`, 명시적
+페이즈/블록/장 전환, 지도/표시/이동 반환, 프로그램 종료 반환에서 멈춘다. 원작의
+busy 래퍼는 이벤트 조건을 다시 평가하지 않고 이어 실행 진입점 0을 고른다
+(`0x1BB4E..0x1BB70`, `0x1BF30..0x1BF52`). 이후의 실제 원작 래퍼 호출은 그
+커서를 재개하지만, 유휴 네이티브 프레임만으로는 재개하지 않는다. 퇴장 테스트는
+원작 선택지와 Codable 상태 복원을 거쳐 이 경계를 시험한다.
 
-The normal unit-condition caller also repeats each wrapper while status is
-five/six and result remains zero. It then resets status to five and evaluates
-an automatic-zero loop before the next wrapper/direction
-(`0x2C09E..0x2C21B`). The automatic inner loop has no duplicate result check.
-Native caller integration must preserve that ordering.
+보통의 부대 상태 호출 코드도 상태가 5/6이고 결과가 0으로 남아 있는 동안 각
+래퍼를 반복한다. 이어 상태를 5로 되돌리고, 다음 래퍼/방향 전에 자동 0 루프를
+평가한다(`0x2C09E..0x2C21B`). 자동 안쪽 루프에는 중복 결과 검사가 없다.
+네이티브 호출 코드 통합은 그 순서를 지켜야 한다.
 
-Native tests and source text conformance do not establish whole-DOS runtime
-parity. In particular, synchronous physical counter/outer retirement still
-requires its own operation boundary if scripts can change the later target.
+네이티브 테스트와 원작 텍스트 일치는 DOS 런타임 전체와의 일치를 확립하지
+않는다. 특히 스크립트가 뒤의 대상을 바꿀 수 있다면, 동기식 물리 반격/바깥 퇴장에는
+여전히 자체 동작 경계가 필요하다.

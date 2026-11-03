@@ -1,117 +1,112 @@
-# Save prompt, title menu and native resume
+# 저장 질문, 타이틀 메뉴와 네이티브 이어하기
 
-Static derivations from the pinned Korean DOS/V MAIN profile; no original
-program was run. Offsets are MAIN.EXE file offsets.
+고정한 한국어 DOS/V MAIN 프로파일에서 얻은 정적 분석이다. 원작 프로그램은
+실행하지 않았다. 오프셋은 MAIN.EXE 파일 오프셋이다.
 
-## Original flow
+## 원작 흐름
 
-Source opcode `3D` runs `0x22A62..0x22AA1`. It asks the DS:`305A` question
-with the two-button selector (`CF5:3C5E`, mode two). Yes loops on `CF5:F0CE`,
-which opens the slot dialog `CF5:B58C` in save mode `0x100` through
-`CF5:BDBA` (`0x1F70A..0x1F781`). A cancelled or failed save asks the DS:`3073`
-decline check; its No returns to the slot dialog. The handler then returns
-zero, so the source cursor continues after `3D`.
+원작 명령 `3D`는 `0x22A62..0x22AA1`을 실행한다. 두 버튼 선택기(`CF5:3C5E`,
+모드 2)로 DS:`305A` 질문을 묻는다. 예는 `CF5:F0CE`를 반복하며, 이 루틴은
+`CF5:BDBA`(`0x1F70A..0x1F781`)를 거쳐 슬롯 대화상자 `CF5:B58C`를 저장 모드
+`0x100`으로 연다. 저장을 취소하거나 실패하면 DS:`3073` 거절 확인을 묻고, 그
+아니오는 슬롯 대화상자로 돌아간다. 그 뒤 핸들러가 0을 반환하므로 원작 커서는
+`3D` 다음으로 진행한다.
 
-MAIN's menu `CF5:C050` (`0x1F9A0..0x1FA17`) shows four DS:`2D38` items and
-dispatches their DS:`2CEC` handlers: new game (`CF5:B536`), resume
-(`CF5:BDAE`, which calls `CF5:BD1E` with one and `0x100`), settings
-(`CF5:BFDE`) and opening (`CF5:C012`). main passes the chosen index to the
-framework loop; a nonzero index sets its first-entry flag and calls
-`CF5:C456` (`0x1E1E2..0x1E284`). Item three returns exit code zero, so
-HERO.COM runs OPEN before MAIN again. The original slots are `MSAVE0..4.R3S`.
+MAIN의 메뉴 `CF5:C050`(`0x1F9A0..0x1FA17`)은 DS:`2D38` 항목 네 개를 보이고
+DS:`2CEC` 핸들러로 분기한다. 새 게임(`CF5:B536`), 이어하기(`CF5:BDAE`, 1과
+`0x100`으로 `CF5:BD1E`를 호출), 설정(`CF5:BFDE`), 오프닝(`CF5:C012`)이다.
+main은 고른 인덱스를 프레임워크 루프에 넘긴다. 0이 아닌 인덱스는 첫 진입
+플래그를 세우고 `CF5:C456`(`0x1E1E2..0x1E284`)을 호출한다. 항목 3은 종료 코드
+0을 반환하므로 HERO.COM은 OPEN을 실행한 다음 MAIN을 다시 실행한다. 원작 슬롯은
+`MSAVE0..4.R3S`이다.
 
-The field system menu (`0x22CD2..0x22DB6`) lists ten DS:`34E8` items and
-dispatches DS:`3478` handlers. The world and settlement input tables
-(DS:`3636`, DS:`36E2`) send input code `23` to it. Quit (`CF5:F044`) asks
-DS:`3018` and sets map-loop flag `40`; load is `CF5:F152`; save calls the
-same slot routine `CF5:F0CE` as `3D`. The other items configure scrolling,
-speed, monitor, music and sound.
+필드 시스템 메뉴(`0x22CD2..0x22DB6`)는 DS:`34E8` 항목 열 개를 나열하고
+DS:`3478` 핸들러로 분기한다. 세계지도와 거점의 입력 표(DS:`3636`, DS:`36E2`)가
+입력 코드 `23`을 이 메뉴로 보낸다. 종료(`CF5:F044`)는 DS:`3018`을 묻고 맵 루프
+플래그 `40`을 세운다. 불러오기는 `CF5:F152`이고, 저장은 `3D`와 같은 슬롯 루틴
+`CF5:F0CE`를 호출한다. 나머지 항목은 스크롤, 속도, 모니터, 음악, 효과음을
+설정한다.
 
-## Native mapping
+## 네이티브 대응
 
-The producer exports the four menu texts and both save questions into local
-GameData after checking their push/call sequences. The campaign window shows
-the menu as soon as the opening ends ([title menu](original-title-menu.md)). New
-game starts the source program, resume opens the slot list, settings opens
-MAIN's three title options, and opening plays the opening again.
+생성기는 push/call 순서를 확인한 뒤 메뉴 문구 네 개와 저장 질문 두 개를 로컬
+GameData로 내보낸다. 캠페인 창은 오프닝이 끝나는 즉시 메뉴를 보인다([타이틀
+메뉴](original-title-menu.md)). 새 게임은 원작 프로그램을 시작하고, 이어하기는
+슬롯 목록을 열고, 설정은 MAIN의 타이틀 옵션 세 개를 열며, 오프닝은 오프닝을
+다시 재생한다.
 
-A secondary click on an idle town, palace or world map opens the field menu
-with the exported labels. Quit reaches the retry selector through mask
-`40`. Load and save open a list of five native slots. A list row can still
-load a resume file from anywhere. Options are described below. The original
-physical binding of input code `23` is not established.
+유휴 상태의 마을, 궁전, 세계지도에서 보조 클릭을 하면 내보낸 라벨로 필드
+메뉴가 열린다. 종료는 마스크 `40`을 거쳐 재시도 선택기에 이른다. 불러오기와
+저장은 네이티브 슬롯 다섯 개의 목록을 연다. 목록의 한 행으로 어느 위치의
+이어하기 파일이든 불러올 수도 있다. 옵션은 아래에 설명한다. 입력 코드 `23`의
+원작 물리 키 배정은 확인되지 않았다.
 
-At a source `3D` prompt the window asks the original question and writes an
-`OriginalCampaignResume` JSON file into a slot under the user's Application
-Support folder. It is native engine state, not an MSAVE slot. Original slots
-are never written; the load list also imports them read-only, as described in
-[the save note](original-saves.md). The native slot keeps its own title and date. A resume point is produced only when the stage
-is idle outside the battle palette and no other source operation owns the
-host: either at a pending `3D`, or at an idle field controller with no
-running script (the field-menu save, recorded without a save offset). It retains the VM state with its pending `3D`, shared person objects,
-roster, RNG, money, stage snapshot, party carryover, the source `36`
-checkpoint, the uncertain-return marker and the controller continuation
-flags. Resume restores those values, configures the saved map, restores the
-idle stage, and completes a pending `3D` as a performed save; a field save
-resumes the idle field controller.
+원작 `3D` 질문에서 창은 원작 질문을 묻고, 사용자 Application Support 폴더 아래
+슬롯에 `OriginalCampaignResume` JSON 파일을 쓴다. 이것은 MSAVE 슬롯이 아니라
+네이티브 엔진 상태다. 원작 슬롯에는 절대 쓰지 않는다. 불러오기 목록은 [세이브
+노트](original-saves.md)에 적은 대로 원작 슬롯도 읽기 전용으로 가져온다. 네이티브 슬롯은 자체 제목과 날짜를 가진다. 이어하기 지점은
+스테이지가 전투 팔레트 밖에서 유휴 상태이고 다른 원작 동작이 호스트를 점유하지
+않을 때만 만든다. 즉 대기 중인 `3D`에서, 또는 실행 중인 스크립트가 없는 유휴
+필드 컨트롤러에서다(필드 메뉴 저장이며, 저장 오프셋 없이 기록한다). 이 지점은 대기 중인 `3D`를 포함한 VM 상태, 공유 인물 객체,
+명단, RNG, 금전, 스테이지 스냅샷, 파티 이월 상태, 원작 `36` 체크포인트, 불확실
+복귀 표시, 컨트롤러 계속 플래그를 보존한다. 이어하기는 이 값들을 복원하고,
+저장된 맵을 설정하고, 유휴 스테이지를 복원한 뒤, 대기 중인 `3D`를 저장을 수행한
+것으로 완료한다. 필드 저장은 유휴 필드 컨트롤러를 재개한다.
 
-MAIN's own load path (slot dialog, `CF5:C456`, first-entry spawn) is not
-replicated. A native resume therefore restores the saved native stage rather
-than re-entering the map through the original load path.
+MAIN 자체의 불러오기 경로(슬롯 대화상자, `CF5:C456`, 첫 진입 배치)는 재현하지
+않았다. 따라서 네이티브 이어하기는 원작 불러오기 경로로 맵에 다시 들어가지 않고
+저장된 네이티브 스테이지를 복원한다.
 
-## Verification
+## 검증
 
-`--verify-play` accepts a `save-native` input and a `--resume FILE` option.
-Locally, three save points in a 138-input replay (before the first battle,
-after it on the world map, and on the chapter-one world map) were saved and
-resumed, and one field-menu save was taken in the chapter-one town after the
-palace exit. Each resumed run's final checkpoint equals the uninterrupted run's,
-apart from the stage command cursor. The first resumed frame matched the
-uninterrupted frame at the same point. Synthetic tests cover idle stage
-restore, rejected non-idle or inconsistent snapshots, all-or-nothing person
-replacement and typed file reading. The AppKit menu and panels were not driven
-with real macOS input.
+`--verify-play`는 `save-native` 입력과 `--resume FILE` 옵션을 받는다. 로컬에서
+138개 입력으로 된 입력 재생의 저장 지점 세 곳(첫 전투 전, 그 전투 후의
+세계지도, 1장 세계지도)을 저장하고 이어했으며, 궁전을 나온 뒤 1장 마을에서 필드
+메뉴 저장을 한 번 했다. 이어한 각 실행의 최종 체크포인트는 스테이지 명령 커서를
+제외하면 중단 없는 실행과 같다. 이어한 첫 프레임은 같은 지점의 중단 없는
+프레임과 일치했다. 합성 테스트는 유휴 스테이지 복원, 유휴가 아니거나 일관되지
+않은 스냅샷의 거부, 전부 아니면 전무인 인물 교체, 타입 지정 파일 읽기를 다룬다.
+AppKit 메뉴와 패널은 실제 macOS 입력으로 조작하지 않았다.
 
-## Options
+## 옵션
 
-Object DS:`7A80` holds the player's options, built at `1A406` (speed 2, scroll 1,
-word `+4` zero). `OriginalSettings` keeps them per user, so replays and tests
-always run the source defaults.
+객체 DS:`7A80`은 플레이어 옵션을 담으며 `1A406`에서 만들어진다(속도 2, 스크롤 1,
+워드 `+4`는 0). `OriginalSettings`는 이를 사용자별로 보관하므로 입력 재생과
+테스트는 항상 원작 기본값으로 실행한다.
 
-| Item | Source | Native effect |
+| 항목 | 원작 | 네이티브 효과 |
 | --- | --- | --- |
-| 스크롤 단위 | `22832`, byte `+11` | Disabled. The labels at DS:`2FEC` pick 1, 2, 4 or 8. The field loop passes the value to `0:4F68` (`24212`), which writes byte `+11` of input device 0's 18-byte record at CS:`14FE`: the step of the keyboard-driven pointer while input is enabled. The engine has no keyboard pointer. |
-| 속도설정 | `22BFE`, byte `+13` | The field loop waits speed x 3 ticks (`24818`), so normal is the known six ticks. Field time scales by 2/speed. 노웨이트 has no wait, and the engine uses six times normal. |
-| 모니터 | `229AE`, word `+A` bit 8 | A grey filter on the whole canvas. A captured view does not show this filter, so it has not been looked at. |
-| BGM, 효과음 | `228C6`, word `+A` bits 2 and 1 | The audio switches. |
-| 음량 | `22BCE` | Handler index 8 opens the DS:`343C` list of music and sound tests, under a label that says volume. The engine maps by meaning: this row sets one output level, an engine addition. |
-| 음악시간 | handler index 9 | The DS:`343C` list. Songs from DS:`312E` and effects from DS:`3364`, whose names also document every sound id. |
-| 부대전투 | `27DC4`, word `+4` high nibble | Zero plays the enlarged view ([original-combat-view.md](original-combat-view.md)). Nonzero skips it and doubles the map effects and the prelude draws, as in the source. |
-| 이동속도 | `27E2C`, low nibble | The walk step of the battle animator. |
-| 적의 이동 | `27774`, bit `1000` | The camera follows enemy walks (`2C4D6`). With it off the engine skips a walk that has no visible cell, where the source still takes the time. |
+| 스크롤 단위 | `22832`, 바이트 `+11` | 비활성. DS:`2FEC`의 라벨이 1, 2, 4, 8 중 하나를 고른다. 필드 루프는 이 값을 `0:4F68`(`24212`)에 넘기고, 이 루틴은 CS:`14FE`에 있는 입력 장치 0의 18바이트 레코드 중 바이트 `+11`을 쓴다. 이는 입력이 켜진 동안 키보드로 움직이는 포인터의 이동 폭이다. 엔진에는 키보드 포인터가 없다. |
+| 속도설정 | `22BFE`, 바이트 `+13` | 필드 루프는 속도 x 3틱을 기다리므로(`24818`) 보통은 이미 알려진 6틱이다. 필드 시간은 2/속도 비율로 변한다. 노웨이트는 대기가 없으며, 엔진은 보통의 6배를 쓴다. |
+| 모니터 | `229AE`, 워드 `+A` 비트 8 | 캔버스 전체에 거는 회색 필터. 캡처한 화면에는 이 필터가 나타나지 않으므로 직접 살펴보지 않았다. |
+| BGM, 효과음 | `228C6`, 워드 `+A` 비트 2와 1 | 오디오 스위치. |
+| 음량 | `22BCE` | 핸들러 인덱스 8은 음량이라는 라벨 아래에서 DS:`343C`의 음악·효과음 테스트 목록을 연다. 엔진은 의미에 맞춰 대응한다. 이 행은 출력 음량 하나를 정하며, 엔진에 추가한 기능이다. |
+| 음악시간 | 핸들러 인덱스 9 | DS:`343C` 목록. DS:`312E`의 곡과 DS:`3364`의 효과음이며, 그 이름이 모든 사운드 id도 문서화한다. |
+| 부대전투 | `27DC4`, 워드 `+4` 상위 니블 | 0이면 확대 화면을 재생한다([original-combat-view.md](original-combat-view.md)). 0이 아니면 이를 건너뛰고, 원작처럼 맵 효과와 서두 그리기를 두 배로 한다. |
+| 이동속도 | `27E2C`, 하위 니블 | 전투 애니메이터의 걷기 이동 폭. |
+| 적의 이동 | `27774`, 비트 `1000` | 카메라가 적의 걷기를 따라간다(`2C4D6`). 끄면 엔진은 보이는 칸이 없는 걷기를 건너뛰지만, 원작은 그 시간도 그대로 쓴다. |
 
-## Engine additions
+## 엔진 추가 기능
 
-These have no source counterpart and never change game state.
+다음 기능은 원작에 대응하는 것이 없으며 게임 상태를 절대 바꾸지 않는다.
 
-- The field writes `Saves/slots/auto.json` whenever the idle field's scene or map
-  differs from the last autosave. F5 and F9 (or the 게임 menu) write and read
-  `quick.json`. Both use the same resume format as the five slots and appear in the
-  load list.
-- Holding Control multiplies the frame step by four for the field, the battle
-  animator and the combat view. Plain lines close after six frames. Questions,
-  lists and choices still wait.
-- The dialogue log keeps the last 300 lines shown in the window.
-- In attack targeting each enemy in reach shows the damage of the blow and the
-  counter chance. The blow draws no random number (`0x31474`). The counter compares
-  the defender's attack scalar with a draw below 150, so the chance is that scalar
-  over 150 when the source would allow a counter.
-- D (or ⌘D) tints every cell a visible enemy could strike this turn: its move
-  range under the player's own move rule, then its class attack pattern from each
-  reachable cell. Strategies and AI orders are left out, so it is an upper bound for
-  physical attacks only. Hidden enemies add nothing.
-- Tab and Shift-Tab pick the next or previous friendly unit that can still act, as
-  a click on it would, and centre it.
-- In the campaign, ending a friendly phase while such a unit remains asks first.
-  The source's end-turn entry ends it at once (`27D12`).
-- The unit under the pointer fills the status line.
+- 필드는 유휴 필드의 장면이나 맵이 마지막 자동 저장과 다를 때마다
+  `Saves/slots/auto.json`을 쓴다. F5와 F9(또는 게임 메뉴)는 `quick.json`을 쓰고
+  읽는다. 둘 다 다섯 슬롯과 같은 이어하기 형식을 쓰며 불러오기 목록에 나타난다.
+- Control을 누르고 있으면 필드, 전투 애니메이터, 교전 화면의 프레임 단계가 네
+  배가 된다. 일반 대사는 6프레임 뒤에 닫힌다. 질문, 목록, 선택지는 여전히
+  기다린다.
+- 대화 기록은 창에 표시된 마지막 300줄을 보관한다.
+- 공격 대상 지정 중에는 사거리 안의 각 적에 일격의 피해와 반격 확률을 보인다.
+  일격은 난수를 뽑지 않는다(`0x31474`). 반격은 방어 측 공격 스칼라를 150 미만의
+  난수와 비교하므로, 원작이 반격을 허용하는 경우 확률은 그 스칼라를 150으로 나눈
+  값이다.
+- D(또는 ⌘D)는 보이는 적이 이번 턴에 칠 수 있는 모든 칸을 칠한다. 플레이어 자신의
+  이동 규칙에 따른 그 적의 이동 범위를 구한 뒤, 도달 가능한 각 칸에서 병과 공격
+  범위를 적용한다. 책략과 AI 지시는 제외하므로 물리 공격에 대해서만 상한이다. 숨은
+  적은 아무것도 더하지 않는다.
+- Tab과 Shift-Tab은 아직 행동할 수 있는 다음 또는 이전 아군 부대를 클릭했을 때처럼
+  선택하고 화면 중앙에 둔다.
+- 캠페인에서는 그런 부대가 남아 있는 상태로 아군 페이즈를 끝내면 먼저 확인을
+  묻는다. 원작의 턴 종료 항목은 즉시 끝낸다(`27D12`).
+- 포인터 아래의 부대가 상태 줄에 표시된다.

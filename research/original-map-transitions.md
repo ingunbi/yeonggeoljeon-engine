@@ -1,75 +1,78 @@
-# Map transitions
+# 지도 전환
 
-Static derivation from `MAIN.EXE`, `GRPDRV.EXE` and `SBOPL2.COM`. A subagent wrote the
-first reading with the same disassembly tools. No original program was run, and
-nothing was compared with a running original. Offsets are MAIN file offsets unless
-written `seg:off` or `DS:off`.
+`MAIN.EXE`, `GRPDRV.EXE`, `SBOPL2.COM`의 정적 분석이다. 첫 판독은 같은 역어셈블
+도구로 서브에이전트가 작성했다. 원작 프로그램은 실행하지 않았고, 실행 중인 원작과
+비교하지 않았다. 오프셋은 `seg:off`나 `DS:off`로 적지 않은 한 MAIN 파일
+오프셋이다.
 
-## Fades
+## 페이드
 
-Every fade is GRPDRV function 16h: sixteen steps that each wait two vertical
-retraces, about 0.53 s at 59.94 Hz, with no early exit (GRPDRV file `0x2B24..0x2C19`).
-`CF5:4A22` fades to black, `CF5:4A10` fades in to the map's palette slot. The program
-waits meanwhile; only the music keeps playing.
+모든 페이드는 GRPDRV 함수 16h다. 각각 수직 귀선 두 번을 기다리는 16단계로,
+59.94 Hz에서 약 0.53 s 걸리며 중간에 빠져나가지 않는다(GRPDRV 파일
+`0x2B24..0x2C19`). `CF5:4A22`는 검은 화면으로 페이드아웃하고, `CF5:4A10`은 지도의
+팔레트 슬롯으로 페이드인한다. 그동안 프로그램은 기다리며, 음악만 계속 재생된다.
 
-`CF5:CAD8` (`0x20428`) hides or shows the map and tracks it in DS:`DB6A`. Hide fades
-to black if the map is shown. Show redraws the map and fades in if it is hidden.
-Source `05` is show (`CF5:987C`); `2C` only redraws.
+`CF5:CAD8`(`0x20428`)은 지도를 숨기거나 보이고, 그 상태를 DS:`DB6A`에 기록한다.
+숨기기는 지도가 보이는 상태이면 검은 화면으로 페이드한다. 보이기는 지도를 다시
+그리고, 숨겨진 상태이면 페이드인한다. 원작 `05`는 보이기(`CF5:987C`)이고, `2C`는
+다시 그리기만 한다.
 
-## Changing maps
+## 지도 변경
 
-Leaving a map draws nothing: the old picture stays while the next map loads
-offscreen. The presents (`E4E4` at `0x21E34`, `1CB6:1210` at `0x24770`) then fade it
-to black and draw the new map under black. `C86C` marks every script-selected map
-(`09`, `11`, a battle's end) as a script entry (`0x20221`). A script entry stays black
-until its `05`; a default entry or a load fades in at once.
+지도를 떠날 때는 아무것도 그리지 않는다. 다음 지도를 화면 밖에서 읽는 동안 이전
+그림이 남는다. 그다음 표시 루틴(`0x21E34`의 `E4E4`, `0x24770`의 `1CB6:1210`)이
+이를 검은 화면으로 페이드하고, 검은 화면 아래에서 새 지도를 그린다. `C86C`는
+스크립트가 선택한 모든 지도(`09`, `11`, 전투 종료)를 스크립트 진입으로
+표시한다(`0x20221`). 스크립트 진입은 해당 `05`까지 검은 화면을 유지하고, 기본
+진입이나 불러오기는 바로 페이드인한다.
 
-When a script leaves a battle, `C456` fades the battle screen out first (`0x1E36A`).
-Entering a battle fades out, holds black, draws, fades in and holds again, about
-2.1 s from the last field frame (`0x1E297`, `0x1FE2E`, `0x272A7`).
+스크립트가 전투를 떠날 때는 `C456`이 먼저 전투 화면을 페이드아웃한다(`0x1E36A`).
+전투에 들어갈 때는 페이드아웃하고, 검은 화면을 유지하고, 그리고, 페이드인한 뒤 다시
+유지하며, 마지막 필드 프레임부터 약 2.1 s가 걸린다(`0x1E297`, `0x1FE2E`,
+`0x272A7`).
 
-## World camera
+## 세계지도 카메라
 
-A world load sets the camera to (0,0) (`0x20C02`). The first actor that a script
-places afterwards (slot 0, `CF5:E596` at `0x21FB4`) centres the camera through
-`E818(0)` if it lies outside the 33×21 tile window. With 16-pixel tiles, x = 2·cellX and
-y = 2·cellY:
+세계지도를 읽으면 카메라가 (0,0)으로 설정된다(`0x20C02`). 그 뒤 스크립트가 처음
+배치하는 액터(슬롯 0, `0x21FB4`의 `CF5:E596`)가 33×21 타일 창 밖에 있으면
+`E818(0)`을 통해 카메라를 그 중심에 맞춘다. 16픽셀 타일 기준으로 x = 2·cellX,
+y = 2·cellY다.
 
-- camX = 0 if x < 15, W−32 if x > W−17, else x−15;
-- camY = 0 if y < 10, H−20 if y > H−10, else y−10.
+- x < 15이면 camX = 0, x > W−17이면 W−32, 그 밖에는 x−15.
+- y < 10이면 camY = 0, y > H−10이면 H−20, 그 밖에는 y−10.
 
-`05` never recentres.
+`05`는 카메라를 다시 맞추지 않는다.
 
-## Story pictures
+## 이야기 그림
 
-`07` opens a picture window with a 32-step pattern dissolve, three SBOPL2 ticks a
-step, about 1.6 s (`0x206A8..0x207C7`). A mode-0 panel is closed by `CF5:CE78`
-(`0x207C8`) without restoring anything, so it stays until a redraw or a map present.
+`07`은 32단계 패턴 디졸브로 그림 창을 연다. 단계마다 SBOPL2 틱 3번으로, 약 1.6 s가
+걸린다(`0x206A8..0x207C7`). 모드 0 패널은 `CF5:CE78`(`0x207C8`)이 아무것도
+복원하지 않고 닫으므로, 다시 그리기나 지도 표시가 있을 때까지 남는다.
 
-## Engine
+## 엔진
 
-The host-driven stage now does the following:
+호스트가 구동하는 스테이지는 이제 다음과 같이 동작한다.
 
-- **Map change:** the new map's state applies at once, so host logic reads the new map. The stage then fades the old screen out for 0.53 s before its next command, and the window keeps the last picture of the old map meanwhile.
-- **`05`:** fades a black screen in over 0.53 s.
-- **Leaving a battle:** a map selected from a battle starts black.
-- **World maps:** the first placement centres the camera by the rule above.
-- **Story pictures:** a closed mode-0 panel stays until the next map or `2C`.
-- **Battles:** the window fades with a black curtain over the stage and the battle view,
-  and the host waits meanwhile. From the field: fade out, 0.53 s black, the battle, fade
-  in, a 0.53 s hold. A chained or restarted battle skips the black hold. Leaving: fade
-  out, then 0.53 s black, and the field stays black until its `05`. New game and loads
-  use the same curtain.
+- **지도 변경:** 새 지도의 상태가 바로 적용되므로 호스트 로직은 새 지도를 읽는다. 그다음 스테이지는 다음 명령 전에 이전 화면을 0.53 s 동안 페이드아웃하며, 그동안 창은 이전 지도의 마지막 그림을 유지한다.
+- **`05`:** 검은 화면을 0.53 s에 걸쳐 페이드인한다.
+- **전투에서 나올 때:** 전투에서 선택한 지도는 검은 화면으로 시작한다.
+- **세계지도:** 첫 배치가 위 규칙대로 카메라를 맞춘다.
+- **이야기 그림:** 닫힌 모드 0 패널은 다음 지도나 `2C`까지 남는다.
+- **전투:** 창은 스테이지와 전투 화면 위에 검은 장막을 씌워 페이드하며, 그동안
+  호스트는 기다린다. 필드에서: 페이드아웃, 0.53 s 검은 화면, 전투, 페이드인,
+  0.53 s 유지. 연속되거나 다시 시작한 전투는 검은 화면 유지를 건너뛴다. 떠날 때:
+  페이드아웃, 그다음 0.53 s 검은 화면이며, 필드는 해당 `05`까지 검은 화면을
+  유지한다. 새 게임과 불러오기도 같은 장막을 쓴다.
 
-Replays reach the same states and draw the same random numbers. Their simulated time
-grows, and the final world camera follows the new rule. Each replay observation now
-records the random state.
+입력 재생은 같은 상태에 도달하고 같은 난수를 뽑는다. 시뮬레이션 시간은 늘어나며,
+마지막 세계지도 카메라는 새 규칙을 따른다. 이제 각 입력 재생 관측은 난수 상태를
+기록한다.
 
-## Not restored
+## 복원하지 않은 것
 
-- The story-picture dissolve, the black-to-black hold after a load, and the
-  default-entry music table (song 5 on the world,
-  1 or 5 in towns, 15 in two palaces). Town and the merchant room already set theirs.
-- A script palace shown by `05` fades to palette slot 2, while a default entry uses
-  DS:`382A`; whether scripts correct this was not checked.
-- The 59.94 Hz rate and real draw times.
+- 이야기 그림 디졸브, 불러오기 뒤 검은 화면에서 검은 화면으로 이어지는 유지.
+- 기본 진입 음악 표는 이제 모두 따른다. 세계지도는 5번 곡, 마을은 1번 또는 5번,
+  종류 7인 궁전 방(10·11번)은 15번이다.
+- `05`로 보이는 스크립트 궁전은 팔레트 슬롯 2로 페이드하지만, 기본 진입은
+  DS:`382A`를 쓴다. 스크립트가 이를 바로잡는지는 확인하지 않았다.
+- 59.94 Hz 주사율과 실제 그리기 시간.
