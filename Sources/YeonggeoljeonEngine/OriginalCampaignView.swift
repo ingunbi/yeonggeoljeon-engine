@@ -31,6 +31,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         host.citizensWander = true
         renderer = try Renderer(host.data)
         super.init(frame:CGRect(x:0,y:0,width:1024,height:640))
+        curtain.frame = bounds;curtain.autoresizingMask = [.width,.height];addSubview(curtain)
         overlay.frame = bounds;overlay.autoresizingMask = [.width,.height];addSubview(overlay)
         overlay.onSound = { [weak self] id in self?.audio?.playEffect(id) }
         NotificationCenter.default.addObserver(forName:OriginalSettings.changed,object:nil,queue:.main) { [weak self] _ in self?.applySettings() }
@@ -187,24 +188,36 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private var fadeLevel = 0.0
     private var fadeRising = false
     private var fadeMidpoint:(() -> Void)?
-    private var fading:Bool { fadeRising || fadeLevel > 0 }
-    /// Fades to black, runs `action` (which may replace this view), then fades in.
-    private func fadeThrough(_ action:@escaping () -> Void) {
-        fadeRising = true;fadeMidpoint = action;needsDisplay = true
+    /// Seconds of black after the midpoint, and of a held fade after the fade in.
+    private var fadeHoldBlack = 0.0,fadeHoldAfter = 0.0
+    private var fadeReturns = true
+    /// The battle entry keeps the last field picture while it fades out.
+    private var freezePicture = false
+    private var fading:Bool { fadeRising || fadeLevel > 0 || fadeHoldAfter > 0 }
+    /// A black sheet above the stage and the battle; the host waits while it moves.
+    private let curtain = CanvasCurtain()
+    /// Fades to black, runs `action` (which may replace this view), holds black,
+    /// then fades in (or lifts at once when the screen below is black already).
+    private func fadeThrough(holdBlack:Double = 0,holdAfter:Double = 0,fadeIn:Bool = true,_ action:@escaping () -> Void) {
+        fadeRising = true;fadeMidpoint = action;fadeHoldBlack = holdBlack;fadeHoldAfter = holdAfter;fadeReturns = fadeIn
+        updateCurtain()
     }
     /// A screen that a load or a new game opens starts black and fades in.
-    func fadeIn() { fadeLevel = 1;fadeRising = false;needsDisplay = true }
+    func fadeIn() { fadeLevel = 1;fadeRising = false;fadeHoldBlack = 0;fadeHoldAfter = 0;fadeReturns = true;updateCurtain() }
     private func advanceFade() {
-        let step = 1.0/60/Self.screenFadeSeconds
+        let frame = 1.0/60,step = frame/Self.screenFadeSeconds
         if fadeRising {
             fadeLevel = min(1,fadeLevel+step)
             if fadeLevel >= 1 {
                 fadeRising = false
                 let action = fadeMidpoint;fadeMidpoint = nil;action?()
             }
-        } else { fadeLevel = max(0,fadeLevel-step) }
-        needsDisplay = true
+        } else if fadeHoldBlack > 0 { fadeHoldBlack -= frame }
+        else if fadeLevel > 0 { fadeLevel = fadeReturns ? max(0,fadeLevel-step) : 0 }
+        else if fadeHoldAfter > 0 { fadeHoldAfter -= frame }
+        updateCurtain()
     }
+    private func updateCurtain() { curtain.isHidden = fadeLevel <= 0;curtain.alphaValue = CGFloat(fadeLevel);needsDisplay = true }
     private func makeScreen(_ name:String) -> OriginalScreenPlayer? {
         guard let loaded = try? OriginalScreenCatalog.load(from:host.data.root),let ops = loaded.catalog.programs[name] else { return nil }
         let player = OriginalScreenPlayer(ops:ops,assets:loaded.catalog.assets,data:loaded.data)
@@ -290,6 +303,23 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             for id in host.takeSounds() { audio?.playEffect(id) }
             try host.advance(microseconds:Int64(16_667*settings.timeScale*rate))
             needsDisplay = true
+            // MAIN fades around a battle (research/original-map-transitions.md): from
+            // the field out, black, the battle, in and a held fade (0x1E297, 0x272A7);
+            // a chained or restarted battle without the black; leaving, out and black
+            // until the field's own 05 (C456 at 0x1E36A).
+            let closing = host.ending != nil || host.frameworkReturn?.outcome == .quit
+            if !closing,host.stage.palette == 3,let session = host.battle,battleView?.session !== session {
+                let fromField = battleView?.isHidden != false
+                freezePicture = fromField
+                fadeThrough(holdBlack:fromField ? Self.screenFadeSeconds : 0,holdAfter:Self.screenFadeSeconds) { [weak self] in
+                    self?.freezePicture = false;self?.act { try self?.synchronizeBattle() }
+                }
+                return
+            }
+            if !closing,battleView?.isHidden == false,host.stage.palette != 3 || host.battle == nil {
+                fadeThrough(holdBlack:Self.screenFadeSeconds,fadeIn:false) { [weak self] in self?.hideBattle() }
+                return
+            }
             try synchronizeBattle()
             if host.fieldMenuReady { autosave() }
             if let notice = host.takeClosingNotice() { presentClosing(notice);return }
@@ -354,7 +384,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             board.onSound = { [weak self] id in self?.audio?.playEffect(id) }
             board.presentation = CanvasPresentation.current
             board.frame = bounds
-            addSubview(board,positioned:.below,relativeTo:overlay);battleView = board
+            addSubview(board,positioned:.below,relativeTo:curtain);battleView = board
             window?.makeFirstResponder(board)
         }
         battleView?.isHidden = false;overlay.viewport = battleView?.layoutFacts.viewportRect ?? overlay.viewport
@@ -962,7 +992,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             do {
                 // While a map change fades out, the old map stays on screen (MAIN
                 // loads the next one offscreen), so the last picture is kept.
-                if host.stage.leaving,let picture = lastPicture {
+                if host.stage.leaving || freezePicture,let picture = lastPicture {
                     Renderer.image(picture,in:shape.rect,context:context)
                     context.setFillColor(CGColor(gray:0,alpha:host.stage.blackAlpha));context.fill(shape.rect)
                 } else {
@@ -987,7 +1017,6 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             CanvasTheme.chip("빨리 감기 ×\(OriginalBattleView.fastRate)",at:CGPoint(x:580,y:24),maximumWidth:120,in:context)
         }
         context.restoreGState()
-        if fadeLevel > 0 { context.setFillColor(CGColor(gray:0,alpha:fadeLevel));context.fill(bounds) }
     }
     override func keyDown(with event:NSEvent) {
         if screenPlayer != nil { screenInput(escape:event.keyCode == 53);return }

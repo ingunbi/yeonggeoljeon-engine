@@ -38,6 +38,14 @@ struct CanvasMenu {
     var onChoose:(Int?) -> Void
 }
 
+/// A black sheet for MAIN's palette fades over the stage and the battle; it takes no input.
+final class CanvasCurtain:NSView {
+    override init(frame:NSRect) { super.init(frame:frame);wantsLayer = true;layer?.backgroundColor = CGColor(gray:0,alpha:1);isHidden = true }
+    convenience init() { self.init(frame:.zero) }
+    required init?(coder:NSCoder) { nil }
+    override func hitTest(_ point:NSPoint) -> NSView? { nil }
+}
+
 /// A line of text that waits for one input (battle dialogue, retirement).
 struct CanvasNotice {
     var speaker:String
