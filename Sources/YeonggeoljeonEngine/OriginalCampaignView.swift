@@ -1009,6 +1009,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         context.translateBy(x:shape.origin.x,y:shape.origin.y);context.scaleBy(x:shape.scale,y:shape.scale)
         // A sheet carries its own money and covers this corner.
         if modern,overlay.sheet == nil,let screen = screen { drawFieldHUD(screen,in:context) }
+        if screen != nil { drawHoverTag(in:context) }
         // Only a state the player can act on or must know reaches the window.
         if let text = errorText ?? inputNotice ?? host.notice ?? host.playerStatus {
             CanvasTheme.chip(text,at:CGPoint(x:320,y:376),maximumWidth:600,color:errorText == nil ? CanvasTheme.text : CanvasTheme.danger,in:context)
@@ -1037,7 +1038,40 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         guard let player = screenPlayer else { return }
         if screenIsOpening || escape { leaveScreen() } else { player.acceptInput() }
     }
+    /// A settlement actor's sprite box in source map pixels.
+    private func actorRect(_ actor:ActorState) -> CGRect {
+        let v = host.stage.viewport,camera = host.stage.camera
+        return CGRect(x:v[0]+16*actor.position.x-camera[0],y:v[1]+16*actor.position.y+8*(actor.position.x&1)-24-camera[1],width:32,height:40)
+    }
+    /// The topmost actor other than the player under a point in source map pixels.
+    private func talkTarget(at point:CGPoint) -> ActorState? {
+        host.stage.actors.values.sorted{$0.registration > $1.registration}.first { $0.person != 0 && actorRect($0).contains(point) }
+    }
+    /// The person under the pointer on an idle town or palace map. Engine addition:
+    /// the window names who a click would talk to.
+    private var hoveredPerson:Int? { didSet { if hoveredPerson != oldValue { needsDisplay = true } } }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect:bounds,options:[.mouseMoved,.mouseEnteredAndExited,.activeInKeyWindow,.inVisibleRect],owner:self))
+    }
+    override func mouseMoved(with event:NSEvent) {
+        guard host.explorationInputReady,[0,2].contains(host.vm.state.packedMap>>12),!overlay.active,!fading else { hoveredPerson = nil;return }
+        var p = CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil))
+        if modernField { p = CanvasFieldMap.mapPoint(canvas:p) }
+        hoveredPerson = talkTarget(at:p).map(\.person)
+    }
+    override func mouseExited(with event:NSEvent) { hoveredPerson = nil }
+    private func drawHoverTag(in context:CGContext) {
+        guard let person = hoveredPerson,host.explorationInputReady,!overlay.active,let actor = host.stage.actors[person],
+              (0..<384).contains(person),let name = try? host.people.person(person).name,!name.isEmpty else { return }
+        let box = actorRect(actor)
+        var top = CGPoint(x:box.midX,y:box.minY-2)
+        if modernField { top = CanvasFieldMap.canvasPoint(map:top) }
+        CanvasTheme.chip(name,at:CGPoint(x:top.x,y:max(14,top.y-10)),maximumWidth:160,in:context)
+    }
     override func mouseDown(with event:NSEvent) {
+        hoveredPerson = nil
         if screenPlayer != nil { screenInput(escape:false);return }
         if fading { return }
         // MAIN1E3A8 waits for one input before main exits with code3.
@@ -1066,12 +1100,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
                     }) { try host.travel(toCity:city.id) }
                     needsDisplay = true;return
                 }
-                let actors = host.stage.actors.values.sorted{$0.registration > $1.registration}
-                if let actor = actors.first(where:{ actor in
-                    guard actor.person != 0 else { return false }
-                    let rect = CGRect(x:v[0]+16*actor.position.x-host.stage.camera[0],y:v[1]+16*actor.position.y+8*(actor.position.x&1)-24-host.stage.camera[1],width:32,height:40)
-                    return rect.contains(CGPoint(x:x,y:y))
-                }) { try host.talk(to:actor.person) }
+                if let actor = talkTarget(at:CGPoint(x:x,y:y)) { try host.talk(to:actor.person) }
                 else {
                     let gx = Int(floor((x-CGFloat(v[0])+CGFloat(host.stage.camera[0]))/16))
                     let gy = Int(floor((y-CGFloat(v[1])+CGFloat(host.stage.camera[1])-CGFloat(8*(gx&1)))/16))

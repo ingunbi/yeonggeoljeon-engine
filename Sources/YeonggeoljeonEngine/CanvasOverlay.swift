@@ -58,6 +58,8 @@ struct CanvasNotice {
     /// even without a speaker, so a picture above it stays visible.
     var narration = false
     var onDismiss:() -> Void
+    /// A spoken or narrated line that waits for input (it shows the continue mark).
+    var waitsAsLine:Bool { timeout == nil && (portrait != nil || !speaker.isEmpty || narration) }
 }
 
 /// One window that holds a whole counter visit: who speaks, a list, a detail
@@ -176,8 +178,27 @@ final class CanvasOverlayView:NSView {
         if !keepScroll { firstVisible = 0 }
         clear();parents = behind;selector = value;revealSelection();present()
     }
+    /// Engine addition: a waiting line's text appears over a moment. The first
+    /// input shows the rest at once; the next one closes the line.
+    static let revealRate = 45.0
+    private var revealStart:Date?
+    private var revealTimer:Timer?
+    private func revealed(_ text:String) -> Int {
+        guard let start = revealStart else { return text.count }
+        return min(text.count,Int(Date().timeIntervalSince(start)*Self.revealRate))
+    }
+    private var revealing:Bool { notice.map { revealed($0.text) < $0.text.count } ?? false }
+    private func stopReveal() { revealTimer?.invalidate();revealTimer = nil;revealStart = nil;needsDisplay = true }
     func show(_ value:CanvasNotice) {
         clear();notice = value;present()
+        if value.waitsAsLine,value.text.count > 1 {
+            revealStart = Date()
+            revealTimer = Timer.scheduledTimer(withTimeInterval:1.0/60,repeats:true) { [weak self] _ in
+                guard let self = self else { return }
+                self.needsDisplay = true
+                if !self.revealing { self.stopReveal() }
+            }
+        }
         guard let timeout = value.timeout else { return }
         noticeTimer = Timer.scheduledTimer(withTimeInterval:timeout,repeats:false) { [weak self] _ in self?.dismissNotice() }
     }
@@ -191,12 +212,12 @@ final class CanvasOverlayView:NSView {
     }
     private func clear() { selector = nil;notice = nil;brief = nil;terrain = nil;sheet = nil;parents = [] }
     private func present() {
-        noticeTimer?.invalidate();noticeTimer = nil
+        noticeTimer?.invalidate();noticeTimer = nil;revealTimer?.invalidate();revealTimer = nil;revealStart = nil
         isHidden = false;needsDisplay = true
         window?.makeFirstResponder(self)
     }
     private func close() {
-        noticeTimer?.invalidate();noticeTimer = nil
+        noticeTimer?.invalidate();noticeTimer = nil;stopReveal()
         clear();needsDisplay = true
         restoreFocus?()
     }
@@ -211,11 +232,12 @@ final class CanvasOverlayView:NSView {
     }
     private func dismissNotice() {
         guard let value = notice else { return }
+        if revealing { stopReveal();return }
         close();value.onDismiss()
     }
-    /// Fast-forward closes a plain line as a key press would. Questions and
-    /// lists still wait for an answer.
-    func skipNotice() { dismissNotice() }
+    /// Fast-forward closes a plain line as a key press would, revealed or not.
+    /// Questions and lists still wait for an answer.
+    func skipNotice() { stopReveal();dismissNotice() }
     private func dismissBrief() {
         guard let value = brief else { return }
         close();value.onDismiss()
@@ -540,9 +562,15 @@ final class CanvasOverlayView:NSView {
                 withAttributes:CanvasTheme.attributes(CanvasTheme.font(12,.semibold),CanvasTheme.accent))
         }
         let top = value.speaker.isEmpty ? (value.portrait == nil ? rect.minY+14 : rect.minY+18) : rect.minY+30
-        (value.text as NSString).draw(with:CGRect(x:textX,y:top,width:rect.maxX-textX-18,height:rect.maxY-top-6),
-                                      options:[.usesLineFragmentOrigin],attributes:attributes())
-        if value.timeout == nil,value.portrait != nil || !value.speaker.isEmpty || value.narration {
+        // Unrevealed characters are laid out but clear, so lines never re-wrap.
+        let text = NSMutableAttributedString(string:value.text,attributes:attributes())
+        let shown = revealed(value.text)
+        if shown < value.text.count {
+            let start = value.text.index(value.text.startIndex,offsetBy:shown)
+            text.addAttribute(.foregroundColor,value:NSColor.clear,range:NSRange(start...,in:value.text))
+        }
+        text.draw(with:CGRect(x:textX,y:top,width:rect.maxX-textX-18,height:rect.maxY-top-6),options:[.usesLineFragmentOrigin])
+        if value.waitsAsLine,shown >= value.text.count {
             CanvasTheme.continueMark(at:CGPoint(x:rect.maxX-16,y:rect.maxY-13),in:context)
         }
     }
