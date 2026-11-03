@@ -70,8 +70,8 @@ itself shows no prologue. A load reaches the map through the same `C456`.
 
 `tools/menu_windows.py` checks the four calls and the frame style, computes each window
 with the rules above and draws frame, pattern, buttons and bevels from MARK into local
-pictures with palette slot 0. The labels stay with the window, which draws them in the
-system font: MAIN's font is not restored.
+pictures with palette slot 0. The window draws the labels in MAIN's own glyphs
+([MAIN's text](original-main-font.md)) at MAIN's columns.
 
 - After the opening, or at once without an intact opening, the menu opens.
 - In the original frames the title is black with MAIN's windows. Options and their
@@ -86,7 +86,7 @@ system font: MAIN's font is not restored.
 
 ## Not restored or not checked
 
-- MAIN's font, the pressed look and the mouse cursor shape.
+- The pressed look and the mouse cursor shape.
 - The palace loader's own present and fade after the first map is chosen.
 - The 59.94 Hz retrace rate, and how long the disk reads took.
 - The engine plays effect 1 on a cancel; MAIN plays none.

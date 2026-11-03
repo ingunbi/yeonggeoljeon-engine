@@ -26,7 +26,11 @@ struct CanvasMenu {
     /// hangs from this point by its top centre instead.
     var anchor:CGPoint? = nil
     /// MAIN's own window picture and its button rectangles, in canvas pixels.
-    struct Art { var image:CGImage; var frame:CGRect; var buttons:[CGRect]; var text:NSColor; var disabled:NSColor }
+    struct Art {
+        var image:CGImage; var frame:CGRect; var buttons:[CGRect]; var text:NSColor; var disabled:NSColor
+        /// MAIN's glyphs for a label (enabled or not), 16 pixels high.
+        var label:((String,Bool) -> CGImage?)? = nil
+    }
     enum Style { case panel,title,window(Art) }
     /// `.title` sets larger rows straight over a picture, on a soft band;
     /// `.window` labels the buttons of an original window picture.
@@ -335,14 +339,20 @@ final class CanvasOverlayView:NSView {
         context.move(to:CGPoint(x:box.minX+3.5,y:box.midY));context.addLine(to:CGPoint(x:box.midX-1,y:box.maxY-4))
         context.addLine(to:CGPoint(x:box.maxX-3.5,y:box.minY+4));context.strokePath()
     }
-    /// The labels are centred on each button (CF5:1AC8) in the system font; the
-    /// outline marking the keyboard row is an engine addition.
+    /// Each label starts at column x/8 + (w/8 − bytes)/2 of its button (CF5:1AC8),
+    /// in MAIN's glyphs when the data has them; the outline marking the
+    /// keyboard row is an engine addition.
     private func drawWindowMenu(_ value:CanvasMenu,art:CanvasMenu.Art,in context:CGContext) {
         Renderer.image(art.image,in:art.frame,context:context)
         for (index,rect) in layout(value).options {
             let option = value.options[index]
-            let style = CanvasTheme.attributes(CanvasTheme.font(13,.bold),option.enabled ? art.text : art.disabled,alignment:.center)
-            (option.label as NSString).draw(in:CGRect(x:rect.minX,y:rect.midY-9,width:rect.width,height:18),withAttributes:style)
+            if let picture = art.label?(option.label,option.enabled) {
+                let column = max(0,(Int(rect.width)/8-OriginalFont.bytes(option.label).count)/2)
+                Renderer.image(picture,in:CGRect(x:rect.minX+CGFloat(8*column),y:rect.minY,width:CGFloat(picture.width),height:CGFloat(picture.height)),context:context)
+            } else {
+                let style = CanvasTheme.attributes(CanvasTheme.font(13,.bold),option.enabled ? art.text : art.disabled,alignment:.center)
+                (option.label as NSString).draw(in:CGRect(x:rect.minX,y:rect.midY-9,width:rect.width,height:18),withAttributes:style)
+            }
             if index == value.selected {
                 context.setStrokeColor(CanvasTheme.accentFill);context.setLineWidth(1.5)
                 context.stroke(rect.insetBy(dx:-3.5,dy:-3.5))

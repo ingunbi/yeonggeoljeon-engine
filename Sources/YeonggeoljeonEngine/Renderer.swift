@@ -32,6 +32,8 @@ final class Renderer {
     private var images: [String: CGImage] = [:]
     private var frames: [String: CGImage] = [:]
     private let font = NSFont(name:"Apple SD Gothic Neo",size:14) ?? NSFont.systemFont(ofSize:14)
+    /// MAIN's glyphs for the HUD; nil for data sets without the font export.
+    private lazy var mainFont = OriginalFont.load(data)
     init(_ data: DataSet) throws {
         self.data = data
         if let path = data.resources.title {
@@ -125,8 +127,18 @@ final class Renderer {
         return RenderedFrame(image:picture,checksum:"",actors:[])
     }
     /// Right-aligns a MAIN printf field ("%5u", "%6s") in its 8-pixel cells.
-    private func hudText(_ value:String,_ field:OriginalHUDField?) {
+    /// CF5:0F18 at a HUD cursor: `%Nu`/`%Ns` pad on the left to N bytes, and the
+    /// glyphs print in colour 7, white in every palette slot (mode 4).
+    private func mainText(_ value:String,at origin:[Int],width:Int?,context:CGContext) -> Bool {
+        guard let font = mainFont,origin.count == 2 else { return false }
+        let pad = width.map { max(0,$0-OriginalFont.bytes(value).count) } ?? 0
+        guard let picture = font.picture(value,red:255,green:255,blue:255) else { return true }
+        Self.image(picture,in:CGRect(x:origin[0]+8*pad,y:origin[1],width:picture.width,height:picture.height),context:context)
+        return true
+    }
+    private func hudText(_ value:String,_ field:OriginalHUDField?,context:CGContext) {
         guard let field = field,let origin = field.text,origin.count == 2 else { return }
+        if mainText(value,at:origin,width:field.format.flatMap { Int($0.filter(\.isNumber)) },context:context) { return }
         let digits = field.format.flatMap { Int($0.filter(\.isNumber)) } ?? max(1,(field.rect[0]+field.rect[2]-origin[0])/8)
         let width = CGFloat(max(digits*8,8))
         let paragraph = NSMutableParagraphStyle();paragraph.alignment = field.format?.hasSuffix("s") == true && digits == 0 ? .left : .right
@@ -213,10 +225,11 @@ final class Renderer {
                 let portrait = try load(path)
                 Self.image(portrait,in:CGRect(x:rect[0],y:rect[1],width:min(portrait.width,rect[2]),height:min(portrait.height,rect[3])),context:context)
             }
-            if let value = screen.money { hudText(String(value),screen.hud["money"]) }
-            if let value = screen.level { hudText(String(value),screen.hud["level"]) }
-            if let value = screen.territory { hudText(value,screen.hud["territory"]) }
-            if let caption = runtime.caption,let box = screen.hud["caption"],let origin = box.text {
+            if let value = screen.money { hudText(String(value),screen.hud["money"],context:context) }
+            if let value = screen.level { hudText(String(value),screen.hud["level"],context:context) }
+            if let value = screen.territory { hudText(value,screen.hud["territory"],context:context) }
+            if let caption = runtime.caption,let box = screen.hud["caption"],let origin = box.text,
+               !mainText(caption,at:origin,width:nil,context:context) {
                 text(caption,rect:CGRect(x:origin[0],y:origin[1]-1,width:box.rect[0]+box.rect[2]-origin[0],height:18),size:13)
             }
         } else if runtime.mode != "title", let caption = runtime.caption {

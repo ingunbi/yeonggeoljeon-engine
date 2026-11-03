@@ -334,6 +334,45 @@ def battle_layout(panel_size: tuple[int, int]) -> dict:
             "followMargin": 6}
 
 
+# CF5:0D44 (0x14694) opens these by name for every glyph (DS:0DD8, DS:0AC0).
+FONT_NAMES = {0xDD8: b"A:ALL_FONT.16P\0", 0xAC0: b"A:hankaku.fnt\0"}
+HANGUL_RECORD, HANGUL_ROWS, HANGUL_RECORDS = 30, 14, 3478
+ASCII_ROWS, ASCII_CODES = 16, 96
+
+
+def main_font(main: bytes, selected: dict, palettes: dict, output: Path) -> dict:
+    """MAIN's glyph files for native text, kept local, with their record shape.
+
+    A Hangul record is a two-byte identity and fourteen two-byte rows (offset
+    30*idx + 2, 0x146D3); a one-byte code has sixteen rows (16*idx, 0x14739).
+    putc (0x1437E) takes leads A1..C8 with trails A1..FE. Glyphs draw in mode 4:
+    set pixels take the foreground, colour 7 on the HUD and labels.
+    """
+    for offset, name in FONT_NAMES.items():
+        if main[0x37DA0 + offset:0x37DA0 + offset + len(name)] != name:
+            raise ResourceError("MAIN does not name the examined font files")
+    hangul, ascii_font = selected["ALL_FONT.16P"][0], selected["HANKAKU.FNT"][0]
+    if len(hangul) != HANGUL_RECORD * HANGUL_RECORDS or len(ascii_font) != ASCII_ROWS * ASCII_CODES:
+        raise ResourceError("font files do not have the examined record counts")
+    # The identity of each record is its own KS code, low byte first.
+    for index in (0, 1, 94, 1128, HANGUL_RECORDS - 1):
+        row = index // 94
+        high = row + (0xA1 if row < 12 else 0xA4)
+        if hangul[index * HANGUL_RECORD:index * HANGUL_RECORD + 2] != bytes([0xA1 + index % 94, high]):
+            raise ResourceError("ALL_FONT.16P record identities do not follow the examined index")
+    (output / "fonts").mkdir(parents=True, exist_ok=True)
+    files = {}
+    for key, name in (("hangul", "ALL_FONT.16P"), ("ascii", "HANKAKU.FNT")):
+        relative = f"fonts/{name}"
+        (output / relative).write_bytes(selected[name][0])
+        files[key] = {"path": relative, "sha256": hashlib.sha256(selected[name][0]).hexdigest()}
+    return {**files, "hangulRecord": HANGUL_RECORD, "hangulRows": HANGUL_ROWS, "asciiRows": ASCII_ROWS,
+            "leads": [0xA1, 0xC8], "trails": [0xA1, 0xFE],
+            "colour7": {str(slot): list(colors[7]) for slot, colors in palettes.items()},
+            "source": {"lookup": "MAIN.EXE:0x14694..0x14751", "putc": "MAIN.EXE:0x1437E..0x14663",
+                       "glyph": "MAIN.EXE:0x14774..0x14854"}}
+
+
 def battle_parts(selected: dict, palette: list, output: Path) -> dict:
     hexgrp = Archive(selected["HEXGRP.R3"][0], "HEXGRP.R3").decode(0)
     mark = Archive(selected["MARK.R3"][0], "MARK.R3").decode(0)
@@ -359,7 +398,8 @@ def prepare(game: Path, output: Path) -> dict:
     if output == game or game in output.parents:
         raise ResourceError("story output must be outside the selected original directory")
     before = inventory(game)
-    selected = {name: read_resource(game, name) for name in ("MAIN.EXE", "TFDED.COM", "PACKGRP.R3", "FACEDAT.R3", "MARK.R3", "HEXGRP.R3")}
+    selected = {name: read_resource(game, name) for name in ("MAIN.EXE", "TFDED.COM", "PACKGRP.R3", "FACEDAT.R3", "MARK.R3", "HEXGRP.R3",
+                                                              "ALL_FONT.16P", "HANKAKU.FNT")}
     main = selected["MAIN.EXE"][0]
     if hashlib.sha256(main).hexdigest() != EXAMINED_MAIN:
         raise ResourceError("MAIN does not match the examined original story layout")
@@ -432,6 +472,7 @@ def prepare(game: Path, output: Path) -> dict:
         (output / relative).write_bytes(png_bytes(picture, palettes[0]))
         menus[name] = {**facts, "image": relative}
     # CF5:1AC8 prints labels in colour 7, or colour 2 when the item is disabled.
+    screens["font"] = main_font(main, selected, palettes, output)
     screens["menus"] = {"windows": menus, "text": list(palettes[0][7]), "disabled": list(palettes[0][2]),
                         "source": {**mark.provenance(), "palette": "DS:1050 slot 0"}}
     result = {"format": 1, "assets": assets, "portraitAssets": portraits, "choiceButtons": buttons, "layouts": layouts,

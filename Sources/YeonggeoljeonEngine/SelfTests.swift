@@ -90,6 +90,16 @@ func selfTests() throws {
     try check(fading.trace.contains { $0.operation == "caption" && $0.textSource != nil },"caption provenance survives the runtime")
     fading.advance(microseconds:100_000)
     try check(fading.verifiedBoundary && fading.blackAlpha == 1,"fade completes at the exact boundary")
+    // MAIN's glyphs (CF5:0A2E, 0D44): a syllable is two columns of 14 rows, a byte one of 16.
+    var hangul = Data(count:3478*30),ascii = Data(count:96*16)
+    hangul[1128*30+2] = 0x80;hangul[1128*30+3] = 0x01
+    ascii[33*16] = 0x80
+    let font = try OriginalFont(hangul:hangul,ascii:ascii)
+    try check(OriginalFont.bytes("가A") == [0xB0,0xA1,0x41],"text becomes the CP949 bytes MAIN keeps")
+    let cells = OriginalFont.cells([0xB0,0xA1,0x41,0x0A,0xCA,0xD0])
+    try check(cells.map(\.column) == [0,2,3,4] && cells.map(\.code) == [0xB0A1,0x41,0xCA,0xD0],"leads A1..C8 pair, others print alone, controls vanish")
+    try check(font.rows(0xB0A1)[0] == 0x8001 && font.rows(0xB0A1).count == 14 && font.rows(0x41) == [0x8000]+Array(repeating:0,count:15),"glyph rows come from the record after its identity")
+    try check(OriginalFont.columns("가A") == 3 && font.picture("가A",red:255,green:255,blue:255)?.width == 24,"a picture is eight pixels a column")
     // Source 0B/0E boxes (MAIN3C5E mode0) close by themselves; narration waits.
     let boxes = Runtime(try data([Command("map",map:8192),Command("say",text:"box",seconds:0.5),Command("say",text:"line"),
                                   Command("say",text:"again",seconds:0.5),Command("end")]))

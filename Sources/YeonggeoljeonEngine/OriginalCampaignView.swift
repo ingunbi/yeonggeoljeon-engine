@@ -183,6 +183,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     /// 0.53 s each at 59.94 Hz. The source does nothing else meanwhile.
     static let screenFadeSeconds = 32/59.94
     private var lastPicture:CGImage?
+    private lazy var mainFont = OriginalFont.load(host.data)
     private var fadeLevel = 0.0
     private var fadeRising = false
     private var fadeMidpoint:(() -> Void)?
@@ -670,8 +671,13 @@ final class OriginalCampaignView:NSView,EngineTimedView {
               let window = menus.windows[name],window.window.count == 4,window.buttons.allSatisfy({ $0.count == 4 }),
               menus.text.count == 3,menus.disabled.count == 3,let picture = image(window.image) else { return nil }
         func color(_ value:[Int]) -> NSColor { NSColor(red:CGFloat(value[0])/255,green:CGFloat(value[1])/255,blue:CGFloat(value[2])/255,alpha:1) }
+        let font = mainFont,text = menus.text.map(UInt8.init),disabled = menus.disabled.map(UInt8.init)
         return .window(.init(image:picture,frame:OriginalBattleLayout.rect(window.window),buttons:window.buttons.map(OriginalBattleLayout.rect),
-                             text:color(menus.text),disabled:color(menus.disabled)))
+                             text:color(menus.text),disabled:color(menus.disabled),
+                             label:font.map { font in { label,enabled in
+                                 let rgb = enabled ? text : disabled
+                                 return font.picture(label,red:rgb[0],green:rgb[1],blue:rgb[2])
+                             } }))
     }
     /// The engine layout sets the rows between the logo and the copyright line
     /// of the opening's title picture; the original frames use MAIN's window.
