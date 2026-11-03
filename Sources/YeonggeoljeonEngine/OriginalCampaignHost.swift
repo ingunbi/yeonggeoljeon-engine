@@ -864,6 +864,9 @@ final class OriginalCampaignHost {
     }
     private func loadSelectedMap(_ request:CampaignVMMapRequest) throws {
         try constructCitiesIfNeeded()
+        // After a battle C456 fades the battle screen out first (0x1E36A), so the
+        // field map the stage kept from before the battle never shows again.
+        if stage.palette == 3,request.packedMap>>12 != 3 { stage.cutToBlack() }
         try vm.selectScriptMap(packedMap:request.packedMap)
         try vm.enterMapContext(packedMap:request.packedMap)
         try stage.setPalette(request.packedMap>>12)

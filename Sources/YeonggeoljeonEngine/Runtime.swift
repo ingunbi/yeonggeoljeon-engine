@@ -208,6 +208,9 @@ struct Snapshot: Codable, Equatable {
 }
 struct OriginalStoryPanel:Codable,Equatable {
     var image:String; var mode:Int; var source:JSONValue?
+    /// A closed mode-0 panel stays on screen: CF5:CE78 restores nothing,
+    /// so it lasts until a redraw (2C) or a map present.
+    var closed:Bool? = nil
 }
 enum Termination: String, Codable { case sourceBoundary, unsupportedBoundary, runtimeFailure, unexpectedEOF }
 struct CommandSnapshot: Codable, Equatable {
@@ -362,7 +365,20 @@ final class Runtime {
         if mode == 0 { visible = false }
         storyPanel = OriginalStoryPanel(image:image,mode:mode,source:source)
     }
-    func closeStory() { storyPanel = nil }
+    func closeStory() {
+        if storyPanel?.mode == 0 { storyPanel?.closed = true } else { storyPanel = nil }
+    }
+    /// True while a map change fades the previous screen out.
+    private(set) var leaving = false
+    /// The screen another owner already faded (a battle) stays black until a show.
+    func cutToBlack() { blackAlpha = 1 }
+    /// GRPDRV function 16h: sixteen steps of two vertical retraces, about
+    /// 0.53 s at 59.94 Hz, whatever the start and target.
+    static let screenFadeMicroseconds:Int64 = 533_867
+    private func startFade(to target:Double) {
+        fadeDuration = Self.screenFadeMicroseconds;fadeRemaining = fadeDuration
+        fadeStart = blackAlpha;fadeTarget = target
+    }
     private func centerWorldCamera(_ point:GridPoint) throws {
         guard let map = currentMap,map.width/16 >= 32,map.height/16 >= 20 else { throw EngineError.invalid("Original world viewport exceeds its picture dimensions") }
         camera = Self.worldCameraOrigin(point,width:map.width/16,height:map.height/16)
@@ -463,23 +479,41 @@ final class Runtime {
                 case "map":
                     let id = try required(c.map, "map")
                     guard hostMaps[id] != nil || data.resources.maps[String(id)] != nil else { throw EngineError.invalid("Map resource is unavailable: \(id)") }
+                    // MAIN loads the next map offscreen; its present fades the shown
+                    // screen to black first (CF5:CAD8(0), E4E4, 1CB6:1210). The new
+                    // state applies now, so host reads see it; a window keeps the old
+                    // picture while `leaving`.
+                    if hostDriven,blackAlpha < 1 { leaving = true;startFade(to:1) }
+                    if storyPanel?.closed == true { storyPanel = nil }
                     mapID = id; actors.removeAll(); camera = [0,0]; registration = 0;followPerson = nil
                     try setPalette(id>>12)
                     // Only source 0D writes the HUD caption DS:DB4C; a map keeps it.
                     visible = false; record(index,c)
-                case "show": visible = true; record(index,c)
+                case "show":
+                    // Source 05 (CF5:987C -> CAD8(1)): a hidden screen is redrawn, then fades in.
+                    visible = true; record(index,c)
+                    if hostDriven,blackAlpha > 0 { startFade(to:0) }
                 case "caption":
                     guard let text = c.text else { throw EngineError.invalid("Caption text is missing") }
                     caption = text; record(index,c,text)
-                case "redraw": dialogue = nil; record(index,c)
+                case "redraw":
+                    dialogue = nil; if storyPanel?.closed == true { storyPanel = nil }
+                    record(index,c)
                 case "place":
                     guard currentMap != nil else { throw EngineError.invalid("Place without a map") }
                     let person = try required(c.person,"person"), p = try point(c)
                     guard actorResource(person) != nil else { throw EngineError.invalid("Actor resource is unavailable: \(person)") }
                     try validateGridPosition(p)
                     let slot = actors[person]?.registration ?? registration
+                    let first = actors[person] == nil && registration == 0
                     if actors[person] == nil { registration += 1 }
                     actors[person] = ActorState(person: person, position: p, facing: try facing(c), phase: 0, registration: slot, walking: false)
+                    // MAIN21FB4: the first actor spawned on the world centres the
+                    // camera (E818(0)) when it lies outside the 33×21 tile window.
+                    if hostDriven,first,currentMap?.geometry == "world" {
+                        let x = p.x-camera[0]/16,y = p.y-camera[1]/16
+                        if !(0...32).contains(x) || !(0...20).contains(y) { try centerWorldCamera(p) }
+                    }
                     record(index,c,"grid=\(p.x),\(p.y)")
                 case "move":
                     var moves = [(index,c)]
@@ -563,7 +597,7 @@ final class Runtime {
                 let used = min(available,fadeRemaining); guard advanceClock(used) else { return }
                 fadeRemaining -= used; available -= used
                 blackAlpha = fadeStart + (fadeTarget-fadeStart) * Double(fadeDuration-fadeRemaining) / Double(fadeDuration)
-                if fadeRemaining == 0 { pump() }
+                if fadeRemaining == 0 { leaving = false; pump() }
             } else { pump(); if !busy { break } }
         }
     }

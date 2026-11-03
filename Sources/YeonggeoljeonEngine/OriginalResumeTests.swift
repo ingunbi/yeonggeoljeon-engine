@@ -23,7 +23,7 @@ func originalResumeSelfTests() throws {
     try original.configureMap(packed,resource:resource,actors:banks);try original.setPalette(2)
     try original.enqueue([Command("map",map:packed),Command("place",person:0,x:1,y:1,facing:1),
                           Command("place",person:1,x:3,y:3,facing:2),Command("show")])
-    original.advance(microseconds:1000)
+    original.advance(microseconds:2*Runtime.screenFadeMicroseconds)  // fade out, then the show fades in
     let saved = original.snapshot()
     try check(original.hostWaiting && saved.actors.count == 2 && saved.visible, "synthetic stage settles before the save point")
     func fresh() throws -> Runtime {

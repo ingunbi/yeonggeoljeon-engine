@@ -31,6 +31,7 @@ func originalExplorationInputSelfTests() throws {
         let actor = ActorResource(image:"actor.png",frameWidth:32,frameHeight:40,frames:8,anchorX:0,anchorY:24,
             directions:(0..<8).map{Direction(frame:($0/2)*2,flip:false)})
         try stage.configureMap(packed,resource:resource,actors:["0":actor,"1":actor,"2":actor,"374":actor]);try stage.enqueue([Command("map",map:packed)])
+        stage.advance(microseconds:Runtime.screenFadeMicroseconds)  // the map change fades out first
         return stage
     }
     var state = OriginalCampaignState();state.packedMap = 0x1000;state.currentCity = 0;state.cityFlags = [3,3,3];state.cityFlagsChapter = 0

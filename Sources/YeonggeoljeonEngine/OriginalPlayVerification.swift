@@ -159,6 +159,8 @@ struct OriginalPlayObservation: Codable {
     var frame: String
     var money: Int?
     var shopText: String?
+    /// The live random state (the battle's while one runs), for finding where two runs part.
+    var rng: UInt32? = nil
 }
 struct OriginalPlayVerification: Codable {
     var format = 1
@@ -256,7 +258,7 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
             choiceID: host.choice?.id, savePending: host.saveRequest != nil, partyPending: host.partySelection != nil,
             battleID: host.stage.palette == 3 ? host.battle?.definition.id : nil,
             battleStage: host.stage.palette == 3 ? host.battle?.turns.stage : nil, frame: name,
-            money: host.money, shopText: host.shopPrompt?.text))
+            money: host.money, shopText: host.shopPrompt?.text, rng: (host.battle?.rng ?? host.rng).state))
     }
     do {
         if resumeURL == nil { try host.acknowledge() }

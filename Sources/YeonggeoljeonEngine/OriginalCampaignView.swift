@@ -182,6 +182,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     /// back in: GRPDRV function 16h, sixteen steps of two retraces, about
     /// 0.53 s each at 59.94 Hz. The source does nothing else meanwhile.
     static let screenFadeSeconds = 32/59.94
+    private var lastPicture:CGImage?
     private var fadeLevel = 0.0
     private var fadeRising = false
     private var fadeMidpoint:(() -> Void)?
@@ -953,8 +954,16 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         let blankTitle = !host.hasStarted && host.ending == nil && CanvasPresentation.current == .original
         if !blankTitle {
             do {
-                let frame = try host.ending.map { try renderer.renderEnding($0) } ?? renderer.render(host.stage,screen:screen,dialogue:false)
-                Renderer.image(modern ? frame.image.cropping(to:CanvasFieldMap.viewport) ?? frame.image : frame.image,in:shape.rect,context:context)
+                // While a map change fades out, the old map stays on screen (MAIN
+                // loads the next one offscreen), so the last picture is kept.
+                if host.stage.leaving,let picture = lastPicture {
+                    Renderer.image(picture,in:shape.rect,context:context)
+                    context.setFillColor(CGColor(gray:0,alpha:host.stage.blackAlpha));context.fill(shape.rect)
+                } else {
+                    let frame = try host.ending.map { try renderer.renderEnding($0) } ?? renderer.render(host.stage,screen:screen,dialogue:false)
+                    let picture = modern ? frame.image.cropping(to:CanvasFieldMap.viewport) ?? frame.image : frame.image
+                    Renderer.image(picture,in:shape.rect,context:context);lastPicture = picture
+                }
             } catch { errorText = "\(error)" }
         }
         if endingFade > 0 {
