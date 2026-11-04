@@ -1095,6 +1095,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         }
         context.saveGState()
         context.translateBy(x:shape.origin.x,y:shape.origin.y);context.scaleBy(x:shape.scale,y:shape.scale)
+        if screen != nil { drawWorldGuides(in:context);drawWalkMarker(in:context) }
         // A sheet carries its own money and covers this corner.
         if modern,overlay.sheet == nil,let screen = screen { drawFieldHUD(screen,in:context) }
         if screen != nil { drawHoverTag(in:context) }
@@ -1166,12 +1167,89 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     override func mouseMoved(with event:NSEvent) {
         let world = host.explorationInputReady && host.vm.state.packedMap>>12 == 1 && !overlay.active && !fading
         edgeScroll = world ? edgeDirection(CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil))) : nil
+        // A city or a person the pointer can act on shows the pointing hand.
+        defer { (hoveredCity != nil || hoveredPerson != nil ? NSCursor.pointingHand : NSCursor.arrow).set() }
+        var cityHit:Int?
+        if world {
+            var p = CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil))
+            if modernField { p = CanvasFieldMap.mapPoint(canvas:p) }
+            cityHit = selectableCities.first { cityRect($0)?.contains(p) == true }?.id
+        }
+        if cityHit != hoveredCity { hoveredCity = cityHit;needsDisplay = true }
         guard host.explorationInputReady,[0,2].contains(host.vm.state.packedMap>>12),!overlay.active,!fading else { hoveredPerson = nil;return }
         var p = CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil))
         if modernField { p = CanvasFieldMap.mapPoint(canvas:p) }
         hoveredPerson = talkTarget(at:p).map(\.person)
     }
-    override func mouseExited(with event:NSEvent) { hoveredPerson = nil;edgeScroll = nil }
+    override func mouseExited(with event:NSEvent) { hoveredPerson = nil;hoveredCity = nil;edgeScroll = nil }
+    // Engine guides over the field: the cities the player can pick now, the
+    // march to the one under the pointer, and where a town click is walking.
+    private var hoveredCity:Int?
+    private var walkMarker:(point:GridPoint,start:Date)?
+    /// Cities the native flags let the player pick (flags&3 == 3, as a world city input requires).
+    private var selectableCities:[OriginalCity] {
+        let state = host.vm.state
+        guard state.packedMap>>12 == 1,let flags = state.cityFlags,state.cityFlagsChapter == state.chapter else { return [] }
+        return host.exploration.destinations(chapter:state.chapter,flags:flags)
+    }
+    /// A city's 32-pixel icon cell in map pixels, as the click test uses it.
+    private func cityRect(_ city:OriginalCity) -> CGRect? {
+        guard let cx = city.worldX,let cy = city.worldY else { return nil }
+        let v = host.stage.viewport,camera = host.stage.camera
+        return CGRect(x:v[0]+cx*32-camera[0],y:v[1]+cy*32-camera[1],width:32,height:32)
+    }
+    private func canvasPoint(map point:CGPoint) -> CGPoint { modernField ? CanvasFieldMap.canvasPoint(map:point) : point }
+    private func canvasRect(map rect:CGRect) -> CGRect {
+        let a = canvasPoint(map:rect.origin),b = canvasPoint(map:CGPoint(x:rect.maxX,y:rect.maxY))
+        return CGRect(x:a.x,y:a.y,width:b.x-a.x,height:b.y-a.y)
+    }
+    private func drawWorldGuides(in context:CGContext) {
+        guard host.vm.state.packedMap>>12 == 1,host.explorationInputReady,host.stage.visible,!host.stage.leaving else { return }
+        let cities = selectableCities
+        guard !cities.isEmpty else { return }
+        context.saveGState()
+        context.clip(to:modernField ? CGRect(x:0,y:0,width:640,height:400) : CanvasFieldMap.viewport)
+        let v = host.stage.viewport,camera = host.stage.camera
+        func cell(_ point:GridPoint) -> CGPoint {
+            canvasPoint(map:CGPoint(x:v[0]+16*point.x+16-camera[0],y:v[1]+16*point.y+16-camera[1]))
+        }
+        // The march the source would plan to the hovered city (MAIN25D9E route).
+        if let id = hoveredCity,
+           let plan = try? OriginalExplorationInput.worldCity(catalog:host.exploration,state:host.vm.state,stage:host.stage,cityID:id,enabled:true) {
+            var points = plan.route.map { cell($0.position) }
+            if let player = host.stage.actors[plan.playerPerson] { points.insert(cell(player.position),at:0) }
+            if points.count > 1 {
+                context.setLineCap(.round);context.setLineJoin(.round)
+                context.setStrokeColor(CGColor(gray:0,alpha:0.45));context.setLineWidth(5)
+                context.addLines(between:points);context.strokePath()
+                context.setStrokeColor(CGColor(gray:1,alpha:0.92));context.setLineWidth(2.5);context.setLineDash(phase:0,lengths:[1,6])
+                context.addLines(between:points);context.strokePath();context.setLineDash(phase:0,lengths:[])
+            }
+        }
+        for city in cities {
+            guard let icon = cityRect(city).map(canvasRect) else { continue }
+            let hovered = city.id == hoveredCity
+            if hovered { CanvasTheme.stroke(icon.insetBy(dx:-2,dy:-2),CanvasTheme.accentFill,radius:6,in:context) }
+            let style = CanvasTheme.attributes(CanvasTheme.font(10,.semibold),hovered ? CanvasTheme.onAccent : CanvasTheme.text,alignment:.center)
+            let width = ceil((city.name as NSString).size(withAttributes:style).width)+12
+            let tag = CGRect(x:icon.midX-width/2,y:icon.maxY+1,width:width,height:15).integral
+            CanvasTheme.fill(tag,hovered ? CanvasTheme.accentFill : CGColor(red:0.07,green:0.08,blue:0.11,alpha:0.82),radius:7.5,in:context)
+            (city.name as NSString).draw(in:tag.offsetBy(dx:0,dy:1),withAttributes:style)
+        }
+        context.restoreGState()
+    }
+    /// A ring under the cell a town click sent the player to, fading out.
+    private func drawWalkMarker(in context:CGContext) {
+        guard let marker = walkMarker else { return }
+        let age = Date().timeIntervalSince(marker.start)
+        guard age < 0.7,host.vm.state.packedMap>>12 != 1 else { walkMarker = nil;return }
+        let v = host.stage.viewport,camera = host.stage.camera,p = marker.point
+        let foot = canvasPoint(map:CGPoint(x:v[0]+16*p.x+16-camera[0],y:v[1]+16*p.y+8*(p.x&1)+12-camera[1]))
+        let grow = CGFloat(1+age*0.6),alpha = CGFloat(1-age/0.7)
+        let ring = CGRect(x:foot.x-11*grow,y:foot.y-5.5*grow,width:22*grow,height:11*grow)
+        context.setStrokeColor(CanvasTheme.accentFill.copy(alpha:alpha) ?? CanvasTheme.accentFill);context.setLineWidth(2)
+        context.strokeEllipse(in:ring)
+    }
     private func drawHoverTag(in context:CGContext) {
         guard let person = hoveredPerson,host.explorationInputReady,!overlay.active,let actor = host.stage.actors[person],
               (0..<384).contains(person),let name = try? host.people.person(person).name,!name.isEmpty else { return }
@@ -1215,6 +1293,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
                     let gx = Int(floor((x-CGFloat(v[0])+CGFloat(host.stage.camera[0]))/16))
                     let gy = Int(floor((y-CGFloat(v[1])+CGFloat(host.stage.camera[1])-CGFloat(8*(gx&1)))/16))
                     try host.walk(to:GridPoint(x:gx,y:gy))
+                    walkMarker = (GridPoint(x:gx,y:gy),Date())
                 }
             } else { try host.acknowledge() }
         } catch { recordInputError(error) }
