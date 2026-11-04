@@ -193,6 +193,12 @@ final class OriginalBattleSession {
             return field.value(point) != 255 && (board.occupant(point) == nil || point == actor.position) ? point : nil
         }}
     }
+    /// The route `move` would walk, without moving: the window's preview.
+    func route(_ slot:Int,to point:GridPoint) throws -> [GridPoint] {
+        let board = try board()
+        guard let actor = board.actors.first(where:{$0.runtimeSlot == slot}) else { return [] }
+        return try OriginalMovement.route(profile:movement,board:board,moving:actor,to:point,budget:movementBudget(slot))
+    }
     @discardableResult
     func move(_ slot:Int,to point:GridPoint) throws -> [GridPoint] {
         let unit = try live(slot)

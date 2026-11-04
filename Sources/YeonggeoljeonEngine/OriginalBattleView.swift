@@ -344,8 +344,8 @@ final class OriginalBattleView:NSView {
         let notice:() -> Void = { [weak self] in
             guard let self = self else { return }
             // MAIN28139 names the turn and its weather before the side's line.
-            let round = self.session.turns.roundIndex+1,weather = self.session.turns.weatherIndex
-            self.play([.notice(.turn(round:round,weather:Int(weather)))]) { [weak self] in
+            let round = self.session.turns.roundIndex+1
+            self.play([.notice(.turn(round:round,weather:self.weatherClass))]) { [weak self] in
                 guard let text = self?.style.commands?.conditions.playerPhase else { return }
                 self?.say(text)
             }
@@ -904,28 +904,26 @@ final class OriginalBattleView:NSView {
         if showsThreat { drawThreat(context,rect:rect) }
         var rangeSlot = previewSlot
         if case .moving(let slot) = phase { rangeSlot = slot }
-        if let slot = rangeSlot,let cells = try? session.reachable(slot) {
-            for point in Set(cells) { NSColor(calibratedRed:0.2,green:0.6,blue:1,alpha:0.25).setFill();rect(point).fill() }
+        let modern = presentation == .modern
+        func region(_ cells:Set<GridPoint>,_ tint:Tint) {
+            if modern { drawRegion(cells,tint,context,rect:rect);return }
+            for point in cells { NSColor(calibratedRed:tint.red,green:tint.green,blue:tint.blue,alpha:tint.alpha).setFill();rect(point).fill() }
         }
-        if case .attackTarget(let slot) = phase,let cells = try? attackCells(slot) {
-            for point in cells { NSColor(calibratedRed:1,green:0.25,blue:0.2,alpha:0.3).setFill();rect(point).fill() }
-        }
-        if case .giveTarget(let slot,_) = phase,let cells = try? giveCells(slot) {
-            for point in cells { NSColor(calibratedRed:0.1,green:1,blue:0.7,alpha:0.3).setFill();rect(point).fill() }
-        }
+        if let slot = rangeSlot,let cells = try? session.reachable(slot) { region(Set(cells),Self.moveTint) }
+        if case .attackTarget(let slot) = phase,let cells = try? attackCells(slot) { region(Set(cells),Self.attackTint) }
+        if case .giveTarget(let slot,_) = phase,let cells = try? giveCells(slot) { region(Set(cells),Self.supportTint) }
         if case .itemTarget(let slot,let item) = phase {
             let use = OriginalItemUse.of(item)
-            if let cells = try? itemCells(slot,use) {
-                for point in cells {
-                    (use.targetsFriends ? NSColor(calibratedRed:0.1,green:1,blue:0.7,alpha:0.3) : NSColor(calibratedRed:1,green:0.25,blue:0.2,alpha:0.3)).setFill()
-                    rect(point).fill()
-                }
-            }
+            if let cells = try? itemCells(slot,use) { region(Set(cells),use.targetsFriends ? Self.supportTint : Self.attackTint) }
         }
         let strategyTargets = strategySelection.flatMap { choice in selected.flatMap {try? legalStrategyTargets(choice.abilityID,casterSlot:$0)} } ?? []
-        for slot in strategyTargets {
-            guard let unit = session.units[slot] else {continue}
-            NSColor(calibratedRed:0.1,green:1,blue:0.7,alpha:0.3).setFill();rect(unit.position).fill()
+        region(Set(strategyTargets.compactMap { session.units[$0]?.position }),Self.supportTint)
+        if modern,case .moving(let slot) = phase,let unit = session.units[slot],let target = hoveredCell,target != unit.position,
+           (try? session.reachable(slot))?.contains(target) == true,let path = try? session.route(slot,to:target) {
+            drawRoute([unit.position]+path.filter { $0 != unit.position },context,rect:rect)
+        }
+        if modern,canInput,let cell = hoveredCell,combatPlayer == nil {
+            CanvasTheme.stroke(rect(cell).insetBy(dx:1,dy:1),CGColor(gray:1,alpha:0.55),radius:3,in:context)
         }
         // MAIN2A143..2A15B: an enemy with mask 0x20 clear is hidden from the map.
         for unit in session.units.values.sorted(by:{$0.slot < $1.slot}) where unit.status == 2 && !(unit.enemy && unit.scriptFlags&0x20 == 0) {
@@ -937,13 +935,23 @@ final class OriginalBattleView:NSView {
                 do {
                     let image = try walker.map { try sprites.image(unit:unit,classID:person.classID,direction:$0.direction,stepPixels:$0.stepPixels) }
                         ?? sprites.image(unit:unit,classID:person.classID)
-                    Renderer.image(image,in:box,context:context)
+                    // Modern: a friendly unit that has acted (flag80) is drawn darker.
+                    if modern,!unit.enemy,unit.scriptFlags&0x80 != 0,walker == nil {
+                        context.beginTransparencyLayer(in:box,auxiliaryInfo:nil)
+                        Renderer.image(image,in:box,context:context)
+                        context.setBlendMode(.sourceAtop);context.setFillColor(CGColor(gray:0,alpha:0.42));context.fill(box)
+                        context.endTransparencyLayer()
+                    } else { Renderer.image(image,in:box,context:context) }
                 }
                 catch { message = "원작 그림 경계: \(error)";text("?",in:box,color:.systemYellow) }
             } else {
                 (unit.enemy ? NSColor.systemRed : NSColor.systemBlue).setFill();NSBezierPath(ovalIn:box.insetBy(dx:3,dy:3)).fill()
             }
-            if selected == unit.slot { NSColor.systemYellow.setStroke();let p = NSBezierPath(rect:box.insetBy(dx:1,dy:1));p.lineWidth = 2;p.stroke() }
+            if modern { drawTroopBar(unit,person,box,context) }
+            if selected == unit.slot {
+                if modern { drawCorners(box,CanvasTheme.accentFill,context) }
+                else { NSColor.systemYellow.setStroke();let p = NSBezierPath(rect:box.insetBy(dx:1,dy:1));p.lineWidth = 2;p.stroke() }
+            }
             if strategySelection?.targetSlot == unit.slot {NSColor.systemGreen.setStroke();let p = NSBezierPath(rect:box);p.lineWidth = 3;p.stroke()}
             if showsSlotNumbers { text(String(unit.slot),in:CGRect(x:box.minX+1,y:box.maxY-11,width:24,height:11),color:.systemYellow,size:9) }
         }
@@ -971,6 +979,79 @@ final class OriginalBattleView:NSView {
             context.restoreGState()
         }
         context.restoreGState()
+    }
+    struct Tint { var red:CGFloat;var green:CGFloat;var blue:CGFloat;var alpha:CGFloat }
+    private static let moveTint = Tint(red:0.2,green:0.6,blue:1,alpha:0.25)
+    private static let attackTint = Tint(red:1,green:0.25,blue:0.2,alpha:0.3)
+    private static let supportTint = Tint(red:0.1,green:1,blue:0.7,alpha:0.3)
+    /// Engine cells: a soft tile in each cell and a bright line round the region.
+    private func drawRegion(_ cells:Set<GridPoint>,_ tint:Tint,_ context:CGContext,rect:(GridPoint) -> CGRect) {
+        guard !cells.isEmpty else { return }
+        for point in cells { CanvasTheme.fill(rect(point).insetBy(dx:1,dy:1),CGColor(red:tint.red,green:tint.green,blue:tint.blue,alpha:0.24),radius:3,in:context) }
+        context.setStrokeColor(CGColor(red:min(1,tint.red+0.25),green:min(1,tint.green+0.25),blue:min(1,tint.blue+0.25),alpha:0.9));context.setLineWidth(1.5)
+        for point in cells {
+            let box = rect(point).insetBy(dx:0.75,dy:0.75)
+            if !cells.contains(GridPoint(x:point.x,y:point.y-1)) { context.move(to:CGPoint(x:box.minX,y:box.minY));context.addLine(to:CGPoint(x:box.maxX,y:box.minY)) }
+            if !cells.contains(GridPoint(x:point.x,y:point.y+1)) { context.move(to:CGPoint(x:box.minX,y:box.maxY));context.addLine(to:CGPoint(x:box.maxX,y:box.maxY)) }
+            if !cells.contains(GridPoint(x:point.x-1,y:point.y)) { context.move(to:CGPoint(x:box.minX,y:box.minY));context.addLine(to:CGPoint(x:box.minX,y:box.maxY)) }
+            if !cells.contains(GridPoint(x:point.x+1,y:point.y)) { context.move(to:CGPoint(x:box.maxX,y:box.minY));context.addLine(to:CGPoint(x:box.maxX,y:box.maxY)) }
+        }
+        context.strokePath()
+    }
+    /// The way a chosen unit would walk to the cell under the pointer.
+    private func drawRoute(_ path:[GridPoint],_ context:CGContext,rect:(GridPoint) -> CGRect) {
+        guard path.count > 1 else { return }
+        let points = path.map { CGPoint(x:rect($0).midX,y:rect($0).midY) }
+        context.saveGState();context.setLineCap(.round);context.setLineJoin(.round)
+        for (width,color) in [(CGFloat(6),CGColor(gray:0,alpha:0.4)),(CGFloat(3),CGColor(gray:1,alpha:0.9))] {
+            context.setStrokeColor(color);context.setLineWidth(width);context.addLines(between:points);context.strokePath()
+        }
+        if let end = points.last {
+            context.setFillColor(CanvasTheme.accentFill);context.fillEllipse(in:CGRect(x:end.x-4.5,y:end.y-4.5,width:9,height:9))
+        }
+        context.restoreGState()
+    }
+    /// A unit's troops on the map: a slim bar along the foot of its cell.
+    private func drawTroopBar(_ unit:OriginalLiveUnit,_ person:OriginalPersonDefinition,_ box:CGRect,_ context:CGContext) {
+        let maximum = (try? OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:session.combat)) ?? 0
+        guard maximum > 0 else { return }
+        let track = CGRect(x:box.minX+5,y:box.maxY-4,width:box.width-10,height:3)
+        CanvasTheme.fill(track.insetBy(dx:-1,dy:-1),CGColor(gray:0,alpha:0.6),radius:2.5,in:context)
+        let part = min(1,CGFloat(person.rawTroops)/CGFloat(maximum))
+        let tint = unit.enemy ? CGColor(red:0.94,green:0.36,blue:0.32,alpha:1) : Self.troopTint
+        if part > 0 { CanvasTheme.fill(CGRect(x:track.minX,y:track.minY,width:max(2,track.width*part),height:track.height),tint,radius:1.5,in:context) }
+    }
+    private func drawCorners(_ box:CGRect,_ color:CGColor,_ context:CGContext) {
+        let r = box.insetBy(dx:1.5,dy:1.5),length:CGFloat = 9
+        context.saveGState();context.setStrokeColor(color);context.setLineWidth(2);context.setLineCap(.round)
+        for (x,dx) in [(r.minX,CGFloat(1)),(r.maxX,CGFloat(-1))] {
+            for (y,dy) in [(r.minY,CGFloat(1)),(r.maxY,CGFloat(-1))] {
+                context.move(to:CGPoint(x:x+dx*length,y:y));context.addLine(to:CGPoint(x:x,y:y));context.addLine(to:CGPoint(x:x,y:y+dy*length))
+            }
+        }
+        context.strokePath();context.restoreGState()
+    }
+    /// The modern turn opening: a band across the map with the turn in large type.
+    private func drawBanner(_ text:String,in area:CGRect,_ context:CGContext) {
+        let band = CGRect(x:area.minX,y:area.midY-30,width:area.width,height:60)
+        let space = CGColorSpaceCreateDeviceRGB()
+        func fade(_ alpha:CGFloat,_ red:CGFloat = 0,_ green:CGFloat = 0,_ blue:CGFloat = 0) -> CFArray {
+            [CGColor(red:red,green:green,blue:blue,alpha:0),CGColor(red:red,green:green,blue:blue,alpha:alpha),
+             CGColor(red:red,green:green,blue:blue,alpha:alpha),CGColor(red:red,green:green,blue:blue,alpha:0)] as CFArray
+        }
+        context.saveGState()
+        if let gradient = CGGradient(colorsSpace:space,colors:fade(0.8),locations:[0,0.22,0.78,1]) {
+            context.clip(to:band);context.drawLinearGradient(gradient,start:CGPoint(x:band.minX,y:0),end:CGPoint(x:band.maxX,y:0),options:[])
+        }
+        context.restoreGState()
+        if let line = CGGradient(colorsSpace:space,colors:fade(0.9,0.91,0.75,0.40),locations:[0,0.3,0.7,1]) {
+            for y in [band.minY,band.maxY-1.5] {
+                context.saveGState();context.clip(to:CGRect(x:band.minX,y:y,width:band.width,height:1.5))
+                context.drawLinearGradient(line,start:CGPoint(x:band.minX,y:0),end:CGPoint(x:band.maxX,y:0),options:[])
+                context.restoreGState()
+            }
+        }
+        label(text,in:CGRect(x:band.minX,y:band.midY-15,width:band.width,height:30),font:CanvasTheme.font(22,.bold),alignment:.center)
     }
     private func drawList(_ context:CGContext) {
         if presentation == .modern { drawSidebar(context);return }
@@ -1083,12 +1164,19 @@ final class OriginalBattleView:NSView {
         }
         if let notice = animator.notice,let catalog = combatArt?.catalog {
             let area = layoutFacts.viewportRect,text = catalog.text(notice,person:personName,strategy:strategyTitle,kind:kindLabel)
-            CanvasTheme.chip(text,at:CGPoint(x:area.midX,y:area.midY),maximumWidth:area.width-32,in:context)
+            if presentation == .modern,case .turn = notice { drawBanner(text,in:area,context) }
+            else { CanvasTheme.chip(text,at:CGPoint(x:area.midX,y:area.midY),maximumWidth:area.width-32,in:context) }
         }
         context.restoreGState()
     }
+    /// MAIN28122 names the weather through 1CB6:4E08, which reads DS:3B7C at
+    /// the weather byte: 0 clear, 1 cloudy, 2 rain.
+    private var weatherClass:Int {
+        let lookup = session.combat.strategyEnvironmentLookup,index = Int(session.turns.weatherIndex)
+        return lookup.indices.contains(index) ? lookup[index] : index
+    }
     private var weatherName:String {
-        let names = combatArt?.catalog.weathers ?? [],index = Int(session.turns.weatherIndex)
+        let names = combatArt?.catalog.weathers ?? [],index = weatherClass
         return names.indices.contains(index) ? names[index] : String(index)
     }
     /// Held Control runs the campaign this many times as fast.
@@ -1401,8 +1489,13 @@ final class OriginalBattleView:NSView {
             session.units.values.first { $0.status == 2 && $0.position == point && !($0.enemy && $0.scriptFlags&0x20 == 0) }
         }
         if unit?.slot != hovered { hovered = unit?.slot;needsDisplay = true }
+        if cell != hoveredCell { hoveredCell = cell;if presentation == .modern { needsDisplay = true } }
     }
-    override func mouseExited(with event:NSEvent) { if hovered != nil { hovered = nil;needsDisplay = true } }
+    override func mouseExited(with event:NSEvent) {
+        if hovered != nil || hoveredCell != nil { hovered = nil;hoveredCell = nil;needsDisplay = true }
+    }
+    /// The map cell under the pointer, for the modern cursor and route preview.
+    private var hoveredCell:GridPoint?
     /// The source has no such shortcut; a scene has no effect on results.
     override func rightMouseDown(with event:NSEvent) {
         if combatPlayer != nil { combatPlayer?.finish();return }
