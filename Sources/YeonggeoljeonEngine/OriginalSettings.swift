@@ -24,8 +24,10 @@ struct OriginalSettings:Codable,Equatable {
     /// MAIN22832; the new-game template holds 1).
     var scroll = 1
     static let scrollSteps = [1,2,4,8]
-    /// Engine addition: a shown line closes by itself (see DialoguePace).
+    /// Engine addition: a shown line closes by itself (see DialoguePace),
+    /// at one of DialoguePace.speedLabels.
     var autoAdvance = false
+    var autoSpeed = 1
     /// Engine addition: battle presentation (walks, effects, the enlarged
     /// combat view, notices) plays this many times as fast.
     var battlePace = 0
@@ -37,7 +39,7 @@ struct OriginalSettings:Codable,Equatable {
     static let currentRevision = 1
     var revision = Self.currentRevision
 
-    private enum CodingKeys:String,CodingKey { case speed,moveSpeed,unitCombat,enemyMove,monochrome,volume,scroll,autoAdvance,battlePace,revision }
+    private enum CodingKeys:String,CodingKey { case speed,moveSpeed,unitCombat,enemyMove,monochrome,volume,scroll,autoAdvance,autoSpeed,battlePace,revision }
     init() {}
     /// Settings stored by an older build keep their values; a missing key takes its default.
     init(from decoder:Decoder) throws {
@@ -51,6 +53,7 @@ struct OriginalSettings:Codable,Equatable {
         volume = try values.decodeIfPresent(Float.self,forKey:.volume) ?? blank.volume
         scroll = try values.decodeIfPresent(Int.self,forKey:.scroll).flatMap { Self.scrollSteps.contains($0) ? $0 : nil } ?? blank.scroll
         autoAdvance = try values.decodeIfPresent(Bool.self,forKey:.autoAdvance) ?? blank.autoAdvance
+        autoSpeed = try values.decodeIfPresent(Int.self,forKey:.autoSpeed).flatMap { DialoguePace.speedLabels.indices.contains($0) ? $0 : nil } ?? blank.autoSpeed
         battlePace = try values.decodeIfPresent(Int.self,forKey:.battlePace).flatMap { Self.battlePaceRates.indices.contains($0) ? $0 : nil } ?? blank.battlePace
     }
 
@@ -78,20 +81,36 @@ struct OriginalSettings:Codable,Equatable {
 final class DialoguePace {
     static let shared = DialoguePace()
     static let changed = Notification.Name("DialoguePaceChanged")
+    static let speedLabels = ["느리게","보통","빠르게"]
     /// A fully shown line closes by itself after a reading pause. Kept with
-    /// the player's settings.
-    var auto = OriginalSettings.current.autoAdvance {
-        didSet {
-            guard auto != oldValue else { return }
-            var value = OriginalSettings.current;value.autoAdvance = auto;OriginalSettings.current = value;post()
-        }
+    /// the player's settings, which a menu may also change directly.
+    var auto = false { didSet { if auto != oldValue { persist() } } }
+    var speed = 1 { didSet { if speed != oldValue { persist() } } }
+    private var loading = false
+    private var observer:NSObjectProtocol?
+    private init() {
+        reload()
+        observer = NotificationCenter.default.addObserver(forName:OriginalSettings.changed,object:nil,queue:.main) { [weak self] _ in self?.reload() }
+    }
+    private func reload() {
+        let value = OriginalSettings.current
+        loading = true;auto = value.autoAdvance;speed = value.autoSpeed;loading = false
+    }
+    private func persist() {
+        if !loading { var value = OriginalSettings.current;value.autoAdvance = auto;value.autoSpeed = speed;OriginalSettings.current = value }
+        post()
     }
     /// Lines close at once and time runs fast until the player has
     /// something to decide; the window turns it off there.
     var skipping = false { didSet { if skipping != oldValue { post() } } }
     private func post() { NotificationCenter.default.post(name:Self.changed,object:nil) }
-    /// How long auto mode leaves a shown line up: a second and a bit per character.
-    static func readingSeconds(_ text:String) -> Double { min(7,max(1.5,1+Double(text.count)*0.055)) }
+    /// How long auto mode leaves a fully shown line up: a base and a little
+    /// per character, within bounds, for 느리게, 보통 and 빠르게.
+    private static let reading:[(base:Double,perCharacter:Double,least:Double,most:Double)] = [(0.8,0.04,1.2,5),(0.4,0.02,0.8,2.5),(0.15,0.01,0.4,1.5)]
+    static func readingSeconds(_ text:String,speed:Int = 1) -> Double {
+        let pace = reading[min(max(0,speed),reading.count-1)]
+        return min(pace.most,max(pace.least,pace.base+Double(text.count)*pace.perCharacter))
+    }
 }
 
 /// Five native slots, as the original has five MSAVE files. They hold

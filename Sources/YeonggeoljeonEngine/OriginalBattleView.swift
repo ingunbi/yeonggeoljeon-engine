@@ -368,7 +368,7 @@ final class OriginalBattleView:NSView {
         guard presentation == .modern else { return nil }
         return ["end-turn":"flag.checkered","retreat":"arrow.uturn.backward","conditions":"target","unit-combat":"rectangle.on.rectangle",
                 "move-speed":"hare.fill","enemy-move":"eye.fill","bgm":"music.note","sound":"speaker.wave.2.fill",
-                "battle-pace":"gauge.with.dots.needle.67percent","quit":"power","attack":"figure.fencing","strategy":"sparkles",
+                "battle-pace":"gauge.with.dots.needle.67percent","auto":"text.bubble.fill","quit":"power","attack":"figure.fencing","strategy":"sparkles",
                 "item":"bag.fill","wait":"hourglass","strike":"bolt.fill","release":"eye","use":"hand.tap.fill",
                 "give":"arrow.left.arrow.right","drop":"trash","inspect":"magnifyingglass"][action]
     }
@@ -384,6 +384,7 @@ final class OriginalBattleView:NSView {
         case "move-speed":return (texts.moveSpeed,settings.moveSpeed,{ $0.moveSpeed = $1 })
         case "enemy-move":return (texts.show,settings.enemyMove ? 0 : 1,{ $0.enemyMove = $1 == 0 })
         case "battle-pace":return (Self.paceLabels,settings.battlePace,{ $0.battlePace = $1 })
+        case "auto":return OriginalCampaignView.autoChoices(settings)
         case "bgm":return (texts.onOff,OriginalAudio.musicEnabled ? 0 : 1,{ _,index in OriginalAudio.musicEnabled = index == 0 })
         case "sound":return (texts.onOff,OriginalAudio.effectsEnabled ? 0 : 1,{ _,index in OriginalAudio.effectsEnabled = index == 0 })
         default:return nil
@@ -401,12 +402,13 @@ final class OriginalBattleView:NSView {
     private func openFunctionMenu(selected:Int = 0) {
         guard canInput,phase == .idle,strategySelection == nil else { return }
         var restored:Set<String> = menuTexts == nil ? ["end-turn"] : ["end-turn","retreat","quit"]
-        if settingsTexts != nil { restored.formUnion(["unit-combat","move-speed","enemy-move","bgm","sound","battle-pace"]) }
+        if settingsTexts != nil { restored.formUnion(["unit-combat","move-speed","enemy-move","bgm","sound","battle-pace","auto"]) }
         if objective != nil,style.commands != nil { restored.insert("conditions") }
         var items = menuTexts?.items ?? [OriginalTitleMenuItem(index:0,action:"end-turn",text:"End turn")]
         // Engine addition after the source rows: how fast the battle plays.
         if settingsTexts != nil,let quit = items.firstIndex(where:{ $0.action == "quit" }) {
-            items.insert(OriginalTitleMenuItem(index:-1,action:"battle-pace",text:"전투 속도"),at:quit)
+            items.insert(contentsOf:[OriginalTitleMenuItem(index:-1,action:"battle-pace",text:"전투 속도"),
+                                     OriginalTitleMenuItem(index:-2,action:"auto",text:"대사 자동 넘기기")],at:quit)
         }
         functionOpen = true;needsDisplay = true
         // Settings show their current choice and change in place (click or left/right).
@@ -424,7 +426,7 @@ final class OriginalBattleView:NSView {
             guard let index = index else { return }
             switch items[index].action {
             case "end-turn": self.requestEndTurn()
-            case "unit-combat","move-speed","enemy-move","bgm","sound","battle-pace":
+            case "unit-combat","move-speed","enemy-move","bgm","sound","battle-pace","auto":
                 self.changeSetting(items[index].action,by:1);self.openFunctionMenu(selected:index)
             case "retreat": self.requestRetreat()
             case "conditions": self.showConditions(opening:false)

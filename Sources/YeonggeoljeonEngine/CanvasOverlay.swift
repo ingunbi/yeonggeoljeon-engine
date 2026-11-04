@@ -228,7 +228,7 @@ final class CanvasOverlayView:NSView {
     }
     /// Engine addition: a waiting line's text appears over a moment. The first
     /// input shows the rest at once; the next one closes the line.
-    static let revealRate = 45.0
+    static let revealRate = 60.0
     private var revealStart:Date?
     private var revealTimer:Timer?
     private func revealed(_ text:String) -> Int {
@@ -276,12 +276,12 @@ final class CanvasOverlayView:NSView {
         autoTimer = Timer.scheduledTimer(withTimeInterval:1.0/30,repeats:true) { [weak self] _ in
             guard let self = self,let start = self.autoStart,let value = self.notice else { return }
             self.needsDisplay = true
-            if Date().timeIntervalSince(start) >= DialoguePace.readingSeconds(value.text) { self.dismissNotice() }
+            if Date().timeIntervalSince(start) >= DialoguePace.readingSeconds(value.text,speed:DialoguePace.shared.speed) { self.dismissNotice() }
         }
     }
     private var autoProgress:CGFloat? {
         guard let start = autoStart,let value = notice else { return nil }
-        return min(1,CGFloat(Date().timeIntervalSince(start)/DialoguePace.readingSeconds(value.text)))
+        return min(1,CGFloat(Date().timeIntervalSince(start)/DialoguePace.readingSeconds(value.text,speed:DialoguePace.shared.speed)))
     }
     private func close() {
         noticeTimer?.invalidate();noticeTimer = nil;stopReveal()
@@ -652,7 +652,8 @@ final class CanvasOverlayView:NSView {
         guard onLineControl != nil,notice?.waitsAsLine == true else { return [] }
         let style = CanvasTheme.attributes(CanvasTheme.font(11,.medium),CanvasTheme.muted)
         var right = rect.maxX-30,result:[(control:LineControl,label:String,rect:CGRect)] = []
-        for (control,label) in [(LineControl.skip,"건너뛰기 S"),(.auto,"자동 A"),(.log,"기록 L")] where control != .log || showsLog {
+        let pace = DialoguePace.shared,autoLabel = pace.auto ? "자동 · "+DialoguePace.speedLabels[min(max(0,pace.speed),DialoguePace.speedLabels.count-1)] : "자동 A"
+        for (control,label) in [(LineControl.skip,"건너뛰기 S"),(.auto,autoLabel),(.log,"기록 L")] where control != .log || showsLog {
             let width = ceil((label as NSString).size(withAttributes:style).width)+16
             result.append((control,label,CGRect(x:right-width,y:rect.maxY-25,width:width,height:19)))
             right -= width+4

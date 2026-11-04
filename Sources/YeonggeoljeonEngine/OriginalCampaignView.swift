@@ -851,6 +851,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         case "volume":
             let levels:[Float] = [1,0.75,0.5,0.25]
             return (levels.map { "\(Int($0*100))%" },levels.firstIndex(of:value.volume) ?? 0,{ $0.volume = levels[$1] })
+        case "auto":return Self.autoChoices(value)
         default:return nil
         }
     }
@@ -860,8 +861,14 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         choice.apply(&value,(choice.current+delta+choice.labels.count)%choice.labels.count)
         OriginalSettings.current = value;needsDisplay = true
     }
-    private static let fieldIcons = ["quit":"power","scroll":"arrow.up.and.down.and.arrow.left.and.right","speed":"gauge.with.dots.needle.67percent",
-        "load":"folder.fill","save":"square.and.arrow.down.fill","monitor":"display","bgm":"music.note","sound":"speaker.wave.2.fill",
+    /// Engine row: auto advance off or at one of its speeds.
+    static func autoChoices(_ value:OriginalSettings) -> (labels:[String],current:Int,apply:(inout OriginalSettings,Int) -> Void) {
+        (["끔"]+DialoguePace.speedLabels,value.autoAdvance ? value.autoSpeed+1 : 0,{ settings,index in
+            settings.autoAdvance = index > 0;if index > 0 { settings.autoSpeed = index-1 }
+        })
+    }
+    private static let fieldIcons = ["auto":"text.bubble.fill","quit":"power","scroll":"arrow.up.and.down.and.arrow.left.and.right","speed":"gauge.with.dots.needle.67percent",
+        "load":"folder.fill","save":"tray.and.arrow.down.fill","monitor":"display","bgm":"music.note","sound":"speaker.wave.2.fill",
         "volume":"slider.horizontal.3","music-time":"music.note.list"]
     private func openFieldMenu(at point:CGPoint,selected:Int? = nil) {
         let labels = host.framework?.fieldMenu?.items.map(\.text) ?? OriginalFieldMenuTexts.actions
@@ -869,9 +876,11 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         // Settings show their current choice and change in place; the engine
         // layout lists save and load first and the quit row last.
         let order = modern ? ["save","load","scroll","speed","monitor","bgm","sound","volume","music-time","quit"].compactMap { actions.firstIndex(of:$0) } : Array(actions.indices)
-        let options = order.map { index -> CanvasMenu.Option in
-            let action = actions[index]
-            var option = CanvasMenu.Option(label:labels[index],enabled:host.framework?.settings != nil || ["quit","load","save"].contains(action))
+        var rows = order.map { (action:actions[$0],label:labels[$0]) }
+        if modern,let speed = rows.firstIndex(where:{ $0.action == "speed" }) { rows.insert(("auto","대사 자동 넘기기"),at:speed+1) }
+        let options = rows.map { row -> CanvasMenu.Option in
+            let action = row.action
+            var option = CanvasMenu.Option(label:row.label,enabled:host.framework?.settings != nil || ["quit","load","save","auto"].contains(action))
             if let choice = settingChoices(action),choice.labels.indices.contains(choice.current) { option.value = choice.labels[choice.current] }
             if modern {
                 option.icon = Self.fieldIcons[action];option.destructive = action == "quit"
@@ -881,13 +890,13 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         }
         var menu = CanvasMenu(title:"",options:options,selected:selected ?? 0,cancellable:true,anchor:point) { [weak self] index in
             guard let self = self,let index = index else { return }
-            let action = actions[order[index]]
+            let action = rows[index].action
             if self.settingChoices(action) != nil { self.changeSetting(action,by:1);self.openFieldMenu(at:point,selected:index);return }
             self.fieldMenuChosen(action)
         }
         menu.onAdjust = { [weak self] index,delta in
-            guard let self = self,self.settingChoices(actions[order[index]]) != nil else { return }
-            self.changeSetting(actions[order[index]],by:delta);self.openFieldMenu(at:point,selected:index)
+            guard let self = self,self.settingChoices(rows[index].action) != nil else { return }
+            self.changeSetting(rows[index].action,by:delta);self.openFieldMenu(at:point,selected:index)
         }
         overlay.show(menu,keepScroll:true)
     }

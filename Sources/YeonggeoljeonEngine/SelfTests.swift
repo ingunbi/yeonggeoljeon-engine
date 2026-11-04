@@ -115,9 +115,12 @@ func selfTests() throws {
     try check(older.battleRate == 1 && paced.battleRate == 3 && overPaced.battlePace == 0,"battle pace defaults to the source speed and keeps only listed rates")
     try check(abs(OriginalBattleView.idleSeconds-24*OriginalBattleAnimator.tick) < 1e-9 && abs(OriginalBattleView.idleSeconds-0.398) < 0.002,
               "a waiting unit flips its frame every four units of six ticks")
-    let reading = DialoguePace.readingSeconds(String(repeating:"가",count:20))
-    try check(!older.autoAdvance && DialoguePace.readingSeconds("") == 1.5 && abs(reading-2.1) < 0.001 &&
-              DialoguePace.readingSeconds(String(repeating:"가",count:400)) == 7,"auto advance is off by default and reads a line for 1.5 to 7 seconds")
+    let twenty = String(repeating:"가",count:20),long = String(repeating:"가",count:400)
+    try check(!older.autoAdvance && older.autoSpeed == 1 && abs(DialoguePace.readingSeconds(twenty)-0.8) < 0.001 &&
+              DialoguePace.readingSeconds(String(repeating:"가",count:50)) == 1.4 && DialoguePace.readingSeconds(long) == 2.5,
+              "auto advance is off by default and 보통 reads a line for 0.8 to 2.5 seconds")
+    try check(abs(DialoguePace.readingSeconds(twenty,speed:0)-1.6) < 0.001 && abs(DialoguePace.readingSeconds(twenty,speed:2)-0.4) < 0.001 &&
+              DialoguePace.readingSeconds(long,speed:2) == 1.5,"느리게 and 빠르게 bracket 보통")
     // MAIN24BD6 places the merchant by palace room type (DS:3838), not by index.
     var merchant = OriginalShopCatalog.Merchant(person:374,x:15,y:11,sourceFacing:4,music:15)
     try check(!merchant.hosts(palaceIndex:10),"without the type table no room hosts the merchant")
