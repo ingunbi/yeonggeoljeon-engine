@@ -801,6 +801,12 @@ final class OriginalBattleView:NSView {
         CanvasTheme.fill(pill,functionOpen ? CanvasTheme.accentFill : CanvasTheme.selection,radius:pill.height/2,in:context)
         label("기능",in:CGRect(x:pill.minX,y:pill.minY,width:pill.width,height:pill.height),font:CanvasTheme.font(10,.semibold),
               color:functionOpen ? CanvasTheme.onAccent : CanvasTheme.accent,alignment:.center)
+        if let rect = endTurnButton {
+            let left = readyUnits().count
+            CanvasTheme.fill(rect,left == 0 ? CanvasTheme.accentFill : CanvasTheme.selection,radius:rect.height/2,in:context)
+            label(left > 0 ? "턴 종료 · \(left)" : "턴 종료",in:rect,font:CanvasTheme.font(10,.semibold),
+                  color:left == 0 ? CanvasTheme.onAccent : CanvasTheme.accent,alignment:.center)
+        }
         label(session.definition.name ?? session.definition.id,in:CGRect(x:button.maxX,y:0.5,width:map.width-button.width*2,height:15),font:CanvasTheme.font(11,.semibold),alignment:.center)
         label("\(session.turns.roundIndex+1)/\(session.header.turnLimit) 턴 · 날씨 \(weatherName)",
               in:CGRect(x:map.maxX-136,y:0.5,width:130,height:15),font:CanvasTheme.font(11),color:CanvasTheme.muted,alignment:.right)
@@ -824,8 +830,13 @@ final class OriginalBattleView:NSView {
             guard let unit = session.units[rows[listTop+row]],let person = try? session.people.person(unit.person) else { continue }
             let box = CGRect(x:facts.rect[0],y:facts.rect[1]+row*facts.rowHeight,width:facts.hover[1],height:facts.rowHeight-1)
             if unit.slot == (inspected ?? selected) { CanvasTheme.fill(box,CanvasTheme.selection,in:context) }
-            let name = color(OriginalBattleRoster.nameColor(unit))
+            // A friendly unit that has acted this phase (flag80) reads as done.
+            let done = !unit.enemy && unit.scriptFlags&0x80 != 0 && session.turns.stage == .manualFriendly
+            let name = done ? CanvasTheme.muted : color(OriginalBattleRoster.nameColor(unit))
             label(person.name,in:CGRect(x:box.minX+6,y:box.minY+0.5,width:78,height:15),font:CanvasTheme.font(11,.medium),color:unit.status == 2 ? name : CanvasTheme.disabled)
+            if done,unit.status == 2 {
+                label("완료",in:CGRect(x:box.minX+44,y:box.minY+2,width:30,height:13),font:CanvasTheme.font(8.5,.medium),color:CanvasTheme.disabled)
+            }
             if unit.status != 2 {
                 label(style.texts?.retired ?? "",in:CGRect(x:box.minX+60,y:box.minY+1,width:box.width-66,height:14),font:CanvasTheme.font(9.5),color:CanvasTheme.disabled,alignment:.right)
                 continue
@@ -953,6 +964,7 @@ final class OriginalBattleView:NSView {
                 else { NSColor.systemYellow.setStroke();let p = NSBezierPath(rect:box.insetBy(dx:1,dy:1));p.lineWidth = 2;p.stroke() }
             }
             if strategySelection?.targetSlot == unit.slot {NSColor.systemGreen.setStroke();let p = NSBezierPath(rect:box);p.lineWidth = 3;p.stroke()}
+            for floater in floaters where floater.slot == unit.slot { drawFloater(floater,over:box) }
             if showsSlotNumbers { text(String(unit.slot),in:CGRect(x:box.minX+1,y:box.maxY-11,width:24,height:11),color:.systemYellow,size:9) }
         }
         if let sprites = sprites {
@@ -979,6 +991,43 @@ final class OriginalBattleView:NSView {
             context.restoreGState()
         }
         context.restoreGState()
+    }
+    /// Modern top bar: a turn-end pill beside 기능 while the player can end the turn.
+    private var endTurnButton:CGRect? {
+        guard presentation == .modern,session.turns.stage == .manualFriendly,canInput,phase == .idle,strategySelection == nil,!overlay.active else { return nil }
+        let button = OriginalBattleLayout.rect(layoutFacts.functionButton)
+        return CGRect(x:button.maxX+2,y:button.minY+2,width:64,height:button.height-4)
+    }
+    /// Engine feedback: a unit's troop change rises from it and fades. Changes
+    /// made inside the enlarged combat view show when the map returns.
+    private struct Floater { var slot:Int;var amount:Int;var start:Date }
+    private var floaters:[Floater] = []
+    private var shownTroops:[Int:Int] = [:]
+    private static let floaterSeconds = 1.3
+    private func trackTroops() {
+        floaters.removeAll { Date().timeIntervalSince($0.start) > Self.floaterSeconds }
+        guard combatPlayer == nil,duelPlayer == nil else { return }
+        for unit in session.units.values {
+            guard let person = try? session.people.person(unit.person) else { continue }
+            let now = unit.status == 2 ? person.rawTroops : 0
+            if let before = shownTroops[unit.slot],before != now,unit.status == 2,presentation == .modern {
+                floaters.append(Floater(slot:unit.slot,amount:now-before,start:Date()))
+            }
+            shownTroops[unit.slot] = now
+        }
+        if !floaters.isEmpty { DispatchQueue.main.async { [weak self] in self?.needsDisplay = true } }
+    }
+    private func drawFloater(_ floater:Floater,over box:CGRect) {
+        let age = Date().timeIntervalSince(floater.start),t = CGFloat(age/Self.floaterSeconds)
+        let alpha = t < 0.55 ? 1 : max(0,1-(t-0.55)/0.45)
+        let color = floater.amount > 0 ? NSColor(red:0.55,green:0.95,blue:0.62,alpha:alpha) : NSColor(red:1,green:0.52,blue:0.46,alpha:alpha)
+        let text = floater.amount > 0 ? "+\(floater.amount)" : "\(floater.amount)"
+        let paragraph = NSMutableParagraphStyle();paragraph.alignment = .center
+        let rect = CGRect(x:box.midX-40,y:box.minY-6-16*min(1,t*1.6),width:80,height:16)
+        let outline:[NSAttributedString.Key:Any] = [.font:CanvasTheme.number(12,.heavy),.paragraphStyle:paragraph,
+            .strokeColor:NSColor(white:0,alpha:alpha*0.85),.strokeWidth:6]
+        (text as NSString).draw(in:rect,withAttributes:outline)
+        (text as NSString).draw(in:rect,withAttributes:[.font:CanvasTheme.number(12,.heavy),.paragraphStyle:paragraph,.foregroundColor:color])
     }
     struct Tint { var red:CGFloat;var green:CGFloat;var blue:CGFloat;var alpha:CGFloat }
     private static let moveTint = Tint(red:0.2,green:0.6,blue:1,alpha:0.25)
@@ -1149,6 +1198,7 @@ final class OriginalBattleView:NSView {
         context.saveGState()
         context.translateBy(x:canvasOrigin.x,y:canvasOrigin.y);context.scaleBy(x:scale,y:scale)
         context.interpolationQuality = .none
+        trackTroops()
         drawFrame(context);drawField(context);drawList(context);drawMinimap(context);drawStatus(context)
         if combatPlayer == nil { drawForecasts(context) }
         if combatPlayer != nil { drawCombat(context) }
@@ -1158,6 +1208,11 @@ final class OriginalBattleView:NSView {
             CanvasTheme.chip("건너뛰는 중",at:CGPoint(x:area.maxX-50,y:corner),maximumWidth:120,color:CanvasTheme.accent,in:context);corner += 24
         } else if fastForward {
             CanvasTheme.chip("빨리 감기 ×\(OriginalBattleView.fastRate)",at:CGPoint(x:area.maxX-56,y:corner),maximumWidth:120,in:context);corner += 24
+        }
+        if presentation == .modern,combatPlayer == nil,duelPlayer == nil,[.friendlyAI,.enemyAI].contains(session.turns.stage) {
+            let enemy = session.turns.stage == .enemyAI
+            CanvasTheme.chip(enemy ? "적군 행동 중" : "우군 행동 중",at:CGPoint(x:area.midX,y:area.minY+16),maximumWidth:160,
+                             color:enemy ? CanvasTheme.danger : CanvasTheme.accent,in:context)
         }
         if showsThreat,combatPlayer == nil {
             CanvasTheme.chip("적 공격 범위",at:CGPoint(x:area.maxX-50,y:corner),maximumWidth:120,color:NSColor(red:1,green:0.62,blue:0.3,alpha:1),in:context)
@@ -1348,6 +1403,7 @@ final class OriginalBattleView:NSView {
     private func clickPanel(_ point:CGPoint) -> Bool {
         let facts = layoutFacts
         if OriginalBattleLayout.rect(facts.functionButton).contains(point) { openFunctionMenu();return true }
+        if let rect = endTurnButton,rect.contains(point) { requestEndTurn();return true }
         if let side = facts.sideButtons.firstIndex(where:{ OriginalBattleLayout.rect($0).contains(point) }) { listSide = side;listTop = 0;inspected = nil;return true }
         if OriginalBattleLayout.rect(facts.list.rect).contains(point) {
             let row = Int(point.y-CGFloat(facts.list.rect[1]))/facts.list.rowHeight+listTop,rows = listRows
