@@ -108,6 +108,11 @@ func selfTests() throws {
     let uneven = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"scroll":3}"#.utf8))
     try check(older.speed == 3 && older.monochrome && older.scroll == 1 && stepped.scroll == 4 && uneven.scroll == 1,
               "stored settings without a scroll step keep their values; only 1, 2, 4 and 8 are steps")
+    let paced = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"battlePace":3}"#.utf8))
+    let overPaced = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"battlePace":9}"#.utf8))
+    try check(older.battleRate == 1 && paced.battleRate == 3 && overPaced.battlePace == 0,"battle pace defaults to the source speed and keeps only listed rates")
+    try check(abs(OriginalBattleView.idleSeconds-24*OriginalBattleAnimator.tick) < 1e-9 && abs(OriginalBattleView.idleSeconds-0.398) < 0.002,
+              "a waiting unit flips its frame every four units of six ticks")
     let reading = DialoguePace.readingSeconds(String(repeating:"가",count:20))
     try check(!older.autoAdvance && DialoguePace.readingSeconds("") == 1.5 && abs(reading-2.1) < 0.001 &&
               DialoguePace.readingSeconds(String(repeating:"가",count:400)) == 7,"auto advance is off by default and reads a line for 1.5 to 7 seconds")

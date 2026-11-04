@@ -344,7 +344,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             if let steps = host.duelSteps,let board = battleView,!board.isPlayingDuel {
                 board.playDuel(steps) { [weak self] in self?.host.finishDuelSteps() }
             }
-            battleView?.advanceAnimation(rate/60)
+            battleView?.advanceAnimation(rate*settings.battleRate/60)
             for id in host.takeSounds() { audio?.playEffect(id) }
             try host.advance(microseconds:Int64(16_667*settings.timeScale*rate))
             needsDisplay = true
@@ -795,8 +795,10 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     private static let titleAnchor = CGPoint(x:320,y:262)
     private func titleMenu(_ choose:@escaping (Int?) -> Void = { _ in }) -> CanvasMenu {
         let items = host.framework?.titleMenu?.map(\.text) ?? ["새로 시작","이어하기","기능설정","오프닝"]
-        return CanvasMenu(title:"",options:items.map { .init(label:$0) },cancellable:true,anchor:Self.titleAnchor,
-                          style:originalMenu("title") ?? .title,onChoose:choose)
+        var menu = CanvasMenu(title:"",options:items.map { .init(label:$0) },cancellable:true,anchor:Self.titleAnchor,
+                              style:originalMenu("title") ?? .title,onChoose:choose)
+        menu.cancelsOnOutsideClick = false
+        return menu
     }
     /// MAIN CF5:C050 menu after the title. Item0 starts, item1 resumes a
     /// native slot, item2 opens the options, and item3
@@ -833,15 +835,61 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         guard host.fieldMenuReady,!overlay.active else { super.rightMouseDown(with:event);return }
         openFieldMenu(at:CanvasGeometry(bounds:bounds).canvas(convert(event.locationInWindow,from:nil)))
     }
-    private func openFieldMenu(at point:CGPoint) {
+    /// One field setting row: its choices, the current one and how to store a choice.
+    private func settingChoices(_ action:String) -> (labels:[String],current:Int,apply:(inout OriginalSettings,Int) -> Void)? {
+        guard let texts = host.framework?.settings else { return nil }
+        let value = OriginalSettings.current
+        switch action {
+        case "speed":return (texts.speed,value.speed,{ $0.speed = $1 })
+        case "scroll":
+            // MAIN22832: 소 to 극대 move the world view 1, 2, 4 or 8 tiles a step.
+            let steps = OriginalSettings.scrollSteps
+            return (texts.scroll ?? steps.map { "\($0)" },steps.firstIndex(of:value.scroll) ?? 0,{ $0.scroll = steps[$1] })
+        case "monitor":return (texts.monitor,value.monochrome ? 1 : 0,{ $0.monochrome = $1 == 1 })
+        case "bgm":return (texts.onOff,OriginalAudio.musicEnabled ? 0 : 1,{ _,index in OriginalAudio.musicEnabled = index == 0 })
+        case "sound":return (texts.onOff,OriginalAudio.effectsEnabled ? 0 : 1,{ _,index in OriginalAudio.effectsEnabled = index == 0 })
+        case "volume":
+            let levels:[Float] = [1,0.75,0.5,0.25]
+            return (levels.map { "\(Int($0*100))%" },levels.firstIndex(of:value.volume) ?? 0,{ $0.volume = levels[$1] })
+        default:return nil
+        }
+    }
+    private func changeSetting(_ action:String,by delta:Int) {
+        guard let choice = settingChoices(action),!choice.labels.isEmpty else { return }
+        var value = OriginalSettings.current
+        choice.apply(&value,(choice.current+delta+choice.labels.count)%choice.labels.count)
+        OriginalSettings.current = value;needsDisplay = true
+    }
+    private static let fieldIcons = ["quit":"power","scroll":"arrow.up.and.down.and.arrow.left.and.right","speed":"gauge.with.dots.needle.67percent",
+        "load":"folder.fill","save":"square.and.arrow.down.fill","monitor":"display","bgm":"music.note","sound":"speaker.wave.2.fill",
+        "volume":"slider.horizontal.3","music-time":"music.note.list"]
+    private func openFieldMenu(at point:CGPoint,selected:Int? = nil) {
         let labels = host.framework?.fieldMenu?.items.map(\.text) ?? OriginalFieldMenuTexts.actions
-        // Scroll sets the world map's edge-scroll step (see edgeScroll).
-        let options = labels.enumerated().map { CanvasMenu.Option(label:$0.element,
-            enabled:host.framework?.settings != nil || ["quit","load","save"].contains(OriginalFieldMenuTexts.actions[$0.offset])) }
-        overlay.show(CanvasMenu(title:"",options:options,cancellable:true,anchor:point) { [weak self] index in
+        let actions = OriginalFieldMenuTexts.actions,modern = CanvasPresentation.current == .modern
+        // Settings show their current choice and change in place; the engine
+        // layout lists save and load first and the quit row last.
+        let order = modern ? ["save","load","scroll","speed","monitor","bgm","sound","volume","music-time","quit"].compactMap { actions.firstIndex(of:$0) } : Array(actions.indices)
+        let options = order.map { index -> CanvasMenu.Option in
+            let action = actions[index]
+            var option = CanvasMenu.Option(label:labels[index],enabled:host.framework?.settings != nil || ["quit","load","save"].contains(action))
+            if let choice = settingChoices(action),choice.labels.indices.contains(choice.current) { option.value = choice.labels[choice.current] }
+            if modern {
+                option.icon = Self.fieldIcons[action];option.destructive = action == "quit"
+                option.separatorBefore = ["scroll","quit"].contains(action)
+            }
+            return option
+        }
+        var menu = CanvasMenu(title:"",options:options,selected:selected ?? 0,cancellable:true,anchor:point) { [weak self] index in
             guard let self = self,let index = index else { return }
-            self.fieldMenuChosen(OriginalFieldMenuTexts.actions[index])
-        })
+            let action = actions[order[index]]
+            if self.settingChoices(action) != nil { self.changeSetting(action,by:1);self.openFieldMenu(at:point,selected:index);return }
+            self.fieldMenuChosen(action)
+        }
+        menu.onAdjust = { [weak self] index,delta in
+            guard let self = self,self.settingChoices(actions[order[index]]) != nil else { return }
+            self.changeSetting(actions[order[index]],by:delta);self.openFieldMenu(at:point,selected:index)
+        }
+        overlay.show(menu,keepScroll:true)
     }
     private func fieldMenuChosen(_ action:String) {
         guard host.fieldMenuReady else { return }

@@ -254,6 +254,9 @@ final class Runtime {
     private var hostMaps:[Int:MapResource] = [:]
     private var hostActors:[String:ActorResource]?
     private var followPerson:Int?
+    /// Engine choice: the player's own march on the world map keeps its army
+    /// in view, even after the player scrolled away. Cleared when it arrives.
+    private var routeFollow:Int?
     private(set) var storyPanel:OriginalStoryPanel?
     private(set) var palette = 0 // Original new-game store MAIN1E49A/1E628.
 
@@ -310,6 +313,7 @@ final class Runtime {
         guard !overflow && !overflow2 else { throw EngineError.invalid("Original input movement clock overflow") }
         batch = MoveBatch(motions:[Motion(person:person,route:route,finalFacing:finalFacing,source:nil)],elapsed:0,
             duration:duration,step:timing.stepMicroseconds,terminal:timing.terminalMicroseconds)
+        if currentMap?.geometry == "world" { routeFollow = person }
         updateActors();if duration == 0 { settleBatch() }
     }
     var currentMap: MapResource? { mapID.flatMap { hostMaps[$0] ?? data.resources.maps[String($0)] } }
@@ -629,7 +633,7 @@ final class Runtime {
             actor.phase = actor.walking ? stepIndex & 1 : 0
             actors[motion.person] = actor
         }
-        if let person = followPerson,let actor = actors[person] {
+        if let person = followPerson ?? routeFollow,let actor = actors[person] {
             do { try centerWorldCamera(actor.position) }
             catch { finish("\(error)",kind:.runtimeFailure) }
         }
@@ -642,7 +646,7 @@ final class Runtime {
                 actor.walking = false; actor.phase = 0; actors[m.person] = actor
             }
         }
-        batch = nil
+        batch = nil;routeFollow = nil
     }
     private func validateGridPosition(_ p: GridPoint) throws {
         guard let map = currentMap, let width = map.walkWidth, let height = map.walkHeight,

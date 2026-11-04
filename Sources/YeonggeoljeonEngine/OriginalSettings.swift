@@ -23,8 +23,13 @@ struct OriginalSettings:Codable,Equatable {
     static let scrollSteps = [1,2,4,8]
     /// Engine addition: a shown line closes by itself (see DialoguePace).
     var autoAdvance = false
+    /// Engine addition: battle presentation (walks, effects, the enlarged
+    /// combat view, notices) plays this many times as fast.
+    var battlePace = 0
+    static let battlePaceRates:[Double] = [1,1.5,2,3]
+    var battleRate:Double { Self.battlePaceRates.indices.contains(battlePace) ? Self.battlePaceRates[battlePace] : 1 }
 
-    private enum CodingKeys:String,CodingKey { case speed,moveSpeed,unitCombat,enemyMove,monochrome,volume,scroll,autoAdvance }
+    private enum CodingKeys:String,CodingKey { case speed,moveSpeed,unitCombat,enemyMove,monochrome,volume,scroll,autoAdvance,battlePace }
     init() {}
     /// Settings stored by an older build keep their values; a missing key takes its default.
     init(from decoder:Decoder) throws {
@@ -37,6 +42,7 @@ struct OriginalSettings:Codable,Equatable {
         volume = try values.decodeIfPresent(Float.self,forKey:.volume) ?? blank.volume
         scroll = try values.decodeIfPresent(Int.self,forKey:.scroll).flatMap { Self.scrollSteps.contains($0) ? $0 : nil } ?? blank.scroll
         autoAdvance = try values.decodeIfPresent(Bool.self,forKey:.autoAdvance) ?? blank.autoAdvance
+        battlePace = try values.decodeIfPresent(Int.self,forKey:.battlePace).flatMap { Self.battlePaceRates.indices.contains($0) ? $0 : nil } ?? blank.battlePace
     }
 
     private static let key = "originalSettings"

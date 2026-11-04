@@ -12,6 +12,12 @@ struct CanvasMenu {
         var value = ""
         /// Non-nil draws a check box (multi-selection rows such as the party list).
         var checked:Bool? = nil
+        /// An SF Symbol drawn before the label (engine presentation).
+        var icon:String? = nil
+        /// Ends or abandons something (quit, retreat): drawn in the danger colour.
+        var destructive = false
+        /// A hairline above the row starts a new group.
+        var separatorBefore = false
     }
     var title:String
     var options:[Option]
@@ -36,6 +42,12 @@ struct CanvasMenu {
     /// `.window` labels the buttons of an original window picture.
     var style = Style.panel
     var onChoose:(Int?) -> Void
+    /// A click outside the window cancels it. The title menu turns this off:
+    /// its cancel ends the game, which needs Esc or a right click.
+    var cancelsOnOutsideClick = true
+    /// Left and right change a row that shows a value in place (index, step);
+    /// the owner stores it and shows the menu again.
+    var onAdjust:((Int,Int) -> Void)? = nil
 }
 
 /// A black sheet for MAIN's palette fades over the stage and the battle; it takes no input.
@@ -326,10 +338,10 @@ final class CanvasOverlayView:NSView {
     /// Panel width, text heights and how many vertical rows fit in the
     /// viewport (the panel stays eight pixels shorter than it).
     private func metrics(_ value:CanvasMenu) -> (width:CGFloat,title:CGFloat,footer:CGFloat,shown:Int) {
-        let check:CGFloat = value.options.contains(where:{ $0.checked != nil }) ? 22 : 0
+        let check:CGFloat = (value.options.contains(where:{ $0.checked != nil }) ? 22 : 0)+(value.options.contains(where:{ $0.icon != nil }) ? 22 : 0)
         let labelWidth = value.options.map { ceil(($0.label as NSString).size(withAttributes:attributes()).width) }.max() ?? 0
         let valueWidth = value.options.map { ceil(($0.value as NSString).size(withAttributes:attributes()).width) }.max() ?? 0
-        let column = valueWidth > 0 ? valueWidth+20 : 0
+        let column = valueWidth > 0 ? valueWidth+(value.onAdjust != nil ? 52 : 28) : 0
         let width:CGFloat = value.horizontal ? 300 : value.anchor != nil ? min(viewport.width-16,max(96,labelWidth+column+44+check)) :
             min(viewport.width-16,max(240,labelWidth+column+64+check))
         let title = textHeight(value.title,width:width-40),footer = textHeight(value.footer,width:width-40)
@@ -406,6 +418,15 @@ final class CanvasOverlayView:NSView {
         return Layout(panel:panel,title:title,options:options,footer:footer,
                       moreAbove:first > 0,moreBelow:first+m.shown < value.options.count)
     }
+    /// An SF Symbol tinted to one colour, drawn into the flipped canvas.
+    private func drawSymbol(_ name:String,in rect:CGRect,color:NSColor) {
+        guard let base = NSImage(systemSymbolName:name,accessibilityDescription:nil) else { return }
+        let config = NSImage.SymbolConfiguration(pointSize:12,weight:.semibold).applying(NSImage.SymbolConfiguration(paletteColors:[color]))
+        guard let image = base.withSymbolConfiguration(config) else { return }
+        let size = image.size,scale = min(rect.width/size.width,rect.height/size.height,1)
+        let box = CGRect(x:rect.midX-size.width*scale/2,y:rect.midY-size.height*scale/2,width:size.width*scale,height:size.height*scale)
+        image.draw(in:box,from:.zero,operation:.sourceOver,fraction:1,respectFlipped:true,hints:nil)
+    }
     private func drawButton(_ label:String,in rect:CGRect,focused:Bool,context:CGContext) {
         if focused { CanvasTheme.fill(rect,CanvasTheme.accentFill,radius:6,in:context) } else { CanvasTheme.stroke(rect,radius:6,in:context) }
         let style = CanvasTheme.attributes(CanvasTheme.font(13,.semibold),focused ? CanvasTheme.onAccent : CanvasTheme.text,alignment:.center)
@@ -457,16 +478,39 @@ final class CanvasOverlayView:NSView {
         for (index,rect) in shape.options {
             let option = value.options[index]
             if value.horizontal { drawButton(option.label,in:rect,focused:index == value.selected,context:context);continue }
-            if index == value.selected { CanvasTheme.fill(rect,CanvasTheme.selection,in:context) }
-            let color = option.enabled ? CanvasTheme.text : CanvasTheme.disabled
-            var inset = rect.insetBy(dx:10,dy:3)
+            let selected = index == value.selected
+            if option.separatorBefore,index != shape.options.first?.index {
+                CanvasTheme.divider(from:CGPoint(x:rect.minX+8,y:rect.minY-1.5),to:CGPoint(x:rect.maxX-8,y:rect.minY-1.5),in:context)
+            }
+            if selected {
+                CanvasTheme.fill(rect,CanvasTheme.selection,in:context)
+                CanvasTheme.fill(CGRect(x:rect.minX+2,y:rect.minY+5,width:3,height:rect.height-10),CanvasTheme.accentFill,radius:1.5,in:context)
+            }
+            let color = !option.enabled ? CanvasTheme.disabled : option.destructive ? CanvasTheme.danger : CanvasTheme.text
+            var inset = rect.insetBy(dx:12,dy:3)
             if let checked = option.checked {
                 drawCheck(CGRect(x:inset.minX,y:rect.midY-7,width:14,height:14),checked:checked,enabled:option.enabled,context:context)
                 inset = inset.offsetBy(dx:22,dy:0);inset.size.width -= 22
             }
+            if let name = option.icon {
+                drawSymbol(name,in:CGRect(x:inset.minX,y:rect.midY-8,width:16,height:16),
+                           color:!option.enabled ? CanvasTheme.disabled : option.destructive ? CanvasTheme.danger : selected ? CanvasTheme.accent : CanvasTheme.muted)
+                inset = inset.offsetBy(dx:22,dy:0);inset.size.width -= 22
+            }
             (option.label as NSString).draw(in:inset,withAttributes:attributes(color))
             if !option.value.isEmpty {
-                (option.value as NSString).draw(in:inset,withAttributes:CanvasTheme.attributes(CanvasTheme.number(13),option.enabled ? CanvasTheme.muted : CanvasTheme.disabled,alignment:.right))
+                // A value reads as a chip; one that left and right change carries arrows.
+                let adjustable = value.onAdjust != nil && option.enabled
+                let style = CanvasTheme.attributes(CanvasTheme.font(12,.medium),option.enabled ? (selected ? CanvasTheme.text : CanvasTheme.muted) : CanvasTheme.disabled,alignment:.center)
+                let width = ceil((option.value as NSString).size(withAttributes:style).width)+18
+                let chip = CGRect(x:rect.maxX-10-width-(adjustable ? 14 : 0),y:rect.midY-9,width:width,height:18)
+                CanvasTheme.fill(chip,selected ? CGColor(gray:1,alpha:0.12) : CanvasTheme.inset,radius:9,in:context)
+                (option.value as NSString).draw(in:chip.offsetBy(dx:0,dy:1.5),withAttributes:style)
+                if adjustable,selected {
+                    let arrows = CanvasTheme.attributes(CanvasTheme.font(12,.bold),CanvasTheme.accent,alignment:.center)
+                    ("‹" as NSString).draw(in:CGRect(x:chip.minX-13,y:chip.minY,width:12,height:18),withAttributes:arrows)
+                    ("›" as NSString).draw(in:CGRect(x:chip.maxX+1,y:chip.minY,width:12,height:18),withAttributes:arrows)
+                }
             }
         }
         if !value.footer.isEmpty {
@@ -739,6 +783,10 @@ final class CanvasOverlayView:NSView {
             }
             value.selected = index;selector = value;revealSelection();needsDisplay = true
         }
+        if [123,124].contains(event.keyCode),let adjust = value.onAdjust,!value.horizontal,
+           value.options.indices.contains(value.selected),!value.options[value.selected].value.isEmpty,value.options[value.selected].enabled {
+            adjust(value.selected,event.keyCode == 124 ? 1 : -1);return
+        }
         switch event.keyCode {
         case 125,124: step(1)          // down, right
         case 126,123: step(-1)         // up, left
@@ -812,7 +860,7 @@ final class CanvasOverlayView:NSView {
         guard let value = selector else { return }
         let point = canvasPoint(event),shape = layout(value)
         if let hit = shape.options.first(where:{ $0.rect.insetBy(dx:-3,dy:-2).contains(point) }) { choose(hit.index) }
-        else if value.cancellable,!shape.panel.contains(point) { choose(nil) }
+        else if value.cancellable,value.cancelsOnOutsideClick,!shape.panel.contains(point) { choose(nil) }
     }
     override func scrollWheel(with event:NSEvent) {
         if var value = sheet,value.mode == .list,event.scrollingDeltaY != 0,!value.rows.isEmpty {

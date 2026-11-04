@@ -145,7 +145,16 @@ final class OriginalBattleView:NSView {
     func playDuel(_ steps:[OriginalDuelStep],then done:@escaping ()->Void) {
         duelPlayer = OriginalDuelPlayer(steps:steps);afterDuel = done;needsDisplay = true
     }
+    /// MAIN0x28D57..0x28D74: while it waits for input the battle re-arms
+    /// CF5:2502(4), four units of six ticks, and flips byte5 of DS:E196
+    /// (1CB6:7904); 2A0E0 draws a unit that has not acted with frame 0 or 1
+    /// by that byte. The engine keeps the flip running in every phase.
+    static let idleSeconds = 24*OriginalBattleAnimator.tick
+    private var idlePhase:UInt8 = 0
+    private var idleClock = 0.0
     func advanceAnimation(_ seconds:Double) {
+        idleClock += seconds
+        if idleClock >= Self.idleSeconds { idleClock = idleClock.truncatingRemainder(dividingBy:Self.idleSeconds);idlePhase ^= 1;needsDisplay = true }
         if var player = duelPlayer {
             for action in player.advance(seconds,soundBusy:soundBusy?() ?? false) {
                 switch action {
@@ -354,26 +363,80 @@ final class OriginalBattleView:NSView {
     }
     /// The 기능 button opens MAIN27D12's list. Items without a restored
     /// handler stay visible and disabled.
-    private func openFunctionMenu() {
+    /// Engine menus carry a symbol per action; original frames stay plain.
+    private func icon(_ action:String) -> String? {
+        guard presentation == .modern else { return nil }
+        return ["end-turn":"flag.checkered","retreat":"arrow.uturn.backward","conditions":"target","unit-combat":"rectangle.on.rectangle",
+                "move-speed":"hare.fill","enemy-move":"eye.fill","bgm":"music.note","sound":"speaker.wave.2.fill",
+                "battle-pace":"gauge.with.dots.needle.67percent","quit":"power","attack":"figure.fencing","strategy":"sparkles",
+                "item":"bag.fill","wait":"hourglass","strike":"bolt.fill","release":"eye","use":"hand.tap.fill",
+                "give":"arrow.left.arrow.right","drop":"trash","inspect":"magnifyingglass"][action]
+    }
+    private static var paceLabels:[String] {
+        OriginalSettings.battlePaceRates.map { $0 == 1 ? "보통" : String(format:$0 == $0.rounded() ? "%.0f배" : "%.1f배",$0) }
+    }
+    /// One setting row: its choices, the current one and how a choice is stored.
+    private func settingChoices(_ action:String) -> (labels:[String],current:Int,apply:(inout OriginalSettings,Int) -> Void)? {
+        guard let texts = settingsTexts else { return nil }
+        let settings = OriginalSettings.current
+        switch action {
+        case "unit-combat":return (texts.show,settings.unitCombat,{ $0.unitCombat = $1 })
+        case "move-speed":return (texts.moveSpeed,settings.moveSpeed,{ $0.moveSpeed = $1 })
+        case "enemy-move":return (texts.show,settings.enemyMove ? 0 : 1,{ $0.enemyMove = $1 == 0 })
+        case "battle-pace":return (Self.paceLabels,settings.battlePace,{ $0.battlePace = $1 })
+        case "bgm":return (texts.onOff,OriginalAudio.musicEnabled ? 0 : 1,{ _,index in OriginalAudio.musicEnabled = index == 0 })
+        case "sound":return (texts.onOff,OriginalAudio.effectsEnabled ? 0 : 1,{ _,index in OriginalAudio.effectsEnabled = index == 0 })
+        default:return nil
+        }
+    }
+    /// Steps a setting row to its next or previous choice, as MAIN27DC4's
+    /// selector would store it.
+    private func changeSetting(_ action:String,by delta:Int) {
+        guard let choice = settingChoices(action),!choice.labels.isEmpty else { return }
+        var settings = OriginalSettings.current
+        choice.apply(&settings,(choice.current+delta+choice.labels.count)%choice.labels.count)
+        OriginalSettings.current = settings
+        session.sourceOptionsWord = settings.battleWord;needsDisplay = true
+    }
+    private func openFunctionMenu(selected:Int = 0) {
         guard canInput,phase == .idle,strategySelection == nil else { return }
         var restored:Set<String> = menuTexts == nil ? ["end-turn"] : ["end-turn","retreat","quit"]
-        if settingsTexts != nil { restored.formUnion(["unit-combat","move-speed","enemy-move","bgm","sound"]) }
+        if settingsTexts != nil { restored.formUnion(["unit-combat","move-speed","enemy-move","bgm","sound","battle-pace"]) }
         if objective != nil,style.commands != nil { restored.insert("conditions") }
-        let items = menuTexts?.items ?? [OriginalTitleMenuItem(index:0,action:"end-turn",text:"End turn")]
+        var items = menuTexts?.items ?? [OriginalTitleMenuItem(index:0,action:"end-turn",text:"End turn")]
+        // Engine addition after the source rows: how fast the battle plays.
+        if settingsTexts != nil,let quit = items.firstIndex(where:{ $0.action == "quit" }) {
+            items.insert(OriginalTitleMenuItem(index:-1,action:"battle-pace",text:"전투 속도"),at:quit)
+        }
         functionOpen = true;needsDisplay = true
-        overlay.show(CanvasMenu(title:"",options:items.map { .init(label:$0.text,enabled:restored.contains($0.action)) },cancellable:true) { [weak self] index in
+        // Settings show their current choice and change in place (click or left/right).
+        let options = items.map { item -> CanvasMenu.Option in
+            var option = CanvasMenu.Option(label:item.text,enabled:restored.contains(item.action))
+            if let choice = settingChoices(item.action),choice.labels.indices.contains(choice.current) { option.value = choice.labels[choice.current] }
+            option.icon = icon(item.action)
+            option.destructive = ["retreat","quit"].contains(item.action)
+            option.separatorBefore = ["unit-combat","quit"].contains(item.action)
+            return option
+        }
+        var menu = CanvasMenu(title:"",options:options,selected:selected,cancellable:true) { [weak self] index in
             guard let self = self else { return }
             self.functionOpen = false;self.needsDisplay = true
             guard let index = index else { return }
             switch items[index].action {
             case "end-turn": self.requestEndTurn()
-            case "unit-combat","move-speed","enemy-move","bgm","sound": self.openSetting(items[index].action)
+            case "unit-combat","move-speed","enemy-move","bgm","sound","battle-pace":
+                self.changeSetting(items[index].action,by:1);self.openFunctionMenu(selected:index)
             case "retreat": self.requestRetreat()
             case "conditions": self.showConditions(opening:false)
             case "quit": self.requestQuit()
             default: break
             }
-        })
+        }
+        menu.onAdjust = { [weak self] index,delta in
+            guard let self = self,self.settingChoices(items[index].action) != nil else { return }
+            self.changeSetting(items[index].action,by:delta);self.openFunctionMenu(selected:index)
+        }
+        overlay.show(menu,keepScroll:true)
     }
     /// MAIN27DC4..27E7B and 27774. A pick takes effect at once.
     private func openSetting(_ action:String) {
@@ -384,6 +447,9 @@ final class OriginalBattleView:NSView {
         case "unit-combat":labels = texts.show;current = settings.unitCombat;apply = { settings.unitCombat = $0 }
         case "move-speed":labels = texts.moveSpeed;current = settings.moveSpeed;apply = { settings.moveSpeed = $0 }
         case "enemy-move":labels = texts.show;current = settings.enemyMove ? 0 : 1;apply = { settings.enemyMove = $0 == 0 }
+        case "battle-pace":
+            labels = OriginalSettings.battlePaceRates.map { $0 == 1 ? "보통" : String(format:$0 == $0.rounded() ? "%.0f배" : "%.1f배",$0) }
+            current = settings.battlePace;apply = { settings.battlePace = $0 }
         case "bgm":labels = texts.onOff;current = OriginalAudio.musicEnabled ? 0 : 1;apply = { OriginalAudio.musicEnabled = $0 == 0 }
         default:labels = texts.onOff;current = OriginalAudio.effectsEnabled ? 0 : 1;apply = { OriginalAudio.effectsEnabled = $0 == 0 }
         }
@@ -414,8 +480,11 @@ final class OriginalBattleView:NSView {
     /// MAIN2DAE0: a hidden unit (mask20 clear) gets the two ambush entries.
     private func commandMenu(_ slot:Int,_ choose:@escaping (Int?) -> Void) -> CanvasMenu? {
         guard let unit = session.units[slot] else { return nil }
-        let labels = unit.scriptFlags&0x20 != 0 ? (style.commands?.labels ?? ["Attack","Strategy","Item","Wait"]) : (style.commands?.ambush ?? ["Strike","Release"])
-        return CanvasMenu(title:"",options:labels.map { .init(label:$0) },cancellable:true,anchor:windowOrigin(slot,depth:0),onChoose:choose)
+        let shown = unit.scriptFlags&0x20 != 0
+        let labels = shown ? (style.commands?.labels ?? ["Attack","Strategy","Item","Wait"]) : (style.commands?.ambush ?? ["Strike","Release"])
+        let actions = shown ? ["attack","strategy","item","wait"] : ["strike","release"]
+        let options = labels.enumerated().map { CanvasMenu.Option(label:$0.element,icon:actions.indices.contains($0.offset) ? icon(actions[$0.offset]) : nil) }
+        return CanvasMenu(title:"",options:options,cancellable:true,anchor:windowOrigin(slot,depth:0),onChoose:choose)
     }
     private func openCommand(_ slot:Int) {
         updateCamera()
@@ -505,7 +574,9 @@ final class OriginalBattleView:NSView {
     private func itemName(_ id:Int) -> String { itemRecord(id)?.name ?? "도구 #\(id)" }
     private var itemActionLabels:[String] { style.commands?.itemActions ?? ["Use","Give","Drop","Inspect"] }
     private func itemActionMenu(_ slot:Int,_ choose:@escaping (Int?) -> Void) -> CanvasMenu {
-        CanvasMenu(title:"",options:itemActionLabels.map { .init(label:$0) },cancellable:true,anchor:windowOrigin(slot,depth:1),onChoose:choose)
+        let actions = ["use","give","drop","inspect"]
+        return CanvasMenu(title:"",options:itemActionLabels.enumerated().map { CanvasMenu.Option(label:$0.element,icon:actions.indices.contains($0.offset) ? icon(actions[$0.offset]) : nil) },
+                          cancellable:true,anchor:windowOrigin(slot,depth:1),onChoose:choose)
     }
     /// MAIN2DE42..2DEF7: the item command needs at least one held item.
     private func openItems(_ slot:Int) {
@@ -945,7 +1016,7 @@ final class OriginalBattleView:NSView {
             if let sprites = sprites {
                 do {
                     let image = try walker.map { try sprites.image(unit:unit,classID:person.classID,direction:$0.direction,stepPixels:$0.stepPixels) }
-                        ?? sprites.image(unit:unit,classID:person.classID)
+                        ?? sprites.image(unit:unit,classID:person.classID,phase:idlePhase)
                     // Modern: a friendly unit that has acted (flag80) is drawn darker.
                     if modern,!unit.enemy,unit.scriptFlags&0x80 != 0,walker == nil {
                         context.beginTransparencyLayer(in:box,auxiliaryInfo:nil)
