@@ -3,7 +3,9 @@ import Foundation
 
 /// The player's options, from the object at DS:7A80: word +4 holds the battle
 /// settings, byte +13 the field speed, and word +A the monitor and sound bits.
-/// They stay per user, so replays and tests always run the source defaults.
+/// They stay per user, so replays and tests always run the source defaults
+/// (the new-game word +4 is zero). The window's defaults differ in one place:
+/// it follows enemy moves.
 struct OriginalSettings:Codable,Equatable {
     /// 노웨이트 to 느리다: three ticks a step per level (MAIN24818).
     var speed = 2
@@ -11,8 +13,9 @@ struct OriginalSettings:Codable,Equatable {
     var moveSpeed = 0
     /// 본다 or 안 본다 (high nibble). Zero asks for the enlarged combat view.
     var unitCombat = 0
-    /// Bit 0x1000: the camera follows enemy moves (MAIN2C4D6).
-    var enemyMove = false
+    /// Bit 0x1000: the camera follows enemy moves (MAIN2C4D6). The source
+    /// starts with it clear; the engine window starts with it set.
+    var enemyMove = true
     /// Bit 8 of word +A: the grey palette.
     var monochrome = false
     /// Engine addition: one output level for the single chip.
@@ -29,7 +32,12 @@ struct OriginalSettings:Codable,Equatable {
     static let battlePaceRates:[Double] = [1,1.5,2,3]
     var battleRate:Double { Self.battlePaceRates.indices.contains(battlePace) ? Self.battlePaceRates[battlePace] : 1 }
 
-    private enum CodingKeys:String,CodingKey { case speed,moveSpeed,unitCombat,enemyMove,monochrome,volume,scroll,autoAdvance,battlePace }
+    /// Revision 1 turned enemy following on for settings stored before it,
+    /// once; a later choice of 안 본다 is kept.
+    static let currentRevision = 1
+    var revision = Self.currentRevision
+
+    private enum CodingKeys:String,CodingKey { case speed,moveSpeed,unitCombat,enemyMove,monochrome,volume,scroll,autoAdvance,battlePace,revision }
     init() {}
     /// Settings stored by an older build keep their values; a missing key takes its default.
     init(from decoder:Decoder) throws {
@@ -38,6 +46,7 @@ struct OriginalSettings:Codable,Equatable {
         moveSpeed = try values.decodeIfPresent(Int.self,forKey:.moveSpeed) ?? blank.moveSpeed
         unitCombat = try values.decodeIfPresent(Int.self,forKey:.unitCombat) ?? blank.unitCombat
         enemyMove = try values.decodeIfPresent(Bool.self,forKey:.enemyMove) ?? blank.enemyMove
+        if (try values.decodeIfPresent(Int.self,forKey:.revision) ?? 0) < 1 { enemyMove = true }
         monochrome = try values.decodeIfPresent(Bool.self,forKey:.monochrome) ?? blank.monochrome
         volume = try values.decodeIfPresent(Float.self,forKey:.volume) ?? blank.volume
         scroll = try values.decodeIfPresent(Int.self,forKey:.scroll).flatMap { Self.scrollSteps.contains($0) ? $0 : nil } ?? blank.scroll

@@ -51,7 +51,9 @@ func originalBattleAnimationSelfTests() throws {
     _ = shot.advance(24*tick)
     try check(shot.shot?.frame == 4,"the catapult throws the stone frame")
     var settings = OriginalSettings()
-    try check(settings.speed == 2 && settings.timeScale == 1 && settings.battleWord == 0,"source defaults change nothing")
+    try check(settings.speed == 2 && settings.timeScale == 1 && settings.battleWord == 0x1000,"window defaults are the source's but follow enemy moves")
+    settings.enemyMove = false
+    try check(settings.battleWord == 0,"the source new-game word is zero")
     settings.speed = 1;settings.moveSpeed = 4;settings.unitCombat = 1;settings.enemyMove = true
     try check(settings.timeScale == 2 && settings.battleWord == 0x1014,"options pack as the source word")
     settings.speed = 3

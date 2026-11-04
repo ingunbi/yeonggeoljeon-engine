@@ -108,6 +108,8 @@ func selfTests() throws {
     let uneven = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"scroll":3}"#.utf8))
     try check(older.speed == 3 && older.monochrome && older.scroll == 1 && stepped.scroll == 4 && uneven.scroll == 1,
               "stored settings without a scroll step keep their values; only 1, 2, 4 and 8 are steps")
+    let chosen = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"enemyMove":false,"revision":1}"#.utf8))
+    try check(older.enemyMove && !chosen.enemyMove,"settings from before revision 1 follow enemy moves once; a later 안 본다 stays")
     let paced = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"battlePace":3}"#.utf8))
     let overPaced = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"battlePace":9}"#.utf8))
     try check(older.battleRate == 1 && paced.battleRate == 3 && overPaced.battlePace == 0,"battle pace defaults to the source speed and keeps only listed rates")
