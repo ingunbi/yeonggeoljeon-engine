@@ -266,7 +266,7 @@ final class CanvasOverlayView:NSView {
         window?.makeFirstResponder(self)
     }
     /// Auto mode closes a waiting line after DialoguePace.readingSeconds once
-    /// all of it shows; the bar along the box shows the pause running out.
+    /// all of it shows.
     private func updateAuto() {
         guard let value = notice,value.waitsAsLine,onLineControl != nil,DialoguePace.shared.auto,!revealing else {
             autoTimer?.invalidate();autoTimer = nil;autoStart = nil;return
@@ -278,10 +278,6 @@ final class CanvasOverlayView:NSView {
             self.needsDisplay = true
             if Date().timeIntervalSince(start) >= DialoguePace.readingSeconds(value.text,speed:DialoguePace.shared.speed) { self.dismissNotice() }
         }
-    }
-    private var autoProgress:CGFloat? {
-        guard let start = autoStart,let value = notice else { return nil }
-        return min(1,CGFloat(Date().timeIntervalSince(start)/DialoguePace.readingSeconds(value.text,speed:DialoguePace.shared.speed)))
     }
     private func close() {
         noticeTimer?.invalidate();noticeTimer = nil;stopReveal()
@@ -356,30 +352,52 @@ final class CanvasOverlayView:NSView {
         if value.selected >= firstVisible+shown { firstVisible = value.selected-shown+1 }
         firstVisible = min(max(0,firstVisible),max(0,value.options.count-shown))
     }
-    private static let titleRow:CGFloat = 26
+    /// The engine title screen: wide buttons in a column hanging from the
+    /// anchor, each with its symbol, a value chip for a setting and a chevron.
+    private static let titleButton = CGSize(width:268,height:25),titleGap:CGFloat = 6
     private func titleLayout(_ value:CanvasMenu) -> Layout {
-        let style = attributes(size:16)
-        let labelWidth = value.options.map { ceil(($0.label as NSString).size(withAttributes:style).width) }.max() ?? 0
-        let width = max(200,labelWidth+72),height = CGFloat(value.options.count)*Self.titleRow+16
+        let size = Self.titleButton,step = size.height+Self.titleGap
+        let height = CGFloat(value.options.count)*step-Self.titleGap
         let top = value.anchor ?? CGPoint(x:viewport.midX,y:viewport.midY-height/2)
-        let panel = CGRect(x:top.x-width/2,y:min(top.y,viewport.maxY-height-4),width:width,height:height).integral
-        let options = value.options.indices.map { (index:$0,rect:CGRect(x:panel.minX+8,y:panel.minY+8+CGFloat($0)*Self.titleRow,width:width-16,height:Self.titleRow-2)) }
+        let panel = CGRect(x:top.x-size.width/2,y:min(top.y,viewport.maxY-height-4),width:size.width,height:height).integral
+        let options = value.options.indices.map { (index:$0,rect:CGRect(x:panel.minX,y:panel.minY+CGFloat($0)*step,width:size.width,height:size.height)) }
         return Layout(panel:panel,title:.zero,options:options,footer:.zero,moreAbove:false,moreBelow:false)
     }
     private func drawTitleMenu(_ value:CanvasMenu,in context:CGContext) {
         let shape = titleLayout(value)
-        CanvasTheme.fill(shape.panel,CGColor(red:0.05,green:0.05,blue:0.07,alpha:0.62),radius:12,in:context)
         for (index,rect) in shape.options {
             let option = value.options[index],selected = index == value.selected
-            if selected { CanvasTheme.fill(rect,CanvasTheme.accentFill,radius:6,in:context) }
-            let color = selected ? CanvasTheme.onAccent : option.enabled ? CanvasTheme.text : CanvasTheme.disabled
-            let font = CanvasTheme.font(16,selected ? .bold : .semibold)
-            (option.label as NSString).draw(in:CGRect(x:rect.minX,y:rect.midY-11,width:rect.width,height:22),
-                                            withAttributes:CanvasTheme.attributes(font,color,alignment:.center))
-            if option.checked == true {
+            context.saveGState()
+            context.setShadow(offset:CGSize(width:0,height:2),blur:8,color:CGColor(gray:0,alpha:0.5))
+            CanvasTheme.fill(rect,selected ? CGColor(red:0.20,green:0.16,blue:0.09,alpha:0.92) : CGColor(red:0.05,green:0.06,blue:0.09,alpha:0.80),radius:7,in:context)
+            context.restoreGState()
+            CanvasTheme.stroke(rect,selected ? CanvasTheme.accentFill : CGColor(gray:1,alpha:0.10),radius:7,in:context)
+            if selected {
+                CanvasTheme.stroke(rect.insetBy(dx:0.5,dy:0.5),CanvasTheme.accentFill,radius:7,in:context)
+                CanvasTheme.fill(CGRect(x:rect.minX+6,y:rect.minY+6,width:3,height:rect.height-12),CanvasTheme.accentFill,radius:1.5,in:context)
+            }
+            let color = !option.enabled ? CanvasTheme.disabled : option.destructive && selected ? CanvasTheme.danger : CanvasTheme.text
+            var x = rect.minX+18
+            if let name = option.icon {
+                drawSymbol(name,in:CGRect(x:x,y:rect.midY-8,width:16,height:16),color:selected ? CanvasTheme.accent : CanvasTheme.muted)
+                x += 26
+            } else if option.checked == true {
                 // The current setting carries a dot at the row's left.
-                context.setFillColor(selected ? CanvasTheme.onAccent.cgColor : CanvasTheme.accentFill)
-                context.fillEllipse(in:CGRect(x:rect.minX+12,y:rect.midY-3.5,width:7,height:7))
+                context.setFillColor(CanvasTheme.accentFill)
+                context.fillEllipse(in:CGRect(x:x+4,y:rect.midY-3.5,width:7,height:7));x += 22
+            } else if option.checked == false { x += 22 }
+            (option.label as NSString).draw(in:CGRect(x:x,y:rect.midY-10,width:rect.maxX-x-30,height:20),
+                                            withAttributes:CanvasTheme.attributes(CanvasTheme.font(14,selected ? .bold : .semibold),color))
+            if !option.value.isEmpty {
+                let style = CanvasTheme.attributes(CanvasTheme.font(11.5,.medium),selected ? CanvasTheme.text : CanvasTheme.muted,alignment:.center)
+                let width = ceil((option.value as NSString).size(withAttributes:style).width)+18
+                let chip = CGRect(x:rect.maxX-34-width,y:rect.midY-8.5,width:width,height:17)
+                CanvasTheme.fill(chip,CGColor(gray:1,alpha:selected ? 0.14 : 0.07),radius:8.5,in:context)
+                (option.value as NSString).draw(in:chip.offsetBy(dx:0,dy:1.5),withAttributes:style)
+            }
+            if selected {
+                ((value.onAdjust != nil && !option.value.isEmpty ? "‹ ›" : "›") as NSString).draw(in:CGRect(x:rect.maxX-30,y:rect.midY-10,width:22,height:20),
+                    withAttributes:CanvasTheme.attributes(CanvasTheme.font(14,.bold),CanvasTheme.accent,alignment:.center))
             }
         }
     }
@@ -668,12 +686,6 @@ final class CanvasOverlayView:NSView {
             else if item.control == hoveredControl { CanvasTheme.fill(item.rect,CanvasTheme.selection,radius:item.rect.height/2,in:context) }
             let color = on ? CanvasTheme.onAccent : item.control == hoveredControl ? CanvasTheme.text : CanvasTheme.muted
             (item.label as NSString).draw(in:item.rect.insetBy(dx:0,dy:3),withAttributes:CanvasTheme.attributes(CanvasTheme.font(11,.medium),color,alignment:.center))
-        }
-        // The pause auto mode has left before it closes the line.
-        if let progress = autoProgress {
-            let track = CGRect(x:rect.minX+14,y:rect.maxY-4,width:rect.width-28,height:2)
-            CanvasTheme.fill(track,CanvasTheme.inset,radius:1,in:context)
-            CanvasTheme.fill(CGRect(x:track.minX,y:track.minY,width:track.width*progress,height:2),CanvasTheme.accentFill,radius:1,in:context)
         }
     }
     private func drawNotice(_ value:CanvasNotice,in context:CGContext) {

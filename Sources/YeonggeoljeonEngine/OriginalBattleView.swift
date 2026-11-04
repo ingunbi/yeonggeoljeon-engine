@@ -241,7 +241,7 @@ final class OriginalBattleView:NSView {
         yesNo(texts.retreat.confirm.text) { [weak self] yes in
             guard let self = self,yes else { return }
             do { try self.flow.requestRetreat();self.selected = nil;self.message = "총퇴각: 전투 개시 시점의 원작 체크포인트로 돌아갑니다." }
-            catch { self.message = "\(error)" }
+            catch { self.report(error) }
             self.needsDisplay = true
         }
     }
@@ -250,7 +250,7 @@ final class OriginalBattleView:NSView {
         guard canInput,let texts = menuTexts else { return }
         yesNo(texts.quit.confirm.text) { [weak self] yes in
             guard let self = self,yes else { return }
-            do { try self.flow.requestQuit();self.selected = nil } catch { self.message = "\(error)" }
+            do { try self.flow.requestQuit();self.selected = nil } catch { self.report(error) }
             self.needsDisplay = true
         }
     }
@@ -260,12 +260,12 @@ final class OriginalBattleView:NSView {
     private func requestEndTurn() {
         let left = session.turns.stage == .manualFriendly ? readyUnits().count : 0
         guard confirmsTurnEnd,left > 0,canInput else {
-            do { try endTurn() } catch { message = "\(error)" }
+            do { try endTurn() } catch { report(error) }
             return
         }
         yesNo("아직 행동하지 않은 부대가 \(left)개 있습니다. 턴을 끝낼까요?") { [weak self] yes in
             guard let self = self,yes else { return }
-            do { try self.endTurn() } catch { self.message = "\(error)" }
+            do { try self.endTurn() } catch { self.report(error) }
             self.needsDisplay = true
         }
     }
@@ -497,14 +497,14 @@ final class OriginalBattleView:NSView {
             guard let self = self else { return }
             guard let index = index else { self.cancelCommand(slot);return }
             do { if hidden { try self.runAmbushCommand(index,slot) } else { try self.runCommand(index,slot) } }
-            catch { self.message = "\(error)";self.openCommand(slot) }
+            catch { self.report(error);self.openCommand(slot) }
             self.needsDisplay = true
         }) else { return }
         overlay.show(menu)
     }
     /// MAIN2DE08..2DE1D clears moved40 and returns the unit to its origin.
     private func cancelCommand(_ slot:Int) {
-        do { try session.cancelMove(slot) } catch { message = "\(error)" }
+        do { try session.cancelMove(slot) } catch { report(error) }
         resetCommand();needsDisplay = true
     }
     private func runCommand(_ index:Int,_ slot:Int) throws {
@@ -522,7 +522,7 @@ final class OriginalBattleView:NSView {
         yesNo(refusal("releaseAmbush")) { [weak self] yes in
             guard let self = self else { return }
             if yes {
-                do { try self.flow.manualReleaseAmbush(slot) } catch { self.message = "\(error)" }
+                do { try self.flow.manualReleaseAmbush(slot) } catch { self.report(error) }
             }
             self.openCommand(slot)
         }
@@ -598,7 +598,7 @@ final class OriginalBattleView:NSView {
         overlay.show(CanvasMenu(title:"",options:items.map { .init(label:itemName($0)) },cancellable:true,anchor:windowOrigin(slot,depth:2)) { [weak self] index in
             guard let self = self else { return }
             guard let index = index else { self.openItems(slot);return }
-            do { try self.runItemAction(action,item:items[index],slot) } catch { self.message = "\(error)";self.openItemList(slot,action:action) }
+            do { try self.runItemAction(action,item:items[index],slot) } catch { self.report(error);self.openItemList(slot,action:action) }
             self.needsDisplay = true
         },behind:[commandMenu(slot) { _ in },itemActionMenu(slot) { _ in }].compactMap { $0 })
     }
@@ -666,7 +666,7 @@ final class OriginalBattleView:NSView {
             }
             phase = .itemTarget(slot,item:item)
             message = "\(itemName(item))의 대상을 클릭하세요. 오른쪽 클릭·Esc: 취소";needsDisplay = true
-        } catch { message = "\(error)";openItemList(slot,action:0) }
+        } catch { report(error);openItemList(slot,action:0) }
     }
     private func pickItemTarget(_ slot:Int,item:Int,point:GridPoint,target:OriginalLiveUnit?) throws {
         let use = OriginalItemUse.of(item)
@@ -707,7 +707,7 @@ final class OriginalBattleView:NSView {
         do {
             if let result = try flow.manualItem(slot,item:item,target:target) { finishItem(result) }
             else { waitingForItem = true;resetCommand();message = "도구의 퇴장 대사·이벤트가 끝나기를 기다립니다." }
-        } catch { message = "\(error)";openItemList(slot,action:0) }
+        } catch { report(error);openItemList(slot,action:0) }
         needsDisplay = true
     }
     /// MAIN2E807: a completed use ends the action; a refusal returns to the list.
@@ -784,7 +784,7 @@ final class OriginalBattleView:NSView {
             selected = slot
             strategySelection = StrategySelection(abilityID:ability,targetSlot:ability < 30 ? targets.first : nil)
             if let line = strategyIntent(ability) { message = line } else { message = ability < 30 ? "\(strategyTitle(ability)): 표시된 대상을 클릭하거나 화살표·Tab으로 선택한 뒤 Enter를 누르세요." : "\(strategyTitle(ability)): 표시된 \(targets.count)개 부대에 적용합니다. Enter로 확인하세요." }
-        } catch {message = "\(error)";openCommand(slot)}
+        } catch {report(error);openCommand(slot)}
     }
     private func cancelStrategy() {
         guard canInput else {return}
@@ -809,7 +809,7 @@ final class OriginalBattleView:NSView {
                     if result.completed {self.resetCommand()} else {self.openCommand(slot)}
                 }
                 else {self.waitingForStrategy = true;self.resetCommand();self.message = "책략의 퇴장 대사·이벤트가 끝나기를 기다립니다."}
-            } catch { self.message = "\(error)";self.resetCommand() }
+            } catch { self.report(error);self.resetCommand() }
             self.needsDisplay = true
         }
     }
@@ -1101,6 +1101,14 @@ final class OriginalBattleView:NSView {
             .strokeColor:NSColor(white:0,alpha:alpha*0.85),.strokeWidth:6]
         (text as NSString).draw(in:rect,withAttributes:outline)
         (text as NSString).draw(in:rect,withAttributes:[.font:CanvasTheme.number(12,.heavy),.paragraphStyle:paragraph,.foregroundColor:color])
+    }
+    /// A refusal the player should read is a Korean reason, shown without the
+    /// error's prefix; engine diagnostics go to the console, not the status chip.
+    private func report(_ error:Error) {
+        if case BattleError.illegalAction(let reason) = error,reason.unicodeScalars.contains(where:{ (0xAC00...0xD7A3).contains($0.value) }) {
+            message = reason;return
+        }
+        FileHandle.standardError.write(Data("전투 입력 거부: \(error)\n".utf8))
     }
     struct Tint { var red:CGFloat;var green:CGFloat;var blue:CGFloat;var alpha:CGFloat }
     private static let moveTint = Tint(red:0.2,green:0.6,blue:1,alpha:0.25)
@@ -1510,7 +1518,7 @@ final class OriginalBattleView:NSView {
                 if choice.abilityID < 30 {choice.targetSlot = target.slot;strategySelection = choice;try executeSelectedStrategy()}
                 else {message = "범위 책략은 Enter로 전체 대상 적용을 확인하세요."}
             } else { try clickField(point,target) }
-        } catch { message = "\(error)" }
+        } catch { report(error) }
         needsDisplay = true
     }
     /// MAIN27C7A: a click with no unit under it shows that cell's terrain.
@@ -1570,7 +1578,7 @@ final class OriginalBattleView:NSView {
                 do {
                     if let result = try self.flow.finishManualOperation().attack { self.showAttackResult(result) }
                     else {self.waitingForAttack = true;self.message = "공격의 퇴장 대사·이벤트가 끝나기를 기다립니다."}
-                } catch { self.message = "\(error)" }
+                } catch { self.report(error) }
                 self.needsDisplay = true
             }
         case .giveTarget(let slot,let item):
@@ -1667,7 +1675,7 @@ final class OriginalBattleView:NSView {
             } else if [36,76].contains(event.keyCode) {
                 if phase == .idle { requestEndTurn() }
             } else { super.keyDown(with:event) }
-        } catch { message = "\(error)" }
+        } catch { report(error) }
         needsDisplay = true
     }
     /// The menu shows whether the threat view is on, however it was turned on.

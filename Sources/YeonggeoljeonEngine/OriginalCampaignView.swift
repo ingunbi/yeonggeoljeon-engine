@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import AppKit
+import CoreImage
 
 final class OriginalCampaignView:NSView,EngineTimedView {
     let host:OriginalCampaignHost
@@ -182,7 +183,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         yesNo("빠른 저장을 불러올까요?") { [weak self] yes in
             guard yes,let self = self else { return }
             do { self.replace(with:try OriginalCampaignView(host:try OriginalCampaignHost.resume(data:self.host.data,from:slots.read(.quick)))) }
-            catch { self.recordInputError(error) }
+            catch { self.recordInputError(error,message:"빠른 저장을 불러오지 못했습니다.") }
         }
     }
     /// An engine addition: an idle field writes the autosave whenever its
@@ -790,13 +791,19 @@ final class OriginalCampaignView:NSView,EngineTimedView {
                                  return font.picture(label,red:rgb[0],green:rgb[1],blue:rgb[2])
                              } }))
     }
-    /// The engine layout sets the rows between the logo and the copyright line
-    /// of the opening's title picture; the original frames use MAIN's window.
-    private static let titleAnchor = CGPoint(x:320,y:262)
+    /// The engine title screen sets its buttons under the picture band (see
+    /// drawRemakeTitle); the original frames use MAIN's window.
+    private static let titleAnchor = CGPoint(x:320,y:228)
+    /// Engine rows over MAIN's four title actions, plus an explicit quit.
+    private static let modernTitle:[(label:String,icon:String)] = [("새 게임","play.fill"),("이어하기","tray.and.arrow.up.fill"),
+        ("환경 설정","slider.horizontal.3"),("오프닝 보기","film.fill"),("종료","power")]
     private func titleMenu(_ choose:@escaping (Int?) -> Void = { _ in }) -> CanvasMenu {
         let items = host.framework?.titleMenu?.map(\.text) ?? ["새로 시작","이어하기","기능설정","오프닝"]
-        var menu = CanvasMenu(title:"",options:items.map { .init(label:$0) },cancellable:true,anchor:Self.titleAnchor,
-                              style:originalMenu("title") ?? .title,onChoose:choose)
+        let art = originalMenu("title")
+        let options:[CanvasMenu.Option] = art == nil
+            ? Self.modernTitle.map { CanvasMenu.Option(label:$0.label,icon:$0.icon,destructive:$0.label == "종료") }
+            : items.map { .init(label:$0) }
+        var menu = CanvasMenu(title:"",options:options,cancellable:true,anchor:Self.titleAnchor,style:art ?? .title,onChoose:choose)
         menu.cancelsOnOutsideClick = false
         return menu
     }
@@ -805,10 +812,12 @@ final class OriginalCampaignView:NSView,EngineTimedView {
     /// returns to the opening, as exit code0 runs OPEN before MAIN again.
     /// A cancel ends the game through the exit screen (main 0x1E605, 1E3A8).
     func presentTitleMenu() {
+        titleSubmenu = false
         overlay.viewport = CGRect(x:0,y:0,width:640,height:400)
         overlay.show(titleMenu { [weak self] chosen in
             guard let self = self else { return }
-            guard let chosen = chosen else {
+            // The engine's 종료 row ends the game the way a cancel does.
+            guard let chosen = chosen,chosen < 4 else {
                 self.startQuitScreen()
                 if self.screenPlayer == nil { self.window?.performClose(nil) }
                 return
@@ -978,8 +987,36 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         return CanvasMenu(title:"",options:labels.map { .init(label:$0) },selected:selected,cancellable:true,anchor:Self.titleAnchor,
                           style:originalMenu("settings") ?? .title,onChoose:choose)
     }
+    /// The engine title's settings: MAIN's three rows with their values,
+    /// changed in place, and a row back to the title buttons.
+    private static let titleSettingIcons = ["monitor":"display","bgm":"music.note","sound":"speaker.wave.2.fill","auto":"text.bubble.fill"]
+    private func presentModernTitleSettings(selected:Int = 0) {
+        titleSubmenu = true;needsDisplay = true
+        let actions = Self.titleSettings+["auto"]
+        let labels = actions.map { action in
+            action == "auto" ? "대사 자동 넘기기" : host.framework?.fieldMenu?.items.first(where:{ $0.action == action })?.text ?? action
+        }
+        var options = actions.enumerated().map { index,action -> CanvasMenu.Option in
+            var option = CanvasMenu.Option(label:labels[index],icon:Self.titleSettingIcons[action])
+            if let choice = settingChoices(action),choice.labels.indices.contains(choice.current) { option.value = choice.labels[choice.current] }
+            return option
+        }
+        options.append(.init(label:"돌아가기",icon:"chevron.backward"))
+        var menu = CanvasMenu(title:"",options:options,selected:selected,cancellable:true,anchor:Self.titleAnchor,style:.title) { [weak self] index in
+            guard let self = self else { return }
+            guard let index = index,actions.indices.contains(index) else { self.presentTitleMenu();return }
+            self.changeSetting(actions[index],by:1);self.presentModernTitleSettings(selected:index)
+        }
+        menu.onAdjust = { [weak self] index,delta in
+            guard let self = self,actions.indices.contains(index) else { return }
+            self.changeSetting(actions[index],by:delta);self.presentModernTitleSettings(selected:index)
+        }
+        menu.cancelsOnOutsideClick = false
+        overlay.show(menu,keepScroll:true)
+    }
     private func presentTitleSettings(selected:Int = 0) {
         let original = originalMenu("settings") != nil
+        if !original { presentModernTitleSettings(selected:selected);return }
         overlay.show(titleSettingsMenu(selected:selected) { [weak self] index in
             guard let self = self else { return }
             guard let index = index else { self.presentTitleMenu();return }
@@ -1040,7 +1077,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
                     let write = { [weak self] in
                         guard let self = self else { return }
                         do { try slots.write(try self.host.resumeSnapshot(),title:self.slotTitle,slot:index);done(true) }
-                        catch { self.recordInputError(error);done(false) }
+                        catch { self.recordInputError(error,message:"저장하지 못했습니다.");done(false) }
                     }
                     if entries[index] == nil { write() } else {
                         self.yesNo("이 슬롯을 덮어쓸까요?") { [weak self] yes in
@@ -1062,7 +1099,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
                     case .none:done(false)
                     }
                 }
-            } catch { self.recordInputError(error);done(false) }
+            } catch { self.recordInputError(error,message:"불러오지 못했습니다.");done(false) }
         })
     }
     /// A load reaches the map through C456 as well: black, then the new screen fades in.
@@ -1070,7 +1107,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         fadeThrough { [weak self] in
             guard let self = self else { return }
             do { let next = try make();self.replace(with:next);next.fadeIn() }
-            catch { self.recordInputError(error);done(false) }
+            catch { self.recordInputError(error,message:"불러오지 못했습니다.");done(false) }
         }
     }
     private func replace(with next:OriginalCampaignView) {
@@ -1133,7 +1170,9 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         // MAIN draws no picture behind its title menu (A7E8 clears to colour 0);
         // the engine layout keeps the opening's title picture there.
         let blankTitle = !host.hasStarted && host.ending == nil && CanvasPresentation.current == .original
-        if !blankTitle {
+        let remakeTitle = !host.hasStarted && host.ending == nil && CanvasPresentation.current == .modern
+        if remakeTitle { drawRemakeTitle(in:context,shape:shape) }
+        if !blankTitle,!remakeTitle {
             do {
                 // While a map change fades out, the old map stays on screen (MAIN
                 // loads the next one offscreen), so the last picture is kept.
@@ -1167,6 +1206,86 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         }
         context.restoreGState()
     }
+    // MARK: Engine title screen
+    private var remakeBackdrop:CGImage?
+    /// A title sub-list (settings) is open, where Esc goes back instead of quitting.
+    private var titleSubmenu = false
+    private static func blurred(_ image:CGImage,radius:Double) -> CGImage? {
+        let input = CIImage(cgImage:image).clampedToExtent()
+        guard let filter = CIFilter(name:"CIGaussianBlur") else { return nil }
+        filter.setValue(input,forKey:kCIInputImageKey);filter.setValue(radius,forKey:kCIInputRadiusKey)
+        guard let output = filter.outputImage?.cropped(to:CGRect(x:0,y:0,width:image.width,height:image.height)) else { return nil }
+        return CIContext().createCGImage(output,from:output.extent)
+    }
+    private func fillGradient(_ rect:CGRect,_ colors:[CGColor],vertical:Bool = true,in context:CGContext) {
+        guard let gradient = CGGradient(colorsSpace:CGColorSpaceCreateDeviceRGB(),colors:colors as CFArray,locations:nil) else { return }
+        context.saveGState();context.clip(to:rect)
+        context.drawLinearGradient(gradient,start:CGPoint(x:rect.minX,y:rect.minY),end:vertical ? CGPoint(x:rect.minX,y:rect.maxY) : CGPoint(x:rect.maxX,y:rect.minY),options:[])
+        context.restoreGState()
+    }
+    /// Engine presentation of MAIN's title: its picture blurred across the
+    /// window, its logo at full size on top, a crisp band of the blossoms,
+    /// and the title buttons (the overlay) under it. Original frames keep
+    /// MAIN's black screen and window.
+    private func drawRemakeTitle(in context:CGContext,shape:CanvasGeometry) {
+        guard let title = image(host.data.resources.title) else { return }
+        if remakeBackdrop == nil { remakeBackdrop = Self.blurred(title,radius:12) }
+        if let backdrop = remakeBackdrop {
+            let cover = max(bounds.width/640,bounds.height/400)*1.06
+            let size = CGSize(width:640*cover,height:400*cover)
+            context.saveGState();context.interpolationQuality = .high
+            context.translateBy(x:bounds.midX-size.width/2,y:bounds.midY+size.height/2);context.scaleBy(x:1,y:-1)
+            context.draw(backdrop,in:CGRect(origin:.zero,size:size))
+            context.restoreGState()
+        }
+        context.setFillColor(CGColor(red:0.03,green:0.04,blue:0.07,alpha:0.64));context.fill(bounds)
+        context.saveGState()
+        context.translateBy(x:shape.origin.x,y:shape.origin.y);context.scaleBy(x:shape.scale,y:shape.scale)
+        fillGradient(CGRect(x:-400,y:220,width:1440,height:400),[CGColor(red:0.02,green:0.03,blue:0.06,alpha:0),CGColor(red:0.02,green:0.03,blue:0.08,alpha:0.75)],in:context)
+        // The blossoms above MAIN's logo, as a wide band with soft edges.
+        // MAIN's picture leaves rows 0..39 black; the band starts under them.
+        let band = CGRect(x:0,y:140,width:640,height:80)
+        if let strip = title.cropping(to:CGRect(x:0,y:44,width:640,height:80)) { Renderer.image(strip,in:band,context:context) }
+        let shade = CGColor(red:0.03,green:0.04,blue:0.07,alpha:0.55),clear = CGColor(red:0.03,green:0.04,blue:0.07,alpha:0)
+        fillGradient(CGRect(x:0,y:band.minY,width:640,height:14),[shade,clear],in:context)
+        fillGradient(CGRect(x:0,y:band.maxY-14,width:640,height:14),[clear,shade],in:context)
+        let edge = CGColor(red:0.03,green:0.04,blue:0.07,alpha:0.85)
+        fillGradient(CGRect(x:0,y:band.minY,width:28,height:band.height),[edge,clear],vertical:false,in:context)
+        fillGradient(CGRect(x:612,y:band.minY,width:28,height:band.height),[clear,edge],vertical:false,in:context)
+        let gold = CGColor(red:0.91,green:0.75,blue:0.40,alpha:0.7),goldClear = CGColor(red:0.91,green:0.75,blue:0.40,alpha:0)
+        for y in [band.minY,band.maxY-1] { fillGradient(CGRect(x:0,y:y,width:640,height:1),[goldClear,gold,gold,goldClear],vertical:false,in:context) }
+        // MAIN's logo box at its own size.
+        // The box runs over columns 73..564 and rows 143..253 of the picture.
+        if let logo = title.cropping(to:CGRect(x:73,y:143,width:492,height:111)) {
+            context.saveGState()
+            context.setShadow(offset:CGSize(width:0,height:4),blur:14,color:CGColor(gray:0,alpha:0.7))
+            Renderer.image(logo,in:CGRect(x:74,y:6,width:492,height:111),context:context)
+            context.restoreGState()
+        }
+        // The romanised title, letter-spaced, and the engine's tag.
+        let subtitle = NSAttributedString(string:"SANGOKUSHI  EIKETSUDEN",attributes:[.font:NSFont(name:"Times New Roman Bold",size:10) ?? CanvasTheme.font(10,.bold),
+            .foregroundColor:NSColor(red:0.93,green:0.86,blue:0.70,alpha:0.95),.kern:4.2])
+        let tag = NSAttributedString(string:"REMAKE",attributes:[.font:CanvasTheme.font(7.5,.heavy),.foregroundColor:CanvasTheme.onAccent,.kern:2.2])
+        let subtitleWidth = ceil(subtitle.size().width),tagWidth = ceil(tag.size().width)+14,gap:CGFloat = 10
+        let left = 320-(subtitleWidth+gap+tagWidth)/2
+        subtitle.draw(at:CGPoint(x:left,y:122))
+        let pill = CGRect(x:left+subtitleWidth+gap,y:122,width:tagWidth,height:13)
+        CanvasTheme.fill(pill,CanvasTheme.accentFill,radius:6.5,in:context)
+        tag.draw(at:CGPoint(x:pill.minX+7,y:pill.minY+2))
+        // Key hints and the original's credit along the foot.
+        var x:CGFloat = 12
+        for (key,meaning) in [("↑↓","선택"),("Return","결정"),("Esc",titleSubmenu ? "뒤로" : "종료")] {
+            let keyText = NSAttributedString(string:key,attributes:[.font:CanvasTheme.font(8.5,.semibold),.foregroundColor:CanvasTheme.text])
+            let cap = CGRect(x:x,y:384,width:ceil(keyText.size().width)+10,height:12)
+            CanvasTheme.stroke(cap,CGColor(gray:1,alpha:0.35),radius:3,in:context)
+            keyText.draw(at:CGPoint(x:cap.minX+5,y:cap.minY+0.5))
+            let label = NSAttributedString(string:meaning,attributes:[.font:CanvasTheme.font(8.5),.foregroundColor:CanvasTheme.muted])
+            label.draw(at:CGPoint(x:cap.maxX+4,y:cap.minY+0.5));x = cap.maxX+4+ceil(label.size().width)+12
+        }
+        ("원작 © 1995 KOEI · 영걸전 엔진" as NSString).draw(in:CGRect(x:300,y:384,width:328,height:12),
+            withAttributes:CanvasTheme.attributes(CanvasTheme.font(8.5),CanvasTheme.muted,alignment:.right))
+        context.restoreGState()
+    }
     override func keyDown(with event:NSEvent) {
         if screenPlayer != nil { screenInput(escape:event.keyCode == 53);return }
         if fading { return }
@@ -1179,9 +1298,14 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             do { try host.acknowledge() } catch { recordInputError(error) };needsDisplay = true
         }
     }
-    private func recordInputError(_ error:Error) {
-        if host.failure != nil { errorText = "\(error)" }
-        else { inputNotice = "\(error)" }
+    /// A refused input (a blocked cell, a gated moment) stays off the screen:
+    /// it goes to the console for development, and `message` reaches the
+    /// player only where they need to know, such as a save that failed. A
+    /// stopped campaign still shows its reason.
+    private func recordInputError(_ error:Error,message:String? = nil) {
+        if host.failure != nil { errorText = "\(error)";return }
+        FileHandle.standardError.write(Data("입력 거부: \(error)\n".utf8))
+        inputNotice = message
     }
     /// OPEN leaves on a mouse button. END has one button loop at the very end.
     private func screenInput(escape:Bool) {
