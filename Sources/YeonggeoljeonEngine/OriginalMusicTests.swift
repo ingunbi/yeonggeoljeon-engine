@@ -159,6 +159,7 @@ func originalMusicSelfTests() throws {
     let render = OriginalAudio.render(song:song([60,48,24,0xFF],volume:0),tables:tables,seconds:0.5)
     try check(render.count == Int(0.5*OPL2Chip.sampleRate) && (render.map(abs).max() ?? 0) > 0.01,"the offline render makes sound")
     try check(render.allSatisfy{$0.isFinite},"it stays finite")
+    try check(OriginalAudio.verifiesPauseContinuity(song:song([60,48,24,0xFF],volume:0),tables:tables),"live audio fill pauses silently without advancing driver or chip, then resumes sample-exactly")
     let wave = OriginalAudio.wave([0,1,-1])
     try check(wave.count == 50 && wave.prefix(4).elementsEqual(Array("RIFF".utf8)),"the WAV writer keeps its header")
     print("Original music self-tests passed: \(checks)")

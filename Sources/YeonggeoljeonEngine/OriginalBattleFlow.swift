@@ -26,22 +26,45 @@ final class OriginalBattleFlow {
     /// A view that plays each native action sets this. The flow then holds
     /// before the action commits, so dialogue and results wait for the picture.
     var presentsNativeActions = false
+    /// Emits resolved snapshots for an independent native display policy.
+    /// It deliberately does not change sourceOptionsWord or its RNG prelude.
+    var emitsCombatPresentationCues = false
+    /// Called once at the transition into enemy AI, after upkeep and before
+    /// any enemy decision. Resuming held pictures does not repeat this hook.
+    var onEnemyTurnStart:(()->Void)?
+    /// Accepted commands only; view-only inspections and rejected operations are absent.
+    var onAcceptedInput:((OriginalPlayInput)->Void)?
     private var heldCues:[OriginalBattleCue] = []
     func takeCues() -> [OriginalBattleCue] { defer { heldCues = [] };return heldCues }
     var peekCues:[OriginalBattleCue] { heldCues }
     /// MAIN3145E: the view runs while the option word's high nibble is clear.
-    /// Around it sit the ambush line (MAIN31926), the map's failure line when
-    /// the view is off (MAIN31E49..31E6B) and the level notices.
+    /// Around it sit the ambush line (MAIN31926), the counterattack notice
+    /// (MAIN31FA7..31FD7), the map damage flash (MAIN31E23..31E40) and failure
+    /// line (MAIN31E49..31E6B) when the view is off, and the level notices.
     private func holdCombat(_ snapshot:OriginalCombatSnapshot?,ambush:Bool?,experience:OriginalExperienceMutation?,
+                            numbers:[(slot:Int,value:Int,color:Int,passes:Int)] = [],
                             then lines:[OriginalBattleNotice] = []) throws -> Bool {
         var cues:[OriginalBattleCue] = []
         if let snapshot = snapshot {
             if ambush == true { cues.append(.notice(.ambush(friendly:snapshot.attackerSlot < 15))) }
-            if session.sourceOptionsWord&0xF0 == 0 { cues.append(.combat(snapshot)) }
-            else if snapshot.kind == 2,snapshot.damage == 0 { cues.append(.notice(.strategyFailed(person:snapshot.attackerPerson))) }
+            if snapshot.counter {
+                if session.sourceOptionsWord&0xF0 != 0 {
+                    cues.append(.notice(.counter(friendly:snapshot.attackerSlot < 15)))
+                }
+                cues += try session.attackCues(snapshot.attackerSlot,target:snapshot.targetSlot)
+            }
+            if emitsCombatPresentationCues || session.sourceOptionsWord&0xF0 == 0 {
+                cues.append(.combat(snapshot))
+            } else {
+                cues.append(.number(slot:snapshot.targetSlot,value:snapshot.damage,color:7,passes:3))
+                if snapshot.kind == 2,snapshot.damage == 0 { cues.append(.notice(.strategyFailed(person:snapshot.attackerPerson))) }
+            }
             if let experience = experience {
                 cues += try session.levelNotices(person:snapshot.attackerPerson,experience:experience).map { .notice($0) }
             }
+        }
+        for entry in numbers where entry.value > 0 {
+            cues.append(.number(slot:entry.slot,value:entry.value,color:entry.color,passes:entry.passes))
         }
         return hold(cues+lines.map { .notice($0) })
     }
@@ -55,8 +78,17 @@ final class OriginalBattleFlow {
         heldCues = cues;suspended = true;return true
     }
     var canLeaveBattle:Bool { session.turns.result != 0 && !suspended && attackOperation == nil && strategyOperation == nil && itemOperation == nil }
-    init(session:OriginalBattleSession) { self.session = session }
+    init(session:OriginalBattleSession) { self.session = session;retirementsDelivered = session.resumedRetirementsDelivered }
     var acceptsManualInput:Bool { !suspended && attackOperation == nil && strategyOperation == nil && itemOperation == nil && session.turns.stage == .manualFriendly && session.turns.result == 0 }
+    /// Only an action-free player boundary can be rebuilt without private
+    /// attack/strategy/AI continuations. The caller also waits for view cues.
+    var canSuspendCheckpoint:Bool {
+        !suspended && attackOperation == nil && strategyOperation == nil && itemOperation == nil &&
+        pendingManualSlot == nil && pendingNativeSlot == nil && !pendingDefeatCheck && heldCues.isEmpty &&
+        attackRetirementAcknowledgement == nil && strategyRetirementAcknowledgement == nil && itemRetirementAcknowledgement == nil &&
+        retirementsDelivered == session.retirements.count && session.turns.result == 0 &&
+        [.unstarted,.manualFriendly].contains(session.turns.stage)
+    }
     @discardableResult
     func manualAttack(_ slot:Int,target:Int) throws -> OriginalStrikeExchange? {
         try beginManualAttack(slot,target:target)
@@ -69,6 +101,7 @@ final class OriginalBattleFlow {
         _ = try session.requireManualUnit(slot)
         attackOperation = try OriginalAttackOperation.begin(in:session,attackerSlot:slot,targetSlot:target)
         attackIsNative = false;lastAttack = nil
+        onAcceptedInput?(.init(kind:.battleAttack,slot:slot,target:target))
         return try session.attackCues(slot,target:target)
     }
     func finishManualOperation() throws -> (attack:OriginalStrikeExchange?,strategy:OriginalStrategyExecution?) {
@@ -76,7 +109,9 @@ final class OriginalBattleFlow {
     }
     func manualWait(_ slot:Int) throws {
         guard acceptsManualInput else { throw BattleError.illegalAction("Original source phase is not accepting manual input") }
-        _ = try session.waitManually(slot);try finishManualAction(slot)
+        _ = try session.waitManually(slot)
+        onAcceptedInput?(.init(kind:.battleWait,slot:slot))
+        try finishManualAction(slot)
     }
     /// MAIN2E0E6..2E833. A source refusal finishes without consuming the item
     /// or the unit's action. Nil means retirement dialogue is pending.
@@ -85,7 +120,10 @@ final class OriginalBattleFlow {
         guard acceptsManualInput else { throw BattleError.illegalAction("Original source phase is not accepting manual input") }
         _ = try session.requireManualUnit(slot)
         itemOperation = try OriginalItemOperation.begin(in:session,userSlot:slot,item:item,target:target,confirmed:confirmed)
-        lastItem = nil;try drivePhases();return lastItem
+        lastItem = nil
+        // Refused or cancelled selection is not an accepted gameplay input.
+        if itemOperation?.execution == nil {onAcceptedInput?(.init(kind:.battleItem,slot:slot,target:target,item:item))}
+        try drivePhases();return lastItem
     }
     /// MAIN2DF80..2E01B: a completed gift ends the unit's action like a wait.
     /// False leaves the unit able to act because the receiver is full.
@@ -96,7 +134,8 @@ final class OriginalBattleFlow {
             throw BattleError.illegalAction("Original gift target must be a live friendly unit")
         }
         guard try session.people.giveItem(from:unit.person,to:receiver.person,item:item) else { return false }
-        try manualWait(slot);return true
+        onAcceptedInput?(.init(kind:.battleGive,slot:slot,target:target,item:item))
+        _ = try session.waitManually(slot);try finishManualAction(slot);return true
     }
     /// MAIN2DDAD..2DDCB clears the hidden state; the unit may still act.
     func manualReleaseAmbush(_ slot:Int) throws {
@@ -104,6 +143,7 @@ final class OriginalBattleFlow {
         let unit = try session.requireManualUnit(slot)
         guard unit.scriptFlags&0x20 == 0 else { throw BattleError.illegalAction("Original unit is not in ambush") }
         session.units[slot]!.scriptFlags |= 0x20
+        onAcceptedInput?(.init(kind:.battleReleaseAmbush,slot:slot))
     }
     @discardableResult
     func manualStrategy(_ slot:Int,abilityID:Int,target:Int?) throws -> OriginalStrategyExecution? {
@@ -116,6 +156,7 @@ final class OriginalBattleFlow {
         _ = try session.requireManualUnit(slot)
         strategyOperation = try OriginalStrategyOperation.begin(in:session,casterSlot:slot,abilityID:abilityID,target:target)
         strategyIsNative = false;lastStrategy = nil
+        if strategyOperation?.execution == nil {onAcceptedInput?(.init(kind:.battleStrategy,slot:slot,target:target,ability:abilityID))}
         return strategyOperation?.cues(in:session) ?? []
     }
     func start() throws { try drivePhases() }
@@ -149,7 +190,12 @@ final class OriginalBattleFlow {
             let step = try operation.advance(in:session);strategyOperation = operation
             switch step {
             case .target(let effect):
-                if try holdCombat(effect.combat,ambush:effect.ambush,experience:effect.experience,then:operation.notices(for:effect)) { return false }
+                var numbers:[(slot:Int,value:Int,color:Int,passes:Int)] = []
+                if let h = effect.healing {
+                    if h.troopsDelta > 0 { numbers.append((effect.runtimeSlot,h.troopsDelta,7,2)) }
+                    if h.moraleDelta > 0 { numbers.append((effect.runtimeSlot,h.moraleDelta,15,2)) }
+                }
+                if try holdCombat(effect.combat,ambush:effect.ambush,experience:effect.experience,numbers:numbers,then:operation.notices(for:effect)) { return false }
             case .retirement(let notice):
                 strategyRetirementAcknowledgement = notice
                 guard try objectives() else { return false }
@@ -173,7 +219,14 @@ final class OriginalBattleFlow {
             let step = try operation.advance(in:session);itemOperation = operation
             switch step {
             case .target(let effect):
-                if try holdCombat(effect.combat,ambush:effect.ambush,experience:effect.experience) { return false }
+                var numbers:[(slot:Int,value:Int,color:Int,passes:Int)] = []
+                if let h = effect.healing {
+                    if h.troopsDelta > 0 { numbers.append((effect.runtimeSlot,h.troopsDelta,7,2)) }
+                    if h.moraleDelta > 0 { numbers.append((effect.runtimeSlot,h.moraleDelta,15,2)) }
+                } else if effect.kind == "bomb",let q = effect.quantity,q > 0 {
+                    numbers.append((effect.runtimeSlot,q,7,2))
+                }
+                if try holdCombat(effect.combat,ambush:effect.ambush,experience:effect.experience,numbers:numbers) { return false }
             case .retirement(let notice):
                 itemRetirementAcknowledgement = notice
                 guard try objectives() else { return false }
@@ -248,6 +301,10 @@ final class OriginalBattleFlow {
             case .friendlyAI:
                 try nativeActions();if suspended || session.turns.result != 0 { if !suspended { pendingNativeSlot = nil };return }
                 try session.prepareEnemyPhase()
+                if session.turns.stage == .enemyAI { onEnemyTurnStart?() }
+                if presentsNativeActions,!session.turns.pendingAI.isEmpty {
+                    session.upkeepNotices.insert(.phase(enemy:true),at:0)
+                }
                 if holdUpkeep() { return }
             case .enemyAI:
                 try nativeActions();if suspended || session.turns.result != 0 { if !suspended { pendingNativeSlot = nil };return }
@@ -263,15 +320,19 @@ final class OriginalBattleFlow {
         guard acceptsManualInput else { throw BattleError.illegalAction("Original battle menu is outside the manual phase") }
         guard retreatAllowed else { throw BattleError.illegalAction("Original retreat is refused for a preserved-slot battle") }
         try session.acceptSourceResult(1)
+        onAcceptedInput?(.init(kind:.battleRetreat))
     }
     /// MAIN27E87..27EA3: quit writes raw result four after its question.
     func requestQuit() throws {
         guard acceptsManualInput else { throw BattleError.illegalAction("Original battle menu is outside the manual phase") }
         try session.acceptSourceResult(4)
+        onAcceptedInput?(.init(kind:.battleQuit))
     }
     func finishManual() throws {
         guard acceptsManualInput else { throw BattleError.illegalAction("Original manual phase has a pending source operation") }
-        try session.finishManualFriendly();try drivePhases()
+        try session.finishManualFriendly()
+        onAcceptedInput?(.init(kind:.battleEndTurn))
+        try drivePhases()
     }
     private func nativeActions() throws {
         while session.turns.result == 0 {

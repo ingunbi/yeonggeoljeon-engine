@@ -116,7 +116,15 @@ extension OriginalBattleSession {
         case "remove":
             units[slot]!.scriptFlags |= 4
             let referenced = units.keys.sorted().filter{units[$0]!.orderMode == 0 && units[$0]!.preferredTarget == slot}
-            _ = retireUnit(slot)
+            let removed = retireUnit(slot)
+            // Script flag4 suppresses source retirement notices, but a
+            // committed public removal still belongs to the native report.
+            // Repeated remove returns nil; never invent a second event or
+            // reveal an unseen enemy's identity/existence through the log.
+            if let removed,!prior.enemy || prior.scriptFlags&0x20 != 0 {
+                resultLog.append(round:turns.roundIndex,actorPerson:nil,actorEnemy:prior.enemy,
+                    targetPerson:removed,action:.retirement,result:.init(retired:true))
+            }
             if prior.status == 2 { result.changedSlots.append(contentsOf:referenced) }
             units[slot]!.scriptFlags &= ~UInt8(4);result.sourceReturn = 1
         default:throw BattleError.invalid("Original native map command producer")

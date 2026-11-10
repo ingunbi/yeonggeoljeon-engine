@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
+import Foundation
+#if canImport(AppKit)
 import AppKit
+#endif
 import CryptoKit
 
 /// Only explicit player operations are accepted. Original route/person values
@@ -11,6 +14,8 @@ struct OriginalPlayInput: Codable, Equatable {
         case partyToggle = "party-toggle", partyConfirm = "party-confirm", expectBattle = "expect-battle"
         case battleMove = "battle-move", battleAttack = "battle-attack", battleStrategy = "battle-strategy", battleItem = "battle-item"
         case battleWait = "battle-wait", battleEndTurn = "battle-end-turn"
+        case battleCancelMove = "battle-cancel-move", battleGive = "battle-give", battleDiscard = "battle-discard"
+        case battleReleaseAmbush = "battle-release-ambush", battleOptions = "battle-options"
         case battleRetreat = "battle-retreat", battleQuit = "battle-quit", fieldQuit = "field-quit"
         case retryChoice = "retry-choice"
         case shopAnswer = "shop-answer", cityEntry = "city-entry", fieldExchange = "field-exchange"
@@ -53,12 +58,15 @@ struct OriginalPlayInput: Codable, Equatable {
         case .battleAttack: allowed = ["slot","target"]
         case .battleStrategy: allowed = target == nil ? ["slot","ability"] : ["slot","ability","target"]
         case .battleItem: allowed = target == nil ? ["slot","item"] : ["slot","item","target"]
-        case .battleWait: allowed = ["slot"]
+        case .battleWait,.battleCancelMove,.battleReleaseAmbush: allowed = ["slot"]
+        case .battleGive: allowed = ["slot","target","item"]
+        case .battleDiscard: allowed = ["slot","item"]
+        case .battleOptions: allowed = ["index"]
         case .battleEndTurn,.battleRetreat,.battleQuit: allowed = []
         }
         guard operandKeys == allowed,
               person.map({ (0..<384).contains($0) }) ?? true,
-              index.map({ $0 >= 0 }) ?? true, ![.retryChoice,.cityEntry].contains(kind) || [0,1].contains(index ?? -1),
+              index.map({ $0 >= 0 }) ?? true, kind != .battleOptions || (0...65535).contains(index ?? -1), ![.retryChoice,.cityEntry].contains(kind) || [0,1].contains(index ?? -1),
               city.map({ (0...255).contains($0) }) ?? true,
               marker.map({ (0...255).contains($0) }) ?? true,
               battleID.map({ !$0.isEmpty }) ?? true,
@@ -80,6 +88,14 @@ struct OriginalPlayInput: Codable, Equatable {
         case .battleMove:
             _ = try flow.session.requireManualUnit(slot!)
             _ = try flow.session.move(slot!,to:GridPoint(x:x!,y:y!))
+        case .battleCancelMove:try flow.session.cancelMove(slot!)
+        case .battleGive:
+            guard try flow.manualGive(slot!,to:target!,item:item!) else {throw EngineError.invalid("Recorded item transfer was refused")}
+        case .battleDiscard:
+            let user = try flow.session.requireManualUnit(slot!)
+            try flow.session.people.discardItem(person:user.person,item:item!)
+        case .battleReleaseAmbush:try flow.manualReleaseAmbush(slot!)
+        case .battleOptions:flow.session.sourceOptionsWord = index!
         case .battleAttack:_ = try flow.manualAttack(slot!,target:target!)
         case .battleStrategy:_ = try flow.manualStrategy(slot!,abilityID:ability!,target:target)
         case .battleItem:_ = try flow.manualItem(slot!,item:item!,target:target)
@@ -187,7 +203,8 @@ struct OriginalPlayVerification: Codable {
     var limitations: [String]
 }
 
-func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resume resumeURL: URL? = nil) throws {
+#if canImport(AppKit)
+func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resume resumeURL: URL? = nil, archiveRoot:URL? = nil, omitRendering:Bool = false) throws {
     let bytes = try OriginalPlayInputs.readData(from:inputURL)
     let selected = try OriginalPlayInputs.decode(bytes)
     guard resumeURL == nil || selected.seed == nil else {
@@ -208,6 +225,9 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
     var battleView: OriginalBattleView?, reachedBattles: [String] = []
     var observations: [OriginalPlayObservation] = [], totalTicks = 0
     var completed = 0, failedIndex: Int?, failure: String?
+    let recorder = archiveRoot.map {BattleArchiveCoordinator(data:data,root:$0)}
+    var recording = BattleArchiveProgress();recording.recordingEnabled = recorder != nil
+    var archiveChecks:[String] = []
 
     func synchronizeBattle() throws {
         guard host.stage.palette == 3, let session = host.battle else { return }
@@ -225,9 +245,22 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
             if !reachedBattles.contains(session.definition.id) { reachedBattles.append(session.definition.id) }
         }
         if host.battleInputReady, let view = battleView {
-            if session.turns.stage == .unstarted { try view.start() }
+            if session.turns.stage == .unstarted {
+                if let recorder,let start = try host.battleStartSnapshot() {try recorder.begin(start:start,progress:&recording)}
+                try view.start()
+            }
             else if view.suspended { try view.resumeSourceFlow() }
-            if view.flow.canLeaveBattle { try host.finishBattleLoop() }
+            if view.flow.canLeaveBattle {
+                if let recorder,recording.active != nil {
+                    try recorder.finish(host:host,progress:&recording)
+                    if let reference = recording.completed.last {
+                        _ = try recorder.verifiedArchive(reference)
+                        recording.completed[recording.completed.count-1].verified = true
+                        archiveChecks.append(reference.battleID)
+                    }
+                }
+                try host.finishBattleLoop()
+            }
         }
     }
     /// Dialogue acknowledgement is explicit native input. Choices, save and
@@ -249,16 +282,20 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
     }
     func capture(index: Int?, input: OriginalPlayInput?, ticks: Int) throws {
         let name = "\(observations.count)-\(input?.kind.rawValue ?? "initial").png"
-        if host.stage.palette == 3, let view = battleView { try view.capture(to: output.appendingPathComponent(name)) }
-        else { try renderer.render(host.stage, evidence: true, screen: host.fieldScreenState()).writePNG(output.appendingPathComponent(name)) }
+        if !omitRendering {
+            if host.stage.palette == 3, let view = battleView { try view.capture(to: output.appendingPathComponent(name)) }
+            else { try renderer.render(host.stage, evidence: true, screen: host.fieldScreenState()).writePNG(output.appendingPathComponent(name)) }
+        }
+        if let recorder,let view = battleView,host.battleInputReady,view.flow.canSuspendCheckpoint {try recorder.checkpoint(host:host,progress:&recording)}
         let state = host.vm.state
         observations.append(.init(inputIndex: index, input: input, simulatedTicks: ticks, status: host.status,
             packedMap: state.packedMap, currentCity: state.currentCity, recordID: state.currentRecordID,
             chapter: state.chapter, member: state.member, block: state.block, groupBase: state.groupBase,
             choiceID: host.choice?.id, savePending: host.saveRequest != nil, partyPending: host.partySelection != nil,
             battleID: host.stage.palette == 3 ? host.battle?.definition.id : nil,
-            battleStage: host.stage.palette == 3 ? host.battle?.turns.stage : nil, frame: name,
-            money: host.money, shopText: host.shopPrompt?.text, rng: (host.battle?.rng ?? host.rng).state))
+            battleStage: host.stage.palette == 3 ? host.battle?.turns.stage : nil, frame: omitRendering ? "not-rendered" : name,
+            money: host.money, shopText: host.shopPrompt?.text,
+            rng: (host.stage.palette == 3 ? (host.battle?.rng ?? host.rng) : host.rng).state))
     }
     do {
         if resumeURL == nil { try host.acknowledge() }
@@ -305,12 +342,13 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
                       input.battleID.map({ $0 == battle.definition.id }) ?? true else {
                     throw EngineError.invalid("Play expectation did not reach its selected source battle")
                 }
-            case .battleMove,.battleAttack,.battleStrategy,.battleItem,.battleWait,.battleEndTurn,.battleRetreat,.battleQuit:
+            case .battleMove,.battleAttack,.battleStrategy,.battleItem,.battleWait,.battleEndTurn,.battleRetreat,.battleQuit,.battleCancelMove,.battleGive,.battleDiscard,.battleReleaseAmbush,.battleOptions:
                 guard host.stage.palette == 3,let view = battleView,let session = host.battle,view.session === session else {
                     throw EngineError.invalid("Original play battle primitive has no current native battle")
                 }
                 try input.performBattle(in:view.flow,enabled:host.battleInputReady)
             }
+            if let recorder,BattleReplayArchive.supports(input.kind) {try recorder.accepted(input:input,progress:&recording)}
             let ticks = try settle()
             try capture(index: index, input: input, ticks: ticks)
             completed += 1
@@ -341,6 +379,32 @@ func verifyOriginalPlay(_ data: DataSet, inputs inputURL: URL, output: URL, resu
                       "Frames use native AppKit offscreen rendering. Real macOS keyboard/mouse delivery is not verified."])
     let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys,.withoutEscapingSlashes]
     try encoder.encode(report).write(to: output.appendingPathComponent("original-play-verification.json"), options: .atomic)
+    if recorder != nil {
+        try encoder.encode(recording).write(to:output.appendingPathComponent("battle-archive-verification.json"),options:.atomic)
+        if let recorder {
+            var practiceChecks:[String] = []
+            for reference in recording.completed where reference.result == 2 && reference.verified {
+                let before = try BattleReplayIdentity.state(host)
+                let helpers = try BattleReplayIdentity.encode(host.extras)
+                let practice = try PracticeHostContext.open(reference,coordinator:recorder)
+                guard practice.host !== host,practice.host.people !== host.people,practice.host.battle !== host.battle else {
+                    throw EngineError.invalid("Practice context shares mutable campaign state")
+                }
+                let player = try BattleReplayDriver(practice:practice);try player.runToEnd()
+                let retry = try practice.retry()
+                guard try BattleReplayIdentity.state(retry.host) == practice.archive.initialDigest,
+                      try BattleReplayIdentity.state(host) == before,
+                      try BattleReplayIdentity.encode(host.extras) == helpers else {
+                    throw EngineError.invalid("Practice execution/retry changed the original campaign or helper state")
+                }
+                practiceChecks.append(reference.battleID)
+            }
+            try encoder.encode(["verifiedPracticeBattles":practiceChecks]).write(to:output.appendingPathComponent("practice-isolation-verification.json"),options:.atomic)
+            print("Practice contexts independently completed and isolated: \(practiceChecks.count)")
+        }
+        print("Battle archives independently verified: \(archiveChecks.count); \(archiveChecks.joined(separator:", "))")
+    }
     print("Original play: \(completed)/\(selected.inputs.count) inputs, battles \(reachedBattles.count), \(report.status)")
     if let failure = failure { throw EngineError.invalid(failure) }
 }
+#endif

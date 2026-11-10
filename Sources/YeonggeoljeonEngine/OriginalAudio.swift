@@ -21,6 +21,8 @@ final class OriginalAudio {
     private let driver:OriginalMusicDriver
     private var selection:Int?
     private var running = false
+    private var paused = false
+    func setPaused(_ value:Bool) { lock.lock();paused = value;lock.unlock() }
     private var untilInterrupt = 0.0
     /// Frames the output has asked for, for checks on the live path.
     private(set) var renderedFrames = 0
@@ -89,6 +91,7 @@ final class OriginalAudio {
         running = (try? engine.start()) != nil
     }
     private func fill(_ samples:UnsafeMutablePointer<Float>,count:Int) {
+        if paused { samples.update(repeating:0,count:count);return }
         var done = 0
         while done < count {
             if untilInterrupt < 1 {
@@ -99,6 +102,28 @@ final class OriginalAudio {
             chip.render(samples+done,count:run)
             done += run;untilInterrupt -= Double(run)
         }
+    }
+    /// Exercise the exact live fill routine without starting an audio device.
+    static func verifiesPauseContinuity(song:[UInt8],tables:OriginalMusicCatalog.Tables) -> Bool {
+        let catalog = OriginalMusicCatalog(format:1,tables:tables,songs:[],opening:[],ending:[],source:nil,limitations:nil)
+        let value = OriginalAudio(catalog:catalog)
+        value.driver.play(song)
+        func chunk(_ count:Int) -> [Float] {
+            var samples = Array(repeating:Float(7),count:count)
+            samples.withUnsafeMutableBufferPointer { value.fill($0.baseAddress!,count:count) }
+            return samples
+        }
+        let first = chunk(2000)
+        value.setPaused(true)
+        let ticks = value.driver.ticks,clock = value.untilInterrupt
+        let quiet = chunk(5000)
+        guard quiet.allSatisfy({$0 == 0}),ticks == value.driver.ticks,clock == value.untilInterrupt else { return false }
+        value.setPaused(false)
+        let last = chunk(2000)
+        let baseline = OriginalAudio(catalog:catalog);baseline.driver.play(song)
+        var expected = Array(repeating:Float(0),count:4000)
+        expected.withUnsafeMutableBufferPointer { baseline.fill($0.baseAddress!,count:4000) }
+        return expected.contains(where:{$0 != 0}) && first+last == expected
     }
     /// Offline render of one song, for checks that must not touch audio hardware.
     static func render(song:[UInt8],tables:OriginalMusicCatalog.Tables,seconds:Double,bank:[UInt8] = [],effect:Int? = nil) -> [Float] {

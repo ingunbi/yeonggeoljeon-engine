@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
+import Foundation
+#if canImport(AppKit)
 import AppKit
+#endif
 
 struct OriginalCampaignHostVerification:Codable {
     var format = 1
@@ -17,6 +20,7 @@ struct OriginalCampaignHostVerification:Codable {
 struct CampaignVMFailureRecord:Codable {
     var recordID:String?;var opcode:Int?;var sourceOffset:Int?;var reason:String
 }
+#if canImport(AppKit)
 func verifyOriginalCampaignHost(_ data:DataSet,output:URL) throws {
     let output = try verificationDirectory(output,excluding:data.root)
     let host = try OriginalCampaignHost(data:data,rng:OriginalRNG(state:1)),renderer = try Renderer(data)
@@ -52,3 +56,4 @@ func verifyOriginalCampaignHost(_ data:DataSet,output:URL) throws {
     print("Original campaign host: \(report.completedRecords) records, \(frames.count) frames, \(status)\(failure.map { "; \($0.recordID ?? "") opcode \($0.opcode ?? -1): \($0.reason)" } ?? "")")
     guard steps < 100_000 else { throw EngineError.invalid("Original campaign host verification exhausted its work bound") }
 }
+#endif

@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
-import AppKit
+import Foundation
+import CoreGraphics
+import ImageIO
 
 /// Source frame selection belongs to the sprite catalog. This adapter only
 /// owns contained PNG loading and AppKit bitmap validation/cache lifetime.
 final class OriginalBattleSpriteRenderer {
+    private func decode(_ url:URL) throws -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(try Data(contentsOf:url) as CFData,nil) else {return nil}
+        return CGImageSourceCreateImageAtIndex(source,0,nil)
+    }
     let root:URL
     let catalog:OriginalBattleSprites
     private var images:[String:CGImage] = [:]
@@ -31,14 +37,14 @@ final class OriginalBattleSpriteRenderer {
     private func loaded(_ path:String,size:Int) throws -> CGImage {
         if let image = images[path] { return image }
         let url = try containedResource(root:root,relative:path)
-        guard let picture = NSBitmapImageRep(data:try Data(contentsOf:url))?.cgImage,
+        guard let picture = try decode(url),
               picture.width == size,picture.height == size else { throw EngineError.invalid("Original battle effect bitmap has the wrong size") }
         images[path] = picture;return picture
     }
     private func picture(_ selection:OriginalBattleSpriteSelection) throws -> CGImage {
         if let image = images[selection.image] { return image }
         let url = try containedResource(root:root,relative:selection.image)
-        guard let picture = NSBitmapImageRep(data:try Data(contentsOf:url))?.cgImage,
+        guard let picture = try decode(url),
               picture.width == 32,picture.height == 32 else { throw EngineError.invalid("Original battle sprite bitmap is not32×32") }
         images[selection.image] = picture;return picture
     }
@@ -51,7 +57,7 @@ final class OriginalBattleSpriteRenderer {
         let selection = try catalog.select(person:person,loadMode:loadMode,frame:frame)
         if let image = images[selection.image] { return image }
         let url = try containedResource(root:root,relative:selection.image)
-        guard let picture = NSBitmapImageRep(data:try Data(contentsOf:url))?.cgImage,picture.width == 96,picture.height == 96 else {
+        guard let picture = try decode(url),picture.width == 96,picture.height == 96 else {
             throw EngineError.invalid("Original duel bitmap is not96×96")
         }
         images[selection.image] = picture;return picture

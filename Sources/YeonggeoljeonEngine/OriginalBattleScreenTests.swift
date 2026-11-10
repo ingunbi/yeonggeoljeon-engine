@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
-import Foundation
+import AppKit
 
 /// Synthetic checks for the battle screen's scroll, list and gauge rules.
 func originalBattleScreenSelfTests() throws {
+    try AppControlRuntime.withPreferences(AppControlPreferences()) {try originalBattleScreenChecks()}
+}
+private func originalBattleScreenChecks() throws {
     var checks = 0
     func check(_ condition:Bool,_ message:String) throws {
         guard condition else { throw EngineError.invalid("Original battle screen regression: \(message)") }
@@ -25,7 +28,7 @@ func originalBattleScreenSelfTests() throws {
     // The modern arrangement keeps every part on the canvas and off the map.
     let modern = OriginalBattleLayout.source.modern()
     let canvas = CGRect(x:0,y:0,width:640,height:400),modernMap = modern.viewportRect
-    try check(modern.columns == 15 && modern.rows == 12,"the modern map shows fifteen by twelve cells")
+    try check(modern.columns == 15 && modern.rows == 10,"the modern map reserves readable controls around fifteen by ten cells")
     try check(modernMap.width == CGFloat(modern.columns*modern.cell) && modernMap.height == CGFloat(modern.rows*modern.cell),"the modern map holds whole cells")
     let parts = [OriginalBattleLayout.rect(modern.list.rect),OriginalBattleLayout.rect(modern.minimap.panel)]+modern.sideButtons.map(OriginalBattleLayout.rect)
     try check(parts.allSatisfy{canvas.contains($0) && !$0.intersects(modernMap)},"sidebar parts stay on the canvas and beside the map")
@@ -35,8 +38,22 @@ func originalBattleScreenSelfTests() throws {
     try check(OriginalBattleLayout.rect(modern.minimap.panel).contains(CGRect(x:smallest.x,y:smallest.y,width:60,height:36)),"a smaller one is centred inside it")
     var modernCamera = OriginalBattleCamera(width:40,height:24,layout:modern)
     modernCamera.center(on:GridPoint(x:39,y:23))
-    try check(modernCamera.rect(of:GridPoint(x:39,y:23),in:modernMap,size:32) == CGRect(x:448,y:368,width:32,height:32),"the last cell ends in the map corner")
-    try check(modernCamera.cell(at:CGPoint(x:479,y:399),in:modernMap,size:32) == GridPoint(x:39,y:23),"a corner click reaches the last cell")
+    try check(modernCamera.rect(of:GridPoint(x:39,y:23),in:modernMap,size:32) == CGRect(x:448,y:336,width:32,height:32),"the last cell ends in the map corner")
+    try check(modernCamera.cell(at:CGPoint(x:479,y:367),in:modernMap,size:32) == GridPoint(x:39,y:23),"a corner click reaches the last cell")
+    let headerButtons = ModernBattleControls.top.map { $0.rect }
+    try check(headerButtons.allSatisfy { ModernBattleControls.header.contains($0) && $0.height >= 20 && !$0.intersects(modernMap) },
+              "header hit targets have a readable height and stay outside map input")
+    for (index,button) in headerButtons.enumerated() {
+        try check(headerButtons.dropFirst(index+1).allSatisfy { !$0.intersects(button) },"header buttons do not overlap")
+    }
+    try check([ModernBattleControls.command,ModernBattleControls.wait,ModernBattleControls.confirm,ModernBattleControls.cancel].allSatisfy {
+        ModernBattleControls.footer.contains($0) && $0.height >= 24 && !$0.intersects(modernMap)
+    },"context buttons fit below the map with distinct hit targets")
+    try check(!ModernBattleControls.command.intersects(ModernBattleControls.wait) && !ModernBattleControls.wait.intersects(ModernBattleControls.cancel),
+              "movement controls cannot activate each other")
+    try check(ModernBattleControls.cinematicViewport.contains(CGRect(x:32,y:48,width:416,height:352)) &&
+              !ModernBattleControls.cinematicViewport.intersects(ModernBattleControls.header),
+              "unscaled combat and duel panels fit below the header through the inactive action bar")
     // The modern field stretches the map window over the canvas.
     let center = CGPoint(x:320,y:200)
     try check(CanvasFieldMap.mapPoint(canvas:center) == CGPoint(x:272,y:176),"the canvas centre is the map window's centre")
@@ -200,5 +217,257 @@ func originalBattleScreenSelfTests() throws {
     try check(same == CGPoint(x:48,y:32),"placement follows the scrolled window")
     try check(OriginalBattleTerrain.defenseText(20,none:"x",percent:"%") == "20%" && OriginalBattleTerrain.defenseText(255,none:"x",percent:"%") == "x%","a 255 entry prints the fallback")
     try check(OriginalBattleTerrain.recovers(terrain:8) && OriginalBattleTerrain.recovers(terrain:13) && OriginalBattleTerrain.recovers(terrain:14) && !OriginalBattleTerrain.recovers(terrain:7),"three terrains recover")
+
+    // MAIN33747..33827 speaker focus and MAIN27D65/27F55 turn-end confirmation.
+    let cardinal = [OriginalAIOffset(dx:0,dy:-1),.init(dx:1,dy:0),.init(dx:0,dy:1),.init(dx:-1,dy:0)]
+    var uiLevels = Array(repeating:Array(repeating:255,count:19),count:36);uiLevels[30][0] = 0;uiLevels[0][0] = 12
+    var uiCosts = Array(repeating:255,count:36);uiCosts[30] = 1;uiCosts[0] = 4
+    var uiCategories = Array(repeating:0,count:36);uiCategories[30] = 3
+    let movement = OriginalMovementProfile(format:1,classMovementTypes:Array(repeating:0,count:19),classMovementBudgets:Array(repeating:3,count:19),
+        attackRangeCodes:Array(repeating:0,count:19),movementCosts:Array(repeating:Array(repeating:1,count:256),count:4),
+        cardinalOffsets:cardinal,diagonalOffsets:cardinal,extendedOffsets:cardinal,setupOrderModes:Array(repeating:7,count:256),
+        strategyLevelRequirements:uiLevels,strategyMPCosts:uiCosts,
+        strategyCategories:uiCategories,strategyTerrainEligibility:Array(repeating:[0,253,254,255],count:3))
+    var roster = OriginalRoster()
+    roster.header = OriginalBattleHeader(preserveFriendlySlots:false,turnLimit:10,sourceByte2:0,discardedBytes:[],objectives:[])
+    roster.slots[0] = OriginalPlacement(ordinal:0,person:0,x:2,y:2,selector:0,flag:0,flags:0,rawMode:0,parameter:0,classID:0,level:10)
+    roster.slots[1] = OriginalPlacement(ordinal:1,person:20,x:22,y:14,selector:0,flag:0,flags:1,rawMode:0,parameter:0,classID:0,level:10)
+    let session = try OriginalBattleSession(definition:BattleDefinition(id:"synthetic-screen-view",width:28,height:16,
+        coordinateSystem:"orthogonal",tiles:Array(repeating:0,count:28*16)),roster:&roster,
+        people:try OriginalPeople(catalog:catalog,tables:tables),combat:tables,movement:movement,rng:OriginalRNG(state:5))
+    let view = try OriginalBattleView(session:session,background:nil,sprites:nil,style:OriginalBattleStyle())
+    view.confirmsTurnEnd = true
+    try check(view.focusSpeaker(20),"focusing an active enemy speaker locates its slot")
+    try check(view.speakerInLowerHalf,"an enemy near the bottom edge places the dialogue box at the top")
+    try check(view.focusSpeaker(0),"focusing an active friendly speaker near the top locates its slot")
+    try check(!view.speakerInLowerHalf,"a speaker near the top keeps the dialogue box at the bottom")
+    view.clearSpeakerFocus()
+    try check(!view.speakerInLowerHalf,"clearing speaker focus resets placement")
+    func key(_ code:UInt16) -> NSEvent {
+        NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:[],timestamp:0,windowNumber:0,context:nil,
+                        characters:"",charactersIgnoringModifiers:"",isARepeat:false,keyCode:code)!
+    }
+    func point(_ rect:CGRect) -> CGPoint { CGPoint(x:rect.midX,y:rect.midY) }
+    view.presentation = .modern
+    try view.start()
+    try check(!view.asksPlayer,"with an unacted friendly unit ready, auto turn-end confirmation does not open")
+    let initialRound = session.turns.roundIndex
+    let menuOverlay = view.subviews.compactMap { $0 as? CanvasOverlayView }.first!
+    let beforeLoad = (units:session.units,turns:session.turns,rng:session.rng)
+    var loadRequests = 0
+    view.onLoad = { loadRequests += 1 }
+    view.keyDown(with:key(53))
+    let loadRow = menuOverlay.selector?.options.firstIndex(where:{ $0.label == "불러오기" })
+    try check(loadRow != nil,"the campaign battle menu exposes the shared load selector")
+    if let loadRow = loadRow {
+        for _ in 0..<loadRow { menuOverlay.keyDown(with:key(125)) }
+        menuOverlay.keyDown(with:key(36))
+    }
+    try check(loadRequests == 1 && !menuOverlay.active,"load menu invokes its owner exactly once")
+    try check(session.units == beforeLoad.units && session.turns == beforeLoad.turns && session.rng == beforeLoad.rng,
+              "opening the load selector does not consume a battle action or RNG")
+    view.onLoad = nil
+    view.keyDown(with:key(53))
+    try check(menuOverlay.selector?.options.contains(where:{ $0.label == "불러오기" }) == false,
+              "an isolated battle without a campaign owner does not offer an inert load action")
+    menuOverlay.keyDown(with:key(53))
+    view.keyDown(with:key(36))
+    try check(view.playerControls.contains { $0.action == .command && $0.enabled } && session.turns.roundIndex == initialRound && session.turns.stage == .manualFriendly,
+              "Return at idle selects a ready unit instead of ending the turn")
+    view.keyDown(with:key(36))
+    try check(view.asksPlayer,"Return for a selected unit opens its current-position command menu")
+    let uiOverlay = view.subviews.compactMap { $0 as? CanvasOverlayView }.first!
+    uiOverlay.keyDown(with:key(53))
+    try check(!view.asksPlayer && session.units[0]!.scriptFlags&0x80 == 0,"cancelling commands preserves the unit action")
+    let listRect = OriginalBattleLayout.rect(view.layoutFacts.list.rect)
+    try check(view.clickPanel(CGPoint(x:listRect.midX,y:listRect.minY+8)),"a roster row is a handled panel input")
+    try check(view.playerControls.contains { $0.action == .command && $0.enabled },"a ready friendly roster row selects that unit for movement")
+    let enabledBefore = view.playerControls.filter { $0.enabled }.map { $0.action }
+    try view.performPlayerAction(.endTurn)
+    try check(view.playerControls.filter { $0.enabled }.map { $0.action } == enabledBefore && session.turns.roundIndex == initialRound,
+              "turn-end routing refuses while a movement choice is active")
+    view.keyDown(with:key(49))
+    try check(session.units[0]!.scriptFlags&0x80 != 0,"Space for a selected unit dispatches the existing wait action")
+    view.advanceAnimation(0)
+    try check(view.asksPlayer,"once all controllable friendly units have acted, the turn-end confirmation opens automatically")
+
+    // A resumed provisional move reopens commands in a newly constructed view.
+    // The key events exercise the same selector callbacks as live input, without OS delivery.
+    var resumedRoster = roster
+    let resumedSession = try OriginalBattleSession(definition:session.definition,roster:&resumedRoster,
+        people:try OriginalPeople(catalog:catalog,tables:tables),combat:tables,movement:movement,rng:OriginalRNG(state:17))
+    try OriginalBattleFlow(session:resumedSession).start()
+    let moveOrigin = resumedSession.units[0]!.position,moveDestination = GridPoint(x:3,y:2)
+    _ = try resumedSession.move(0,to:moveDestination)
+    let resumedRNG = resumedSession.rng
+    let resumedView = try OriginalBattleView(session:resumedSession,background:nil)
+    resumedView.presentation = .modern
+    resumedView.restorePendingMovementCommand()
+    let resumedOverlay = resumedView.subviews.compactMap { $0 as? CanvasOverlayView }.first!
+    try check(resumedView.asksPlayer && resumedSession.units[0]!.position == moveDestination,
+              "a restored provisional move opens its command menu at the saved destination")
+    try check(resumedSession.pendingMovementSlots == [0] && resumedSession.units[0]!.scriptFlags&0xC0 == 0x40,
+              "opening restored commands preserves the provisional move without consuming the action")
+    let guideUnits = resumedSession.units,guideTurns = resumedSession.turns
+    for _ in 0..<4 { resumedOverlay.keyDown(with:key(125)) }
+    resumedOverlay.keyDown(with:key(36))
+    try check(resumedOverlay.sheet?.rows.count == 2 && resumedOverlay.sheet?.rows.allSatisfy(\.enabled) == true,
+              "the command guide lists learned and future strategies as readable rows")
+    resumedOverlay.keyDown(with:key(125));resumedOverlay.keyDown(with:key(36))
+    try check(resumedOverlay.sheet?.selected == 1 && resumedSession.units == guideUnits && resumedSession.turns == guideTurns && resumedSession.rng == resumedRNG,
+              "selecting a future strategy keeps the guide open without casting or spending state")
+    resumedOverlay.keyDown(with:key(53))
+    try check(resumedOverlay.selector?.options.count == 6 && resumedOverlay.selector?.options.last?.label == "상태 안내" && resumedSession.pendingMovementSlots == [0],
+              "closing the guide restores commands and the provisional movement origin")
+    resumedOverlay.keyDown(with:key(53))
+    try check(!resumedView.asksPlayer && resumedSession.units[0]!.position == moveOrigin && resumedSession.pendingMovementSlots.isEmpty,
+              "Escape in restored commands returns the unit to its saved movement origin")
+    try check(resumedSession.units[0]!.scriptFlags&0xC0 == 0 && resumedSession.rng == resumedRNG,
+              "cancelling a restored move spends neither the unit action nor randomness")
+    resumedView.restorePendingMovementCommand()
+    try check(!resumedView.asksPlayer,"a cancelled movement command cannot reopen as a stale resume")
+    _ = try resumedSession.move(0,to:moveDestination)
+    let resumedWaitView = try OriginalBattleView(session:resumedSession,background:nil)
+    resumedWaitView.restorePendingMovementCommand()
+    let resumedWaitOverlay = resumedWaitView.subviews.compactMap { $0 as? CanvasOverlayView }.first!
+    for _ in 0..<3 { resumedWaitOverlay.keyDown(with:key(125)) }
+    resumedWaitOverlay.keyDown(with:key(36))
+    try check(resumedSession.units[0]!.position == moveDestination && resumedSession.units[0]!.scriptFlags&0x80 != 0 &&
+              resumedSession.pendingMovementSlots.isEmpty,
+              "choosing Wait after resume commits the saved move and consumes the unit action")
+    let actedUnits = resumedSession.units,actedRNG = resumedSession.rng
+    try resumedWaitView.performPlayerAction(.menu)
+    if let index = resumedWaitOverlay.selector?.options.firstIndex(where:{$0.label == "책략 습득표"}) {
+        for _ in 0..<index {resumedWaitOverlay.keyDown(with:key(125))}
+    }
+    resumedWaitOverlay.keyDown(with:key(36))
+    try check(resumedWaitOverlay.sheet?.rows.count == 1,"the battle guide officer picker contains friendly officers only")
+    resumedWaitOverlay.keyDown(with:key(36))
+    try check(resumedWaitOverlay.sheet?.rows.count == 2 && resumedSession.units == actedUnits && resumedSession.rng == actedRNG,
+              "an already-acted officer can inspect the learning guide without receiving another action")
+    resumedWaitOverlay.keyDown(with:key(53))
+    try check(resumedWaitOverlay.sheet?.selected == 0,"closing a guide returns to the same officer in the picker")
+    resumedWaitOverlay.keyDown(with:key(53));resumedWaitOverlay.keyDown(with:key(53))
+
+    // A complete area-strategy path through menus and the clickable footer.
+    // The same dispatch is used by real mouse events; this is not an OS-input test.
+    var areaRoster = roster
+    let areaSession = try OriginalBattleSession(definition:session.definition,roster:&areaRoster,
+        people:try OriginalPeople(catalog:catalog,tables:tables),combat:tables,movement:movement,rng:OriginalRNG(state:5))
+    let areaView = try OriginalBattleView(session:areaSession,background:nil)
+    areaView.presentation = .modern
+    try areaView.start()
+    areaSession.units[0]!.mp = 5;areaSession.units[0]!.morale = 80
+    let areaOverlay = areaView.subviews.compactMap { $0 as? CanvasOverlayView }.first!
+    func chooseAreaStrategy() {
+        areaOverlay.keyDown(with:key(125))  // command row 1: strategy
+        areaOverlay.keyDown(with:key(36))
+        areaOverlay.keyDown(with:key(36))   // only synthetic ability 30 is available
+    }
+    try areaView.performPlayerAction(.nextUnit)
+    try areaView.performPlayerAction(.command)
+    areaOverlay.keyDown(with:key(125));areaOverlay.keyDown(with:key(36))
+    areaOverlay.keyDown(with:key(125));areaOverlay.keyDown(with:key(125));areaOverlay.keyDown(with:key(36))
+    try check(areaOverlay.sheet?.rows.count == 2,"the learned-strategy picker also opens the complete learning guide")
+    areaOverlay.keyDown(with:key(53))
+    try check(areaOverlay.selector?.options.count == 3,"closing that guide returns to strategies, availability help and the guide")
+    areaOverlay.keyDown(with:key(53))
+    chooseAreaStrategy()
+    let beforeCancelRNG = areaSession.rng
+    try check(areaView.playerControls.contains { $0.action == .confirmStrategy && $0.enabled },"an area strategy exposes a clickable execution control")
+    try check(areaView.clickPanel(point(ModernBattleControls.cancel)),"the area-strategy cancel button accepts a click")
+    try check(areaSession.units[0]!.mp == 5 && areaSession.units[0]!.scriptFlags&0x80 == 0 && areaSession.rng == beforeCancelRNG && areaView.asksPlayer,
+              "cancelling area selection returns to commands without MP, action or RNG consumption")
+    chooseAreaStrategy()
+    try check(areaView.clickPanel(point(ModernBattleControls.confirm)),"the area-strategy execute button accepts a click")
+    try check(areaSession.units[0]!.mp == 4 && areaSession.units[0]!.scriptFlags&0x80 != 0,
+              "clicking execute runs the restored strategy and spends its single cost")
+    let afterExecuteRNG = areaSession.rng
+    _ = areaView.clickPanel(point(ModernBattleControls.confirm))
+    try check(areaSession.units[0]!.mp == 4 && areaSession.rng == afterExecuteRNG,"a repeated click cannot execute a stale strategy again")
+    areaView.presentation = .original
+    try check(areaView.playerControls.isEmpty && areaView.layoutFacts.viewport == OriginalBattleLayout.source.viewport,
+              "switching to original frames restores the source geometry without modern hit targets")
+    var favoriteRoster = roster
+    let favoriteSession = try OriginalBattleSession(definition:session.definition,roster:&favoriteRoster,
+        people:try OriginalPeople(catalog:catalog,tables:tables),combat:tables,movement:movement,rng:OriginalRNG(state:5))
+    let favoriteView = try OriginalBattleView(session:favoriteSession,background:nil)
+    var favoriteCommands:[BattleFavoriteAction] = [.strategy(30)]
+    favoriteView.favoriteCommands = {_ in favoriteCommands}
+    favoriteView.onFavoriteCommandsChanged = {_,commands in favoriteCommands = commands}
+    favoriteView.presentation = .modern;try favoriteView.start()
+    favoriteSession.units[0]!.mp = 5;favoriteSession.units[0]!.morale = 80
+    let favoriteOverlay = favoriteView.subviews.compactMap {$0 as? CanvasOverlayView}.first!
+    try favoriteView.performPlayerAction(.nextUnit);try favoriteView.performPlayerAction(.command)
+    try check(favoriteOverlay.selector?.options.first?.label.hasPrefix("★ ") == true,"favorite commands appear before normal commands with stable action identity")
+    let favoriteBeforeRNG = favoriteSession.rng
+    favoriteOverlay.keyDown(with:key(36))
+    try check(favoriteView.playerControls.contains {$0.action == .confirmStrategy && $0.enabled} && favoriteSession.units[0]!.mp == 5 && favoriteSession.rng == favoriteBeforeRNG,
+        "favorite area strategy still waits for the ordinary explicit confirmation")
+    try favoriteView.performPlayerAction(.cancel)
+    if let waitIndex = favoriteOverlay.selector?.options.firstIndex(where:{$0.label == "Wait"}) {
+        for _ in 0..<waitIndex {favoriteOverlay.keyDown(with:key(125))}
+        favoriteOverlay.keyDown(with:key(36))
+    }
+    try check(favoriteSession.units[0]!.scriptFlags&0x80 != 0 && favoriteSession.units[0]!.mp == 5,
+        "favorite-prefix insertion does not shift the original Wait command into another action")
+    favoriteSession.units[0]!.scriptFlags = 0x20;favoriteSession.units[0]!.mp = 0
+    try favoriteView.performPlayerAction(.nextUnit);try favoriteView.performPlayerAction(.command)
+    try check(favoriteOverlay.selector?.options.first?.enabled == false && favoriteOverlay.selector?.options.first?.help.contains("MP") == true,
+        "an exhausted favorite remains visible with its MP refusal")
+    favoriteOverlay.keyDown(with:key(53))
+    favoriteSession.units[0]!.mp = 5
+    try favoriteView.performPlayerAction(.nextUnit)
+    let helperUnits = favoriteSession.units,helperRNG = favoriteSession.rng,helperTurns = favoriteSession.turns
+    favoriteView.favoriteCommandsSourceIssue = {"이전 자료의 즐겨찾기입니다"}
+    try favoriteView.performPlayerAction(.command)
+    try check(favoriteOverlay.selector?.options.first?.enabled == false && favoriteOverlay.selector?.options.first?.help.contains("이전 자료") == true,"source-mismatched favorites remain visible but cannot execute a same-number command")
+    favoriteOverlay.keyDown(with:key(53));favoriteView.favoriteCommandsSourceIssue = nil
+    var rememberedModes:[BattleMapViewMode] = []
+    favoriteView.onMapViewPreferenceChanged = {rememberedModes.append($0)}
+    favoriteView.keyDown(with:key(6))
+    try check(favoriteView.layoutFacts.cell == 40,"map zoom changes only the viewport cell scale")
+    favoriteView.keyDown(with:key(6))
+    try check(favoriteView.layoutFacts.columns == favoriteSession.width && favoriteView.layoutFacts.rows == favoriteSession.height,"full-map mode fits all cells")
+    try check(rememberedModes == [.large],"overview does not overwrite the default tactical map scale")
+    favoriteView.keyDown(with:key(49));favoriteView.keyDown(with:key(36))
+    for action:BattlePlayerAction in [.wait,.command,.confirmStrategy,.endTurn,.nextUnit] {try favoriteView.performPlayerAction(action)}
+    try check(favoriteSession.units == helperUnits && favoriteSession.rng == helperRNG && favoriteSession.turns == helperTurns && !favoriteOverlay.active,
+        "overview Space/Return and footer action dispatch cannot wait, move, attack or consume a turn from a selected unit")
+    try check(favoriteView.playerControls.filter(\.enabled).allSatisfy {[BattlePlayerAction.menu,.conditions,.threat,.pace,.cancel].contains($0.action)},
+        "overview exposes only inspection, menu and return controls")
+    favoriteView.keyDown(with:key(6))
+    try check(favoriteView.layoutFacts.cell == 40 && favoriteSession.units == helperUnits && favoriteSession.rng == helperRNG,"leaving overview restores the previous map scale without a gameplay command")
+    var preferredControls = AppControlPreferences();preferredControls.battleMapMode = .large
+    let preferredView = try AppControlRuntime.withPreferences(preferredControls) {try OriginalBattleView(session:favoriteSession,background:nil)}
+    preferredView.presentation = .modern
+    try check(preferredView.layoutFacts.cell == 40,"a newly created battle view restores the stored tactical scale")
+    var savedAnnotations = BattleAnnotations(battleID:favoriteSession.definition.id,attemptID:favoriteSession.resultLog.attemptID,width:favoriteSession.width,height:favoriteSession.height)
+    favoriteView.annotations = {savedAnnotations};favoriteView.onAnnotationsChanged = {savedAnnotations = $0}
+    favoriteView.keyDown(with:key(45));favoriteOverlay.keyDown(with:key(36))
+    try check(!favoriteOverlay.active && favoriteView.playerControls.filter(\.enabled).allSatisfy {$0.action == .cancel},"annotation coordinate selection blocks normal battle actions")
+    favoriteView.keyDown(with:key(53))
+    try check(savedAnnotations.entries.isEmpty && favoriteSession.units == helperUnits && favoriteSession.rng == helperRNG,"cancelling an annotation draft writes no metadata or gameplay state")
+    favoriteView.keyDown(with:key(6))
+    favoriteView.keyDown(with:key(45));favoriteOverlay.keyDown(with:key(36))
+    let draftButtons = favoriteView.playerControls.filter(\.enabled)
+    try check(draftButtons.count == 1 && draftButtons.first?.action == .cancel && draftButtons.first?.label.hasPrefix("메모 취소") == true,
+        "annotation draft takes input and label priority over overview return controls")
+    try favoriteView.performPlayerAction(.cancel)
+    try check(favoriteView.layoutFacts.columns == favoriteSession.width && favoriteSession.units == helperUnits && favoriteSession.rng == helperRNG,
+        "overview annotation cancel discards only the draft and preserves the overview and gameplay")
+    favoriteView.keyDown(with:key(6))
+    try favoriteView.performPlayerAction(.nextUnit)
+    favoriteView.keyDown(with:key(17));favoriteOverlay.keyDown(with:key(36))
+    try check(favoriteOverlay.sheet?.speaker == "범위 책략 위치 추천" && favoriteSession.units == helperUnits && favoriteSession.rng == helperRNG,"area advice opens as a read-only sheet from its keyboard action")
+    favoriteOverlay.keyDown(with:key(53))
+    favoriteView.showTutorialLibrary()
+    try check(favoriteOverlay.sheet?.speaker == "상황별 초보 안내" && favoriteSession.units == helperUnits && favoriteSession.rng == helperRNG,"tutorial library preserves the pending source command and RNG")
+    favoriteOverlay.keyDown(with:key(53))
+    var accepted:[OriginalPlayInput] = [],boundaries = 0
+    favoriteView.onAcceptedInput = {accepted.append($0)};favoriteView.onRecordingBoundary = {boundaries += 1}
+    try favoriteView.performPlayerAction(.wait)
+    favoriteView.advanceAnimation(0);favoriteView.advanceAnimation(0)
+    try check(accepted.map(\.kind) == [.battleWait] && boundaries == 1,"immediate wait records one accepted command and one settled boundary, not one per frame")
     print("Original battle screen self-tests passed: \(checks)")
 }

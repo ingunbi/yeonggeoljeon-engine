@@ -90,6 +90,23 @@ struct OriginalPhysicalResult: Codable, Equatable {
     var source: String = "MAIN31474/317CC/3198E/321E2; physical producer, not a complete combat exchange"
 }
 
+struct OriginalMoraleKernel {
+    let morale:Int;let flags:Int;let status:Int
+    let lossRequired:Bool;let recoveryRequested:Bool;let threshold:Int
+    var recoveryRollRequired:Bool {recoveryRequested && flags&2 != 0 && status == 2}
+    func result(lossRoll:Int?,recoveryRoll:Int?)->OriginalMoraleMutation {
+        var changed = flags
+        if lossRequired,let lossRoll,lossRoll < 3 {changed |= 2}
+        var condition:OriginalConditionRecovery?
+        if recoveryRequested {
+            let recovered = recoveryRollRequired && recoveryRoll.map {$0 < threshold} == true
+            if recovered {changed &= 0xFD}
+            condition = .init(roll:recoveryRollRequired ? recoveryRoll : nil,threshold:threshold,recovered:recovered,remainingFlags:changed)
+        }
+        return .init(remainingMorale:morale,remainingFlags:changed,lossRoll:lossRequired ? lossRoll : nil,conditionRecovery:condition)
+    }
+}
+
 struct OriginalExperienceGain: Codable, Equatable {
     var hit: Int
     var defeatedTarget: Int
@@ -193,6 +210,22 @@ struct OriginalHealingResult: Codable, Equatable {
     var remainingMorale: Int
     var remainingFlags: Int
     var moraleMutation: OriginalMoraleMutation?
+}
+
+/// Pure source arithmetic shared by execution and read-only assistance.
+/// The caller still owns the exact random-call order and morale side effects.
+struct OriginalHealingKernel {
+    var troopBase:Int;var troopBound:Int;var moraleBase:Int;var moraleBound:Int
+    var maximum:Int;var target:OriginalPersonStats
+    func troops(roll:Int)->Int {
+        let amount = min(troopBase+roll,maximum-target.troops)
+        return min(maximum,Int(UInt16(truncatingIfNeeded:target.troops+amount)))
+    }
+    func moraleAmount(roll:Int)->Int {min(100-target.morale,Int(UInt8(truncatingIfNeeded:moraleBase+roll)))}
+}
+
+struct OriginalStrategyKernel {
+    var bound:Int;var threshold:Int;var damageBase:Int64;var jitterBound:Int;var resisted:Bool
 }
 
 struct OriginalStrategyCompletion: Codable, Equatable {
@@ -328,7 +361,7 @@ enum OriginalCombat {
             throw BattleError.invalid("Original condition recovery requires source bytes")
         }
         if let stats { try person(stats) }
-        let threshold = stats.map { ($0.defenseScalar+$0.morale)/3 }
+        let threshold = stats.map(conditionRecoveryThreshold)
         guard conditionFlags&2 != 0, unitStatus == 2 else {
             return OriginalConditionRecovery(roll:nil,threshold:threshold,recovered:false,remainingFlags:conditionFlags)
         }
@@ -337,10 +370,18 @@ enum OriginalCombat {
         return OriginalConditionRecovery(roll:roll,threshold:threshold,recovered:recovered,
             remainingFlags:recovered ? conditionFlags & 0xFD : conditionFlags)
     }
+    static func conditionRecoveryThreshold(_ stats:OriginalPersonStats)->Int {(stats.defenseScalar+stats.morale)/3}
     /// MAIN2BEEC..2BF51 owns morale clamping and its condition side effects.
     /// The source comparisons use the requested signed word, not its clamped
     /// morale. Callers must retain the lethal-damage gate that skips this setter.
     static func setMorale(stats:OriginalPersonStats,unitStatus:Int,conditionFlags:Int,requestedMorale:Int,rng:inout OriginalRNG) throws -> OriginalMoraleMutation {
+        let kernel = try moraleKernel(stats:stats,unitStatus:unitStatus,conditionFlags:conditionFlags,requestedMorale:requestedMorale)
+        let loss = kernel.lossRequired ? try rng.next(bound:5) : nil
+        let recovery = kernel.recoveryRollRequired ? try rng.next(bound:100) : nil
+        return kernel.result(lossRoll:loss,recoveryRoll:recovery)
+    }
+    /// Live execution and finite prediction share this deterministic producer.
+    static func moraleKernel(stats:OriginalPersonStats,unitStatus:Int,conditionFlags:Int,requestedMorale:Int) throws -> OriginalMoraleKernel {
         try person(stats)
         guard (0...255).contains(unitStatus), (0...255).contains(conditionFlags),
               (-32768...65535).contains(requestedMorale) else {
@@ -348,19 +389,11 @@ enum OriginalCombat {
         }
         let raw = UInt16(truncatingIfNeeded:requestedMorale), requested = Int(Int16(bitPattern:raw))
         let morale = max(0,min(100,requested))
-        var flags = conditionFlags
-        var lossRoll:Int?, condition:OriginalConditionRecovery?
-        if stats.morale > requested {
-            if raw < 30 {
-                lossRoll = try rng.next(bound:5)
-                if lossRoll! < 3 { flags |= 2 }
-            }
-        } else if stats.morale < requested || requested == 100 {
-            var changed = stats; changed.morale = morale
-            condition = try recoverCondition2(stats:changed,unitStatus:unitStatus,conditionFlags:flags,rng:&rng)
-            flags = condition!.remainingFlags
-        }
-        return OriginalMoraleMutation(remainingMorale:morale,remainingFlags:flags,lossRoll:lossRoll,conditionRecovery:condition)
+        var changed = stats;changed.morale = morale
+        return .init(morale:morale,flags:conditionFlags,status:unitStatus,
+            lossRequired:stats.morale > requested && raw < 30,
+            recoveryRequested:stats.morale <= requested && (stats.morale < requested || requested == 100),
+            threshold:conditionRecoveryThreshold(changed))
     }
     /// MAIN2D630..2D67E. Retirement itself invokes source campaign hooks and
     /// changes live-slot status; that stateful operation remains caller-owned.
@@ -373,15 +406,28 @@ enum OriginalCombat {
     /// MAIN2D80A..2D8F0. The raw denominator byte is not masked before
     /// division, including the AI's0x82 message-suppression operand.
     static func strategySuccess(caster:OriginalPersonStats,target:OriginalPersonStats,denominatorByte:Int,rng:inout OriginalRNG) throws -> OriginalStrategySuccess {
+        let parameters = try strategySuccessParameters(caster:caster,target:target,denominatorByte:denominatorByte)
+        let roll = try rng.next(bound:parameters.bound)
+        return OriginalStrategySuccess(chanceBound:parameters.bound,roll:roll,threshold:parameters.threshold,success:roll>parameters.threshold)
+    }
+    static func strategySuccessParameters(caster:OriginalPersonStats,target:OriginalPersonStats,denominatorByte:Int) throws -> (bound:Int,threshold:Int) {
         try person(caster); try person(target)
         guard (1...255).contains(denominatorByte) else {
             throw BattleError.invalid("Original strategy success denominator is zero or not a byte")
         }
         let bound = caster.intellectScalar+caster.level*caster.intellectScalar/100
         var threshold = (target.intellectScalar+target.level*target.intellectScalar/100)/denominatorByte
-        let roll = try rng.next(bound:bound)
         if [12,15,18].contains(target.classID) { threshold = Int(UInt16(truncatingIfNeeded:threshold*2)) }
-        return OriginalStrategySuccess(chanceBound:bound,roll:roll,threshold:threshold,success:roll>threshold)
+        return (bound,threshold)
+    }
+    /// Marginal probability over the source 15-bit draw domain, including its
+    /// modulo bias. No current or future RNG state is accepted by this query.
+    static func rollProbability(bound:Int,accepts:(Int)->Bool) throws -> Double {
+        guard (0...65535).contains(bound) else {throw BattleError.invalid("Original probability bound is invalid")}
+        if bound == 0 {return accepts(0) ? 100 : 0}
+        let quotient = 32768/bound,remainder = 32768%bound
+        let count = (0..<min(32768,bound)).reduce(0) { $0+(accepts($1) ? quotient+($1 < remainder ? 1 : 0) : 0) }
+        return Double(count)*100/32768
     }
     /// MAIN2D760..2D808 permits healing at full morale when condition2 can be
     /// cured. The AI utility gate is a distinct source method and differs here.
@@ -398,27 +444,34 @@ enum OriginalCombat {
     }
     /// MAIN2EE20..2F052 (B8C0), actual healing rather than AI support utility.
     /// HP mutation precedes morale mutation and its condition-recovery draw.
+    static func healingKernel(_ input:OriginalHealingInput,tables:OriginalCombatTables) throws -> OriginalHealingKernel {
+        try person(input.target);if let caster = input.caster {try person(caster)};try tables.validate()
+        guard (0...255).contains(input.encodedSubtype) else {throw BattleError.invalid("Original healing subtype is invalid")}
+        let high = input.encodedSubtype>>4
+        let troopBase = (high+1)*600+(input.caster.map{$0.level*$0.intellectScalar/20} ?? 0)
+        let moraleBase = (high+3)*10+(input.caster.map{$0.level/10} ?? 0)
+        return OriginalHealingKernel(troopBase:troopBase,troopBound:Int(UInt16(truncatingIfNeeded:troopBase))/10,
+            moraleBase:moraleBase,moraleBound:moraleBase/10,
+            maximum:try maxTroops(classID:input.target.classID,level:input.target.level,tables:tables),target:input.target)
+    }
     static func heal(_ input:OriginalHealingInput,tables:OriginalCombatTables,rng:inout OriginalRNG) throws -> OriginalHealingResult {
         try person(input.target); if let caster = input.caster { try person(caster) };try tables.validate()
         guard (0...255).contains(input.targetStatus), (0...255).contains(input.targetConditionFlags),
               (0...255).contains(input.encodedSubtype) else { throw BattleError.invalid("Original healing context is invalid") }
-        let target = input.target, high = input.encodedSubtype>>4, flags = input.encodedSubtype&15
+        let target = input.target,flags = input.encodedSubtype&15
         var result = OriginalHealingResult(troopRoll:nil,moraleRoll:nil,troopsDelta:0,moraleDelta:0,
             remainingTroops:target.troops,remainingMorale:target.morale,remainingFlags:input.targetConditionFlags,moraleMutation:nil)
         if input.targetStatus != 2 { return result }
+        let kernel = try healingKernel(input,tables:tables)
         if flags&1 != 0 {
-            let base = (high+1)*600+(input.caster.map{$0.level*$0.intellectScalar/20} ?? 0)
-            let roll = try rng.next(bound:Int(UInt16(truncatingIfNeeded:base))/10)
+            let roll = try rng.next(bound:kernel.troopBound)
             result.troopRoll = roll
-            let maximum = try maxTroops(classID:target.classID,level:target.level,tables:tables)
-            let amount = min(base+roll,maximum-target.troops)
-            result.remainingTroops = min(maximum,Int(UInt16(truncatingIfNeeded:target.troops+amount)))
+            result.remainingTroops = kernel.troops(roll:roll)
             result.troopsDelta = result.remainingTroops-target.troops
         }
         if flags&2 != 0 {
-            let base = (high+3)*10+(input.caster.map{$0.level/10} ?? 0)
-            let roll = try rng.next(bound:base/10);result.moraleRoll = roll
-            let amount = min(100-target.morale,Int(UInt8(truncatingIfNeeded:base+roll)))
+            let roll = try rng.next(bound:kernel.moraleBound);result.moraleRoll = roll
+            let amount = kernel.moraleAmount(roll:roll)
             var afterTroops = target;afterTroops.troops = result.remainingTroops
             let mutation = try setMorale(stats:afterTroops,unitStatus:input.targetStatus,conditionFlags:input.targetConditionFlags,
                 requestedMorale:target.morale+amount,rng:&rng)
@@ -496,7 +549,7 @@ enum OriginalCombat {
         return OriginalExperienceMutation(level:Int(UInt8(truncatingIfNeeded:level+gained)),experience:total%100,
                                           levelsGained:gained,ignoredReason:nil)
     }
-    static func physicalStrike(_ input:OriginalPhysicalInput,tables:OriginalCombatTables,rng:inout OriginalRNG) throws -> OriginalPhysicalResult {
+    static func physicalImpact(_ input:OriginalPhysicalInput,tables:OriginalCombatTables) throws -> OriginalPhysicalResult {
         try person(input.attacker); try person(input.defender); try tables.validate()
         guard tables.terrainDefensePercent.indices.contains(input.terrainID), (0...255).contains(input.subtype) else {
             throw BattleError.invalid("Original physical terrain/subtype is unresolved")
@@ -517,24 +570,30 @@ enum OriginalCombat {
             let q = Int(damage)/(input.defender.level+5)/3
             loss = min(input.defender.morale,damage == 0 ? 0 : max(1,q))
         }
+        return OriginalPhysicalResult(attack:attack,defense:defense,adjustedDefense:Int(adjusted),damage:Int(damage),
+            moraleLoss:loss,counterRoll:nil,counterEligible:false,remainingTroops:input.defender.troops-Int(damage),
+            remainingMorale:damage == input.defender.troops ? input.defender.morale : input.defender.morale-loss)
+    }
+    static func physicalStrike(_ input:OriginalPhysicalInput,tables:OriginalCombatTables,rng:inout OriginalRNG) throws -> OriginalPhysicalResult {
+        var result = try physicalImpact(input,tables:tables)
         // Source draws before subtype/kill/status suppression; preserving that
         // otherwise unused draw is necessary to preserve later game randomness.
-        var roll:Int?, counter = false
+        var roll:Int?
         if tables.physicalSubtypeByClass[input.defender.classID] == 0 {
             roll = try rng.next(bound:150)
-            counter = input.defender.attackScalar > roll!
         }
-        if ![0,2,5].contains(input.subtype) || damage == input.defender.troops || input.defenderCounterDisabled { counter = false }
-        return OriginalPhysicalResult(attack:attack,defense:defense,adjustedDefense:Int(adjusted),damage:Int(damage),
-            moraleLoss:loss,counterRoll:roll,counterEligible:counter,
-            remainingTroops:input.defender.troops-Int(damage),
-            remainingMorale:damage == input.defender.troops ? input.defender.morale : input.defender.morale-loss)
+        result.counterRoll = roll;result.counterEligible = physicalCounterEligible(input,damage:result.damage,roll:roll,tables:tables)
+        return result
+    }
+    static func physicalCounterEligible(_ input:OriginalPhysicalInput,damage:Int,roll:Int?,tables:OriginalCombatTables)->Bool {
+        tables.physicalSubtypeByClass[input.defender.classID] == 0 && roll.map {input.defender.attackScalar > $0} == true &&
+            [0,2,5].contains(input.subtype) && damage != input.defender.troops && !input.defenderCounterDisabled
     }
 
     /// MAIN315ED..317CB. The first random result is truncated to one byte;
     /// failure is tested after consuming the jitter draw. A zero bound does
     /// not advance the shared source RNG. Intermediate DI arithmetic wraps.
-    static func strategyStrike(_ input:OriginalStrategyInput,tables:OriginalCombatTables,rng:inout OriginalRNG) throws -> OriginalStrategyResult {
+    static func strategyKernel(_ input:OriginalStrategyInput,tables:OriginalCombatTables) throws -> OriginalStrategyKernel {
         try person(input.attacker); try person(input.defender); try tables.validate()
         guard (0...255).contains(input.terrainID), (0...255).contains(input.subtype),
               (0...255).contains(input.weatherCode), [2,3].contains(input.kind) else {
@@ -548,7 +607,6 @@ enum OriginalCombat {
         let offense = input.kind == 2 ? 2*(a.intellectScalar+a.level*a.intellectScalar/50) : 0
         let defense = d.intellectScalar+d.level*d.intellectScalar/50
         var damage = Int64(UInt16(truncatingIfNeeded:offense-defense+coefficient))
-        let rollByte = Int(UInt8(truncatingIfNeeded:try rng.next(bound:bound)))
         // MAIN2D60A..2D62C tests these class immediates, not a resource table.
         let resisted = [12,15,18].contains(d.classID)
         if resisted { threshold = Int(UInt16(truncatingIfNeeded:threshold*2)); damage = try divide32(damage,2) }
@@ -559,13 +617,26 @@ enum OriginalCombat {
         // Source takes only AX for this unsigned word division, even when the
         // preceding25% addition has carried into the high word.
         let jitterBound = Int(UInt16(truncatingIfNeeded:damage))/50
-        let jitter = try rng.next(bound:jitterBound)
-        damage = add32(damage,Int64(jitter))
+        return OriginalStrategyKernel(bound:bound,threshold:threshold,damageBase:damage,jitterBound:jitterBound,resisted:resisted)
+    }
+    static func strategyQuantity(_ kernel:OriginalStrategyKernel,jitter:Int,targetTroops:Int) -> Int {
+        Int(min(Int64(targetTroops),add32(kernel.damageBase,Int64(jitter))))
+    }
+    static func strategyStrike(_ input:OriginalStrategyInput,tables:OriginalCombatTables,rng:inout OriginalRNG) throws -> OriginalStrategyResult {
+        let kernel = try strategyKernel(input,tables:tables)
+        // Keep the same draw order: success byte, then jitter even on failure.
+        let roll = try rng.next(bound:kernel.bound)
+        let jitter = try rng.next(bound:kernel.jitterBound)
+        return strategyResult(input,kernel:kernel,successRoll:roll,jitter:jitter)
+    }
+    static func strategyResult(_ input:OriginalStrategyInput,kernel:OriginalStrategyKernel,successRoll:Int,jitter:Int)->OriginalStrategyResult {
+        let d = input.defender,bound = kernel.bound,threshold = kernel.threshold,jitterBound = kernel.jitterBound
+        let rollByte = Int(UInt8(truncatingIfNeeded:successRoll))
         let success = input.kind != 2 || rollByte > threshold
-        let quantity = success ? Int(min(Int64(d.troops),damage)) : 0
+        let quantity = success ? strategyQuantity(kernel,jitter:jitter,targetTroops:d.troops) : 0
         let loss = quantity == d.troops ? d.morale : min(d.morale,quantity == 0 ? 0 : max(1,quantity/100))
         return OriginalStrategyResult(chanceBound:bound,chanceRollByte:rollByte,defenderThreshold:threshold,
-            jitterBound:jitterBound,jitterRoll:jitter,resisted:resisted,success:success,damage:quantity,
+            jitterBound:jitterBound,jitterRoll:jitter,resisted:kernel.resisted,success:success,damage:quantity,
             moraleLoss:loss,remainingTroops:d.troops-quantity,remainingMorale:quantity == d.troops ? d.morale : d.morale-loss)
     }
 }

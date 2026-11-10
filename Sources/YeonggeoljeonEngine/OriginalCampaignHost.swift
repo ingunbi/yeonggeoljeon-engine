@@ -22,10 +22,10 @@ struct OriginalRetryHostState:Codable,Equatable {
     var currentEventPerson:Int?
 }
 
-/// Native engine resume point taken at a source3D save prompt. This is not
-/// an original MSAVE slot: MAIN's own save/load (CF5:B58C, title item one)
-/// is not replicated. It retains host-owned continuation state so the same
-/// source cursor continues after the prompt.
+/// Native engine resume point at a source3D prompt, idle field, or the
+/// engine's first-turn checkpoint or separate suspension. This is not an original MSAVE slot:
+/// MAIN's own save/load (CF5:B58C, title item one) is not replicated.
+/// Host-owned continuation state identifies the exact supported boundary.
 struct OriginalCampaignResume:Codable {
     static let maximumBytes = 32 * 1024 * 1024
     var format = 1
@@ -42,6 +42,12 @@ struct OriginalCampaignResume:Codable {
     var retryHost:OriginalRetryHostState?
     var uncertainReturnContext:OriginalCampaignReturnContext?
     var limitations:[String]
+    /// Engine-only first-turn boundary, absent in legacy field saves.
+    var battleStart:OriginalBattleStartResume? = nil
+    /// Separate single-use suspension. Absent from all earlier save files.
+    var suspension:OriginalCampaignSuspension? = nil
+    /// Player assistance state belongs to this exact saved campaign.
+    var extras:CampaignExtras? = nil
 
     static func read(from url:URL) throws -> Self {
         let attributes = try FileManager.default.attributesOfItem(atPath:url.path)
@@ -53,6 +59,72 @@ struct OriginalCampaignResume:Codable {
             throw EngineError.invalid("Native resume file has an unsupported format")
         }
         return value
+    }
+}
+
+/// A battle whose opening scripts have finished, before the turn flow starts.
+/// This deliberately does not serialize suspended attacks, movement undo state
+/// or AI continuations. Mid-battle suspension uses its own guarded payload.
+struct OriginalBattleStartResume:Codable {
+    var battleID:String
+    var terrain:[UInt8]
+    var pictureTiles:[UInt8]?
+    var scriptActions:OriginalScriptActionState
+    var resultLog:BattleResultLog? = nil
+    var sourceOptionsWord:Int? = nil
+
+    /// Bind the ID to a decoded load instruction in this campaign block,
+    /// not merely to a map that happens to exist in the battle catalogue.
+    func matchesSource(program:OriginalCampaignProgram,state:OriginalCampaignState) -> Bool {
+        program.records.contains { record in
+            record.chapter == state.chapter && record.member == state.member && record.block == state.block &&
+            record.instructions.contains { instruction in
+                [9,0x11].contains(instruction.opcode) && instruction.battleID == battleID && instruction.arguments.first == state.packedMap
+            }
+        }
+    }
+
+    static func capture(_ battle:OriginalBattleSession) throws -> Self {
+        guard battle.turns.stage == .unstarted,battle.turns.result == 0,battle.turns.pendingAI.isEmpty,
+              battle.exchanges.isEmpty,battle.strategyExecutions.isEmpty,battle.retirements.isEmpty,
+              battle.objectiveEvents.isEmpty,battle.upkeepNotices.isEmpty,
+              battle.scriptActions.duel?.active != true else {
+            throw EngineError.invalid("Battle-start resume requires a completed opening before the first turn")
+        }
+        return Self(battleID:battle.definition.id,terrain:battle.terrain,pictureTiles:battle.pictureTiles,scriptActions:battle.scriptActions,resultLog:battle.resultLog,sourceOptionsWord:battle.sourceOptionsWord)
+    }
+    /// Replaces only the explicitly serialized starting state of a fresh session.
+    func restore(_ saved:OriginalCampaignCheckpoint,in battle:OriginalBattleSession) throws {
+        try restoreState(saved,in:battle,beforeFirstTurn:true)
+    }
+    func restoreState(_ saved:OriginalCampaignCheckpoint,in battle:OriginalBattleSession,beforeFirstTurn:Bool) throws {
+        try resultLog?.validate()
+        if let options = sourceOptionsWord,!(0...65535).contains(options) { throw EngineError.invalid("Saved battle options are invalid") }
+        func point(_ p:GridPoint) -> Bool { (0..<battle.width).contains(p.x) && (0..<battle.height).contains(p.y) }
+        guard battleID == battle.definition.id,let turns = saved.turns,let units = saved.liveUnits,
+              (beforeFirstTurn ? turns.stage == .unstarted : [.unstarted,.manualFriendly].contains(turns.stage)),turns.result == 0,turns.pendingAI.isEmpty,
+              (0...65535).contains(turns.roundIndex),turns.weatherIndex <= 5,
+              terrain.count == battle.width*battle.height,
+              pictureTiles == nil || pictureTiles!.count == terrain.count*4,
+              units.count <= 45,Set(units.map(\.slot)).count == units.count,
+              units.allSatisfy({ unit in
+                  (0..<45).contains(unit.slot) && (0..<384).contains(unit.person) && (0...4).contains(unit.status) &&
+                  (0...100).contains(unit.morale) && (0...255).contains(unit.position.x) && (0...255).contains(unit.position.y) &&
+                  (unit.status != 2 || point(unit.position)) && (unit.goal.map { (0...255).contains($0.x) && (0...255).contains($0.y) } ?? true) &&
+                  (unit.preferredTarget.map { (0..<45).contains($0) } ?? true)
+              }),let value24 = saved.battleValue24,(0...255).contains(value24),
+              scriptActions.duel?.active != true,
+              scriptActions.environment.count <= terrain.count,scriptActions.environment.allSatisfy({point($0.point)}),
+              scriptActions.markers.count <= terrain.count,scriptActions.markers.keys.allSatisfy(point) else {
+            throw EngineError.invalid("Battle-start resume has an invalid starting state")
+        }
+        if let resultLog = resultLog { battle.resultLog = resultLog }
+        if let options = sourceOptionsWord { battle.sourceOptionsWord = options }
+        battle.restoredSourceOptions = true
+        battle.units = Dictionary(uniqueKeysWithValues:units.map { ($0.slot,$0) })
+        battle.turns = turns;battle.terrain = terrain;battle.pictureTiles = pictureTiles
+        battle.scriptActions = scriptActions;battle.scriptValue24 = UInt8(value24);battle.rng = saved.rng
+        _ = try battle.board()
     }
 }
 
@@ -74,6 +146,16 @@ final class OriginalCampaignHost {
     let shopCatalog:OriginalShopCatalog
     let citizens:OriginalCitizenCatalog
     let people:OriginalPeople
+    var extras = CampaignExtras()
+    var eventHintCatalog:ReviewedEventHints.Catalog?
+    var eventHintCatalogError:String?
+    /// Immutable source tables, not mutable campaign progress or file paths.
+    lazy var currentAssistanceSourceIdentity:String? = {
+        struct Facts:Encodable {var campaign:String;var people:OriginalPersonCatalog;var combat:OriginalCombatTables;var movement:OriginalMovementProfile;var party:OriginalPartyProfile}
+        guard let digest = vm.program.sourceDigest,SourceCatalogIdentity.valid(digest) else {return nil}
+        return try? SourceCatalogIdentity.digest(Facts(campaign:digest,people:source.people,combat:source.combat,movement:source.movement,party:source.party))
+    }()
+    var resumedFrom:String?
     private(set) var roster = OriginalRoster()
     private(set) var rng:OriginalRNG
     // MAIN1276F..12779 clears DS6390..<E6D0, including7A80+0. The
@@ -126,6 +208,10 @@ final class OriginalCampaignHost {
     /// source's duel routines hold it until they return.
     private(set) var duelSteps:[OriginalDuelStep]?
     func finishDuelSteps() { duelSteps = nil }
+    /// Scripted battle walks the window has yet to play.
+    private(set) var battleCues:[OriginalBattleCue]?
+    func finishBattleCues() { battleCues = nil }
+    private var pendingBattleCommands:[Command] = []
     private var closingNotices:[OriginalBattleNotice] = []
     func takeClosingNotice() -> OriginalBattleNotice? { closingNotices.isEmpty ? nil : closingNotices.removeFirst() }
     private var retirementPresentationStep:OriginalRetirementStep?
@@ -197,6 +283,7 @@ final class OriginalCampaignHost {
         vm = try CampaignVM(program:program,state:vmState ?? OriginalCampaignState(),supportedHostOpcodes:[2,3,7,0x10,0x11,0x1B,0x1C,0x1F,0x20,0x22,0x23,0x24,0x26,0x27,0x28,0x29,0x2A,0x2D,0x2F,0x33,0x34,0x35,0x37,0x39,0x3A,0x2B,0x36,0x38,0x3B,0x3C,0x3D])
         stage = Runtime(data,hostDriven:true)
         stage.extraActors = citizens.actors(sprites:exploration.townSprites ?? [])
+        loadDefaultEventHints()
     }
     func acknowledge() throws {
         guard failure == nil,choice == nil,saveRequest == nil,itemInstruction == nil else { return }
@@ -227,8 +314,10 @@ final class OriginalCampaignHost {
         return stage.scrollWorld(dx:dx,dy:dy,step:step)
     }
     func choose(_ index:Int) throws {
-        guard choice != nil else { throw EngineError.invalid("No original campaign choice is pending") }
-        try vm.choose(index:index);choice = nil;try pump()
+        guard let selected = choice,selected.options.indices.contains(index) else { throw EngineError.invalid("No original campaign choice is pending") }
+        try vm.choose(index:index)
+        recordJourney(kind:"선택",text:selected.options[index])
+        choice = nil;try pump()
     }
     private func itemRecipient() throws -> Int {
         guard vm.state.packedMap>>12 == 3 else { return 0 }
@@ -242,7 +331,7 @@ final class OriginalCampaignHost {
         let person = try itemRecipient()
         if try people.person(person).itemIDs.contains(255) {
             guard announcesItems else { return false }
-            try people.grantScriptItem(person:person,itemID:item)
+            recordBattleGrant(try people.grantScriptItem(person:person,itemID:item))
             itemMessage = .gained(item:item)
         } else { itemOffer = (person,item) }
         itemInstruction = instruction
@@ -252,7 +341,15 @@ final class OriginalCampaignHost {
     /// No answer and the other is a cancelled list (MAIN1A86B, MAIN1A81A).
     func answerItemOffer(slot:Int?,declined:Bool = false) throws {
         guard let offer = itemOffer else { throw EngineError.invalid("No original item offer is pending") }
+        if let slot = slot {
+            let inventory = try people.person(offer.person).itemIDs
+            guard inventory.indices.contains(slot) else { throw EngineError.invalid("Item replacement slot is invalid") }
+            guard !extras.protects(personID:offer.person,itemID:inventory[slot],operation:.discard) else {
+                throw EngineError.invalid("보호된 도구입니다. 도구 관리에서 보호를 해제한 뒤 버릴 수 있습니다.")
+            }
+        }
         let grant = try people.grantScriptItem(person:offer.person,itemID:offer.item,replacementChoice:slot ?? 255)
+        recordBattleGrant(grant)
         itemOffer = nil
         guard announcesItems else { try finishItemGrant();return }
         itemMessage = grant.replacedItemID.map { .discarded(item:$0) } ?? (declined ? .declined(item:offer.item) : .gaveUp(item:offer.item))
@@ -274,6 +371,11 @@ final class OriginalCampaignHost {
     func toggleParty(person:Int) throws {
         guard var selection = partySelection else { throw EngineError.invalid("No original party selection is pending") }
         try selection.toggle(person:person);partySelection = selection
+    }
+    func applyPartyPreset(_ preset:CampaignExtras.PartyPreset) throws {
+        guard let selection = partySelection else { throw EngineError.invalid("No party selection is pending") }
+        if let issue = preset.sourceIssue(for:currentAssistanceSourceIdentity) {throw EngineError.invalid(issue)}
+        partySelection = try PartyPreparation.applying(preset:preset,to:selection).selection
     }
     func confirmParty() throws {
         guard let selection = partySelection,let instruction = partyInstruction else { throw EngineError.invalid("No original party confirmation is pending") }
@@ -344,7 +446,12 @@ final class OriginalCampaignHost {
     /// the giver's first match. False means the receiver is full (MAIN23896).
     func exchangeItem(from giver:Int,to receiver:Int,item:Int) throws -> Bool {
         guard fieldMenuReady else { throw EngineError.invalid("Item exchange is available only at an idle field") }
+        let companions = try people.companions()
+        guard giver != receiver,companions.contains(giver),companions.contains(receiver) else { throw EngineError.invalid("현재 동료 사이에서만 도구를 전달할 수 있습니다.") }
+        var nextExtras = extras
+        try nextExtras.transferProtection(from:giver,to:receiver,item:item)
         let given = try people.giveItem(from:giver,to:receiver,item:item)
+        if given { extras = nextExtras }
         if !given { sounds.append(2) }                     // MAIN2386F
         return given
     }
@@ -356,21 +463,22 @@ final class OriginalCampaignHost {
     private var wanderTime:Int64 = 0
     /// MAIN257AC runs per loop frame, six ticks at the normal speed.
     private func wanderCitizens(microseconds:Int64) {
-        guard citizensWander,explorationInputReady else { return }
+        guard citizensWander,explorationInputReady || explorationInput != nil else { return }
         wanderTime += microseconds
         guard wanderTime >= 99_488 else { return }
         wanderTime = 0
         let present = stage.actors.keys.filter { $0 >= OriginalCitizenCatalog.firstActor }
         wanderers = wanderers.filter { present.contains($0.key) }
+        let goal = explorationInput?.route.last?.position
         for person in present.sorted() {
-            guard let actor = stage.actors[person] else { continue }
+            guard person != explorationInput?.targetPerson,let actor = stage.actors[person] else { continue }
             var state = wanderers[person] ?? OriginalCitizenWander(home:actor.position)
             var dice = wanderDice
             let walks = state.tick { (try? dice.next(bound:$0)) ?? 0 }
             wanderDice = dice
             if walks {
                 var allowed = false
-                stage.wander(person:person,direction:state.direction) { allowed = state.allows($0);return allowed }
+                stage.wander(person:person,direction:state.direction) { allowed = $0 != goal && state.allows($0);return allowed }
                 if !allowed { state.blocked() }
             }
             wanderers[person] = state
@@ -414,11 +522,72 @@ final class OriginalCampaignHost {
             itemName:{ item in names.first{$0.id == item}?.name ?? "" })
         controllerAfterInvocationFacings = facings
     }
+    struct ShoppingTransactionResult { var completed:Int;var failure:String? }
+    func performShopPurchase(item:Int,person:Int,count:Int) throws -> ShoppingTransactionResult {
+        try performShopTransaction(item:item,person:person,count:count,buying:true)
+    }
+    func performShopSale(person:Int,item:Int,count:Int) throws -> ShoppingTransactionResult {
+        try performShopTransaction(item:item,person:person,count:count,buying:false)
+    }
+    /// Each item follows the original shop dialogue transitions on a private
+    /// people copy. Commit only a complete transaction; earlier completed
+    /// items survive a later refusal, and there is no partial item/money write.
+    private func performShopTransaction(item:Int,person:Int,count:Int,buying:Bool) throws -> ShoppingTransactionResult {
+        guard (0..<64).contains(item),(0..<384).contains(person),(1...8).contains(count),
+              let active = shop,let current = money else { throw EngineError.invalid("상점 거래 요청이 올바르지 않습니다.") }
+        switch active.phase {
+        case .top,.buying,.selling:break
+        default:throw EngineError.invalid("진행 중인 상점 선택을 마친 뒤 다시 시도해 주세요.")
+        }
+        let original = people.values.values.sorted {$0.id < $1.id}
+        let scratch = try OriginalPeople(catalog:.init(format:1,people:original),tables:source.combat)
+        try scratch.restore(original)
+        var completed = 0,available = current
+        for _ in 0..<count {
+            let customers = try OriginalShopOperation.customers(scratch)
+            guard let customer = customers.firstIndex(of:person) else { return .init(completed:completed,failure:"거래할 수 있는 장수가 아닙니다.") }
+            var transaction = OriginalShopOperation(catalog:active.catalog,stock:active.stock,itemName:active.itemName)
+            try transaction.answer(nil,people:scratch,money:&available)
+            try transaction.answer(buying ? 0 : 1,people:scratch,money:&available)
+            if buying {
+                guard let row = active.stock.firstIndex(of:item) else { return .init(completed:completed,failure:"현재 상점에서 판매하지 않는 도구입니다.") }
+                guard available >= active.catalog.buyingPrice(item) else { return .init(completed:completed,failure:"돈이 부족합니다.") }
+                guard try scratch.person(person).itemIDs.contains(255) else { return .init(completed:completed,failure:"장수의 도구 칸이 가득 찼습니다.") }
+                try transaction.answer(row,people:scratch,money:&available)
+                try transaction.answer(1,people:scratch,money:&available)
+                try transaction.answer(customer,people:scratch,money:&available)
+                try transaction.answer(1,people:scratch,money:&available)
+            } else {
+                guard !extras.protects(personID:person,itemID:item,operation:.sell) else { return .init(completed:completed,failure:"보호된 도구는 팔 수 없습니다.") }
+                let held = try scratch.person(person).itemIDs.filter {$0 != 255}
+                guard let row = held.firstIndex(of:item) else { return .init(completed:completed,failure:"선택한 도구를 더 이상 가지고 있지 않습니다.") }
+                try transaction.answer(customer,people:scratch,money:&available)
+                try transaction.answer(row,people:scratch,money:&available)
+                try transaction.answer(1,people:scratch,money:&available)
+            }
+            try transaction.answer(0,people:scratch,money:&available)
+            try people.restore(scratch.values.values.sorted {$0.id < $1.id})
+            money = available;shop = transaction;completed += 1;sounds.append(buying ? 3 : 4)
+        }
+        return .init(completed:completed,failure:nil)
+    }
     var shopPrompt:OriginalShopPrompt? { try? shop?.prompt(people:people) }
     /// Answers the routine's current blocking call. The end restores the
     /// merchant's facing (MAIN26AA1..26AAD).
     func answerShop(_ value:Int?) throws {
         guard var operation = shop,var current = money else { throw EngineError.invalid("No original shop is open") }
+        if case .sellConfirm(let person,let slot) = operation.phase,value == 1 {
+            let item = try people.person(person).itemIDs[slot]
+            guard !extras.protects(personID:person,itemID:item,operation:.sell) else {
+                throw EngineError.invalid("보호된 도구는 팔 수 없습니다. 도구 관리에서 보호를 해제해 주세요.")
+            }
+        }
+        if case .receiverConfirm(let item,let person) = operation.phase,value == 1 {
+            guard try OriginalShopOperation.customers(people).contains(person),
+                  try people.person(person).itemIDs.contains(255),current >= shopCatalog.buyingPrice(item) else {
+                throw EngineError.invalid("장수의 도구 칸이나 소지금이 바뀌었습니다. 수령인을 다시 선택해 주세요.")
+            }
+        }
         let before = current
         try operation.answer(value,people:people,money:&current)
         // MAIN3677D and 36AEA: a purchase sounds three, a sale four.
@@ -660,9 +829,29 @@ final class OriginalCampaignHost {
         let instruction = command.source.flatMap { source in record?.instructions.first(where:{$0.commands.contains(where:{$0.source == source})}) }
         failure = CampaignVMFailure(recordID:record?.id,opcode:instruction?.opcode,sourceOffset:instruction?.offset,reason:"\(error)")
     }
+    private func runPendingBattleCommands() -> Bool {
+        guard stage.palette == 3,let battle = battle else { pendingBattleCommands.removeAll();return true }
+        while !pendingBattleCommands.isEmpty {
+            let command = pendingBattleCommands.removeFirst()
+            do {
+                if ["place","move","remove"].contains(command.op) {
+                    let action = try battle.applyScriptMapCommand(command,roster:roster)
+                    if presentsDuels,let path = action.movementPath,path.count > 1,let slot = action.changedSlots.first {
+                        battleCues = (battleCues ?? [])+[.walk(slot:slot,path:path,sound:try? battle.walkSound(slot))]
+                    }
+                } else { try stage.enqueue([command]) }
+            } catch {
+                pendingBattleCommands.removeAll()
+                failCommand(command,error:error)
+                return false
+            }
+            if !stage.hostWaiting || battleCues != nil { return false }
+        }
+        return true
+    }
     func pump() throws {
         guard started,stage.hostWaiting,choice == nil,saveRequest == nil,partySelection == nil,failure == nil,waiting == nil,
-              itemInstruction == nil,interpreterReturn == nil,frameworkReturn == nil,duelSteps == nil else {
+              itemInstruction == nil,interpreterReturn == nil,frameworkReturn == nil,duelSteps == nil,battleCues == nil else {
             if let termination = stage.termination,termination != .sourceBoundary {
                 let record = vm.activeRecord
                 let source = stage.trace.last?.source
@@ -670,6 +859,9 @@ final class OriginalCampaignHost {
                 failure = CampaignVMFailure(recordID:record?.id,opcode:instruction?.opcode,sourceOffset:instruction?.offset,reason:stage.endReason ?? "Native stage failed")
             }
             return
+        }
+        if !pendingBattleCommands.isEmpty {
+            if !runPendingBattleCommands() { return }
         }
         try cacheCompletedCommands()
         // A work bound stops pathological script cycles without declaring EOF
@@ -679,16 +871,9 @@ final class OriginalCampaignHost {
             switch result {
             case .commands(let commands):
                 pendingCache = commands
-                if stage.palette == 3,let battle = battle {
-                    for command in commands {
-                        do {
-                            if ["place","move","remove"].contains(command.op) { _ = try battle.applyScriptMapCommand(command,roster:roster) }
-                            else { try stage.enqueue([command]) }
-                        } catch {
-                            failCommand(command,error:error)
-                            return
-                        }
-                    }
+                if stage.palette == 3,battle != nil {
+                    pendingBattleCommands = commands
+                    if !runPendingBattleCommands() { return }
                 } else {
                     for command in commands where command.op == "place" {
                         do {
@@ -698,7 +883,7 @@ final class OriginalCampaignHost {
                     }
                     try stage.enqueue(commands)
                 }
-                if !stage.hostWaiting { return };try cacheCompletedCommands()
+                if !stage.hostWaiting || battleCues != nil { return };try cacheCompletedCommands()
             case .loadMap(let request):
                 if stage.palette == 3,let battle = battle,battle.turns.result != 0 {
                     guard pendingBattleMap == nil else { throw EngineError.invalid("Original battle map exit already owns a deferred selection") }
@@ -724,6 +909,7 @@ final class OriginalCampaignHost {
                 try vm.resumeHostAction(opcode:instruction.opcode,sourceOffset:instruction.offset)
                 if instruction.kind == "checkpoint-capture" {
                     checkpoint = snapshot()
+                    extras.retryJourney = stage.palette == 3 ? CampaignJourneyCheckpoint(journal:extras.journal,dialogueHistory:extras.dialogueHistory,eventHints:extras.eventHints) : nil
                     retryHost = stage.palette == 3 ? battle.map { OriginalRetryHostState(battleID:$0.definition.id,
                         controllerInvocationPending:controllerInvocationPending,controllerIdle:controllerIdle,
                         currentEventPerson:currentEventPerson) } : nil
@@ -733,6 +919,7 @@ final class OriginalCampaignHost {
             case .waiting(let value):waiting = value;return
             case .unsupported(let value):failure = value;return
             case .interpreterReturn(let value):
+                recordReviewedEventCompletion(value)
                 interpreterReturn = value
                 // Status8 also selected the ending session in apply(2A). A
                 // source29 inside battle wrote raw result3 as well, which the
@@ -745,6 +932,7 @@ final class OriginalCampaignHost {
             case .invocationReturn:
                 guard retirementProbe != nil || turnInvocationPending || controllerInvocationPending else { throw EngineError.invalid("Original bounded interpreter return has no owning source caller") }
                 let returned = try vm.takeInvocationReturn();waiting = vm.waitingState()
+                recordReviewedEventCompletion(returned)
                 if controllerInvocationPending {
                     controllerInvocationPending = false;controllerIdle = false;try restoreInputFacings()
                     // MAIN264A6: a destination script ending normally peoples its map.
@@ -789,9 +977,11 @@ final class OriginalCampaignHost {
         let selections = [pendingBattleMap,battleReturnSelection].compactMap{$0}
         switch OriginalBattleExit.decide(result:battle.turns.result,contextMap:vm.state.packedMap,selectionMaps:selections.map(\.packedMap)) {
         case .restoreCheckpoint:
+            extras.journal.finish(battle)
             do { try restartBattleFromCheckpoint(battle) }
             catch { failure = CampaignVMFailure(recordID:nil,opcode:nil,sourceOffset:nil,reason:"\(error)") }
         case .framework(let mask):
+            extras.journal.finish(battle)
             frameworkReturn = OriginalFrameworkReturn(mask:mask,producer:"battle-result-\(battle.turns.result)",recordID:nil,sourceOffset:nil)
             pendingBattleMap = nil;battleReturnSelection = nil;waiting = nil
         case .unsupported(let reason):
@@ -801,6 +991,7 @@ final class OriginalCampaignHost {
                 carryover = try battle.finishBattleForCarryover()
                 closingNotices += battle.closingNotices
             }
+            extras.journal.finish(battle)
             guard completeSelectedMap(selections[index]) else { return }
             pendingBattleMap = nil;battleReturnSelection = nil;controllerIdle = false;waiting = vm.waitingState()
             // The next battle of a chain runs its opening records like a source09 entry.
@@ -824,7 +1015,12 @@ final class OriginalCampaignHost {
         roster = saved.roster;money = saved.money
         battle = try OriginalBattleSession(definition:finished.definition,roster:&roster,people:people,
             combat:source.combat,movement:source.movement,rng:finished.rng,carryover:nil)
-        pendingBattleMap = nil;battleReturnSelection = nil
+        extras.annotations = nil
+        if let savedJourney = extras.retryJourney {
+            extras.journal.restoreJourney(savedJourney);extras.dialogueHistory = savedJourney.dialogueHistory
+            extras.eventHints = savedJourney.eventHints
+        }
+        pendingBattleMap = nil;battleReturnSelection = nil;pendingBattleCommands.removeAll();battleCues = nil
         controllerInvocationPending = host.controllerInvocationPending;controllerIdle = host.controllerIdle
         currentEventPerson = host.currentEventPerson;waiting = nil
         try pump()
@@ -861,7 +1057,12 @@ final class OriginalCampaignHost {
     /// after the new-game choice (or a native resume).
     var hasStarted:Bool { started }
     private func completeSelectedMap(_ request:CampaignVMMapRequest) -> Bool {
-        do { try loadSelectedMap(request);return true }
+        do {
+            try loadSelectedMap(request)
+            let name = request.packedMap>>12 == 3 ? battle?.definition.name : fieldScreenState()?.territory
+            if let name = name,!name.isEmpty { extras.journal.record(chapter:vm.state.chapter,map:request.packedMap,kind:"방문",text:name) }
+            return true
+        }
         catch {
             failure = CampaignVMFailure(recordID:request.recordID,opcode:9,sourceOffset:request.sourceOffset,reason:"\(error)")
             return false
@@ -875,12 +1076,14 @@ final class OriginalCampaignHost {
         try vm.selectScriptMap(packedMap:request.packedMap)
         try vm.enterMapContext(packedMap:request.packedMap)
         try stage.setPalette(request.packedMap>>12)
+        pendingBattleCommands.removeAll();battleCues = nil
         if request.packedMap>>12 == 3 {
             guard let id = request.battleID,let definition = source.battles.battles.first(where:{$0.id == id}) else {
                 throw EngineError.invalid("Reached source battle map has no source load-site identity")
             }
             battle = try OriginalBattleSession(definition:definition,roster:&roster,people:people,
                 combat:source.combat,movement:source.movement,rng:rng,carryover:carryover)
+            extras.annotations = nil
         } else {
             if request.packedMap>>12 < 2 {
                 try exploration.configure(stage:stage,packed:request.packedMap,chapter:vm.state.chapter,people:people)
@@ -948,6 +1151,7 @@ final class OriginalCampaignHost {
         case 0x2A:
             let catalog = try OriginalEndingCatalog.load(from:data.root.appendingPathComponent("ending.json"))
             ending = try OriginalEndingSession(catalog:catalog,selection:args[0])
+            recordJourney(kind:"사건",text:"결말에 도달했습니다.",sourceOffset:instruction.offset)
         case 0x11,0x29:
             let mode = instruction.opcode == 0x11 ? args[1] : args[0]
             guard [0,1,3].contains(mode) else { throw EngineError.invalid("Original map return mode is invalid") }
@@ -965,8 +1169,13 @@ final class OriginalCampaignHost {
         case 0x1C:
             guard let battle = battle else { throw BattleError.unsupported("Original AI-order effect requires its battle context") }
             _ = try battle.applyScriptAttribute(arguments:args)
-        case 0x1B:_ = try people.grantScriptItem(person:itemRecipient(),itemID:args[0])
-        case 0x24:try people.setAffiliation(person:args[0],value:args[1])
+        case 0x1B:recordBattleGrant(try people.grantScriptItem(person:itemRecipient(),itemID:args[0]))
+        case 0x24:
+            let previous = Set(try people.companions())
+            try people.setAffiliation(person:args[0],value:args[1])
+            for id in try people.companions() where !previous.contains(id) {
+                recordJourney(kind:"합류",text:"\(try people.person(id).name) 합류",person:id,sourceOffset:instruction.offset)
+            }
         case 0x2F:
             try people.update(args[0]) { $0.sourceRole = args[1] }
             if stage.currentMap?.geometry == "world" {
@@ -979,11 +1188,27 @@ final class OriginalCampaignHost {
             if args[0] == 2 {
                 guard let current = money else { throw EngineError.invalid("Original initial player money has not been established") }
                 money = min(10000,Int(UInt16(truncatingIfNeeded:current+args[1])))
+                if stage.palette == 3,let battle = battle {
+                    var rewards = battle.resultLog.totals.sourceRewards ?? ConfirmedBattleRewards()
+                    rewards.moneyChange += (money ?? current)-current;battle.resultLog.totals.sourceRewards = rewards
+                }
             }
             else if args[0] == 4,let battle = battle { battle.scriptValue24 = UInt8(truncatingIfNeeded:args[1]) }
             else { throw EngineError.invalid("Reached campaign value selector has no restored host effect") }
         default:throw EngineError.invalid("Unregistered original host effect")
         }
+    }
+    /// Append only after a source effect or an input choice has committed.
+    /// A reference can point only to a line already presented in this scene.
+    private func recordJourney(kind:String,text:String,person:Int? = nil,sourceOffset:Int? = nil) {
+        let dialogue = extras.dialogueHistory.entries.last { $0.chapter == vm.state.chapter && $0.map == vm.state.packedMap }
+        extras.journal.record(chapter:vm.state.chapter,map:vm.state.packedMap,kind:kind,text:text,person:person,
+            record:vm.activeRecord?.id,sourceOffset:sourceOffset,dialogueID:dialogue?.id)
+    }
+    private func recordBattleGrant(_ receipt:OriginalScriptInventoryGrant) {
+        guard stage.palette == 3,let battle = battle,!receipt.cancelled else { return }
+        var rewards = battle.resultLog.totals.sourceRewards ?? ConfirmedBattleRewards()
+        rewards.grant(receipt);battle.resultLog.totals.sourceRewards = rewards
     }
     private func constructCitiesIfNeeded() throws {
         guard vm.state.cityFlagsChapter != vm.state.chapter else { return }
@@ -1009,7 +1234,7 @@ final class OriginalCampaignHost {
               stage.dialogue == nil,stage.batch == nil,failure == nil,choice == nil,partySelection == nil,ending == nil,
               frameworkReturn == nil,interpreterReturn == nil,explorationInput == nil,retirement == nil,shop == nil,cityEntry == nil,
               pendingTurnHook == nil,!turnInvocationPending,invocationReturn == nil,retirementProbe == nil,
-              controllerMap == nil,pendingBattleMap == nil,battleReturnSelection == nil,pendingCache.isEmpty else {
+              controllerMap == nil,pendingBattleMap == nil,battleReturnSelection == nil,pendingCache.isEmpty,pendingBattleCommands.isEmpty else {
             throw EngineError.invalid("Native resume is available only at an idle save point outside battle")
         }
         let offset:Int?
@@ -1027,18 +1252,148 @@ final class OriginalCampaignHost {
             controllerAfterInvocationFacings:controllerAfterInvocationFacings,currentEventPerson:currentEventPerson,
             carryover:carryover,retryCheckpoint:checkpoint,retryHost:retryHost,uncertainReturnContext:uncertainReturnContext,
             limitations:["Native engine state, not an original MSAVE slot; MAIN's own load path is not replicated.",
-                         "Resume continues the same source cursor after the 3D prompt with the saved native stage."])
+                         "Resume continues the same source cursor after the 3D prompt with the saved native stage."],extras:extras)
+    }
+    /// Engine checkpoint after all opening scripts and before the first turn.
+    /// An unavailable boundary is normal while dialogue or a source call runs.
+    func battleStartSnapshot() throws -> OriginalCampaignResume? {
+        guard battleInputReady,let battle = battle,battle.turns.stage == .unstarted,
+              stage.palette == 3,stage.hostWaiting,stage.dialogue == nil,stage.batch == nil,
+              vm.state.currentRecordID == nil,vm.state.pending == nil,vm.state.invocationActive != true,
+              controllerIdle,!controllerInvocationPending,controllerAfterInvocationFacings.isEmpty,
+              pendingTurnHook == nil,!turnInvocationPending,invocationReturn == nil,retirementProbe == nil,
+              controllerMap == nil,pendingBattleMap == nil,battleReturnSelection == nil,
+              pendingCache.isEmpty,pendingBattleCommands.isEmpty,duelSteps == nil,battleCues == nil,
+              itemInstruction == nil,itemOffer == nil,itemMessage == nil,ending == nil else { return nil }
+        let save = OriginalCampaignResume(checkpoint:snapshot(),saveOffset:nil,
+            controllerInvocationPending:false,controllerIdle:true,controllerAfterInvocationFacings:[],
+            currentEventPerson:currentEventPerson,carryover:carryover,retryCheckpoint:checkpoint,retryHost:retryHost,
+            uncertainReturnContext:uncertainReturnContext,
+            limitations:["Native engine battle-start checkpoint, not an original MSAVE slot.",
+                         "Resumes after opening scripts and before the first turn; later battle actions are not saved."],
+            battleStart:try OriginalBattleStartResume.capture(battle),extras:extras)
+        // Verify construction can rebuild this exact source setup before the
+        // window is allowed to describe the checkpoint as resumable.
+        let restored = try Self.resume(data:data,from:save)
+        var before = save.checkpoint,after = restored.snapshot()
+        // restoreIdle discards already-consumed presentation commands. Their
+        // diagnostic cursor is not a gameplay state or a resumable command.
+        before.stage.nextCommand = 0;after.stage.nextCommand = 0
+        let encoder = JSONEncoder();encoder.outputFormatting = [.sortedKeys]
+        guard try encoder.encode(before) == encoder.encode(after),
+              restored.battle?.terrain == battle.terrain,restored.battle?.pictureTiles == battle.pictureTiles,
+              restored.battle?.scriptActions == battle.scriptActions else {
+            throw EngineError.invalid("Battle-start reconstruction does not preserve its captured native state")
+        }
+        return save
+    }
+    /// Captures an engine suspension at a stable player/presentation boundary.
+    /// Nil asks the window to retain the request while the current action runs.
+    /// The flow parameter prevents private combat continuations being omitted.
+    func suspendSnapshot(battleFlow:OriginalBattleFlow? = nil) throws -> OriginalCampaignResume? {
+        guard started,failure == nil,partySelection == nil,ending == nil,
+              vm.state.interpreterReturn == nil,vm.state.invocationReturn == nil,
+              frameworkReturn == nil,interpreterReturn == nil,explorationInput == nil,retirement == nil,shop == nil,cityEntry == nil,
+              pendingTurnHook == nil,!turnInvocationPending,invocationReturn == nil,retirementProbe == nil,
+              controllerMap == nil,pendingBattleMap == nil,battleReturnSelection == nil,
+              duelSteps == nil,battleCues == nil,itemInstruction == nil,itemOffer == nil,itemMessage == nil,closingNotices.isEmpty,
+              let presentation = stage.suspension() else { return nil }
+        if waiting != nil,!OriginalCampaignSuspension.canResumeWaiting(vm.state) { return nil }
+        if let pending = vm.state.pending,
+           pending.kind != "choice" && !(pending.kind == "host" && pending.opcode == 0x3D && saveRequest?.offset == pending.offset) { return nil }
+        let active = stage.palette == 3 ? battle : nil
+        if let active = active {
+            guard let flow = battleFlow,flow.session === active,flow.canSuspendCheckpoint,
+                  active.upkeepNotices.isEmpty,active.closingNotices.isEmpty,
+                  active.scriptActions.duel?.active != true else { return nil }
+        } else if stage.palette == 3 { return nil }
+        let continuation = OriginalCampaignSuspension(presentation:presentation,battle:active?.suspensionState(),
+            wasWaiting:waiting != nil,controllerEvent:controllerEvent,pendingCache:pendingCache,pendingBattleCommands:pendingBattleCommands,
+            wanderers:wanderers.keys.sorted().map { key in
+                let w = wanderers[key]!
+                return OriginalSuspendedCitizen(person:key,home:w.home,direction:w.direction,counter:w.counter,standing:w.standing)
+            },wanderDice:wanderDice,wanderTime:wanderTime,sounds:sounds)
+        let save = OriginalCampaignResume(checkpoint:snapshot(),saveOffset:saveRequest?.offset,
+            controllerInvocationPending:controllerInvocationPending,controllerIdle:controllerIdle,
+            controllerAfterInvocationFacings:controllerAfterInvocationFacings,currentEventPerson:currentEventPerson,
+            carryover:carryover,retryCheckpoint:checkpoint,retryHost:retryHost,uncertainReturnContext:uncertainReturnContext,
+            limitations:["Native engine single-use suspension, separate from original and regular saves.",
+                         "Captures dialogue/choice or a stable player-input boundary; in-flight actions finish before capture."],
+            suspension:continuation,extras:extras)
+        let restored = try Self.resume(data:data,from:save)
+        var before = save.checkpoint,after = restored.snapshot()
+        before.stage.nextCommand = 0;after.stage.nextCommand = 0
+        let encoder = JSONEncoder();encoder.outputFormatting = [.sortedKeys]
+        guard try encoder.encode(before) == encoder.encode(after),
+              restored.battle?.terrain == active?.terrain,restored.battle?.pictureTiles == active?.pictureTiles,
+              restored.battle?.scriptActions == active?.scriptActions,
+              restored.battle?.pendingMovementSlots == active?.pendingMovementSlots else {
+            throw EngineError.invalid("Native suspension reconstruction changed its captured state")
+        }
+        return save
     }
     /// Rebuilds the saved native host, then completes the pending 3D prompt as
     /// a performed save so the source cursor continues after it.
-    static func resume(data:DataSet,from save:OriginalCampaignResume) throws -> OriginalCampaignHost {
+    static func resume(data:DataSet,from save:OriginalCampaignResume,allowPractice:Bool = false) throws -> OriginalCampaignHost {
         let saved = save.checkpoint
         let host = try OriginalCampaignHost(data:data,rng:saved.rng,vmState:saved.vm)
-        guard saved.stage.palette != 3,saved.liveUnits == nil,saved.turns == nil else {
-            throw EngineError.invalid("Native resume file was not taken outside battle")
+        let battleStart = save.battleStart
+        let suspension = save.suspension
+        guard save.format == 1,(save.kind == "native-engine-resume" || (allowPractice && save.kind == "native-engine-practice")),saved.format == 1 else {
+            throw EngineError.invalid("Native resume file has an unsupported format")
         }
         var prompt:OriginalCampaignInstruction?
-        if let offset = save.saveOffset {
+        if let suspended = suspension {
+            guard suspended.format == 1,battleStart == nil,saved.stage.mode == "scene",
+                  saved.stage.termination == nil,saved.stage.endReason == nil,
+                  saved.vm.interpreterReturn == nil,saved.vm.invocationReturn == nil,
+                  suspended.pendingCache.count <= 1_000_000,suspended.pendingBattleCommands.count <= 1_000_000,
+                  suspended.wanderers.count <= 256,Set(suspended.wanderers.map(\.person)).count == suspended.wanderers.count,
+                  suspended.wanderers.allSatisfy({ (1024..<1280).contains($0.person) && (0..<4).contains($0.direction) && (0...17).contains($0.counter) }),
+                  (0..<99_488).contains(suspended.wanderTime),suspended.sounds.allSatisfy({(0...255).contains($0)}) else {
+                throw EngineError.invalid("Native suspension has an invalid host continuation")
+            }
+            if suspended.wasWaiting {
+                // A bounded move/show invocation can return while retaining
+                // its record cursor; the next controller query resumes it.
+                guard OriginalCampaignSuspension.canResumeWaiting(saved.vm) else {
+                    throw EngineError.invalid("Native suspension waiting state has a running source cursor")
+                }
+            }
+            if let pending = saved.vm.pending {
+                guard pending.kind == "choice" || (pending.kind == "host" && pending.opcode == 0x3D && save.saveOffset == pending.offset) else {
+                    throw EngineError.invalid("Native suspension contains an unsupported pending source operation")
+                }
+                if pending.kind == "host" {
+                    guard let record = host.vm.program.records.first(where:{$0.id == pending.recordID}),
+                          let instruction = record.instructions.first(where:{$0.offset == pending.offset}),instruction.kind == "save-prompt" else {
+                        throw EngineError.invalid("Native suspension lost its source save prompt")
+                    }
+                    prompt = instruction
+                }
+            } else if save.saveOffset != nil { throw EngineError.invalid("Native suspension lost its pending save cursor") }
+            if let battle = suspended.battle {
+                guard saved.stage.palette == 3,saved.vm.packedMap>>12 == 3,
+                      [.unstarted,.manualFriendly].contains(saved.turns?.stage ?? .finished),saved.liveUnits != nil,
+                      battle.matchesSource(program:host.vm.program,state:saved.vm),
+                      host.source.battles.battles.contains(where:{$0.id == battle.battleID}) else {
+                    throw EngineError.invalid("Native suspension has no matching source battle")
+                }
+            } else if saved.stage.palette == 3 || saved.liveUnits != nil || saved.turns != nil {
+                throw EngineError.invalid("Native suspension is missing its battle state")
+            }
+        } else if let start = battleStart {
+            guard save.saveOffset == nil,saved.stage.palette == 3,saved.vm.packedMap>>12 == 3,
+                  saved.liveUnits != nil,saved.turns?.stage == .unstarted,
+                  host.vm.state.pending == nil,host.vm.state.currentRecordID == nil,host.vm.state.invocationActive != true,
+                  save.controllerIdle,!save.controllerInvocationPending,save.controllerAfterInvocationFacings.isEmpty,
+                  host.source.battles.battles.contains(where:{$0.id == start.battleID}),
+                  start.matchesSource(program:host.vm.program,state:host.vm.state) else {
+                throw EngineError.invalid("Native battle-start resume was not taken before the first turn")
+            }
+        } else if saved.stage.palette == 3 || saved.liveUnits != nil || saved.turns != nil {
+            throw EngineError.invalid("Native resume file was not taken outside battle")
+        } else if let offset = save.saveOffset {
             guard let pending = host.vm.state.pending,pending.kind == "host",pending.opcode == 0x3D,pending.offset == offset,
                   let record = host.vm.program.records.first(where:{$0.id == pending.recordID}),
                   let instruction = record.instructions.first(where:{$0.offset == pending.offset}),instruction.kind == "save-prompt" else {
@@ -1053,6 +1408,10 @@ final class OriginalCampaignHost {
         }
         if let money = saved.money,!(0...10000).contains(money) { throw EngineError.invalid("Native resume money is outside its source range") }
         guard saved.roster.slots.count == 45 else { throw EngineError.invalid("Native resume roster is invalid") }
+        let extras = save.extras ?? CampaignExtras()
+        try extras.validate()
+        host.extras = extras
+        host.resumedFrom = suspension != nil ? "중단한 지점부터 이어합니다." : battleStart != nil ? "전투 시작 저장 · 첫 턴부터 재개합니다." : "일반 저장 지점부터 재개합니다."
         try host.people.restore(saved.people)
         host.roster = saved.roster;host.money = saved.money
         host.carryover = save.carryover;host.checkpoint = save.retryCheckpoint;host.retryHost = save.retryHost
@@ -1067,9 +1426,31 @@ final class OriginalCampaignHost {
                 try host.stage.configureMap(map,resource:resource,actors:nil)
             } else { throw EngineError.invalid("Native resume map is not an exploration map") }
         }
-        try host.stage.restoreIdle(saved.stage)
+        if let suspended = suspension { try host.stage.restoreSuspension(saved.stage,state:suspended.presentation) }
+        else { try host.stage.restoreIdle(saved.stage) }
+        if let battleID = suspension?.battle?.battleID ?? battleStart?.battleID,
+           let definition = host.source.battles.battles.first(where:{$0.id == battleID}) {
+            var setup = saved.roster
+            let battle = try OriginalBattleSession(definition:definition,roster:&setup,people:host.people,
+                combat:host.source.combat,movement:host.source.movement,rng:saved.rng,carryover:save.carryover)
+            // Construction initializes HP/class/MP. Opening scripts may have
+            // changed them, so the saved canonical people must win afterwards.
+            try host.people.restore(saved.people)
+            if let suspended = suspension?.battle { try battle.restoreSuspension(saved,state:suspended) }
+            else if let start = battleStart { try start.restore(saved,in:battle) }
+            host.battle = battle;host.roster = saved.roster
+        }
         host.started = true
-        if let instruction = prompt { host.saveRequest = instruction;try host.completeSaveRequest() }
+        if let suspended = suspension {
+            host.waiting = suspended.wasWaiting ? host.vm.waitingState() : nil
+            host.choice = host.vm.state.pending?.choice;host.saveRequest = prompt
+            host.controllerEvent = suspended.controllerEvent;host.pendingCache = suspended.pendingCache
+            host.pendingBattleCommands = suspended.pendingBattleCommands
+            host.wanderers = Dictionary(uniqueKeysWithValues:suspended.wanderers.map { ($0.person,
+                OriginalCitizenWander(home:$0.home,direction:$0.direction,counter:$0.counter,standing:$0.standing)) })
+            host.wanderDice = suspended.wanderDice;host.wanderTime = suspended.wanderTime
+            host.sounds = suspended.sounds
+        } else if let instruction = prompt { host.saveRequest = instruction;try host.completeSaveRequest() }
         else { host.waiting = host.vm.waitingState() }
         return host
     }

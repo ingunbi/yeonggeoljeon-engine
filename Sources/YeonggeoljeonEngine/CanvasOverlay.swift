@@ -18,6 +18,8 @@ struct CanvasMenu {
         var destructive = false
         /// A hairline above the row starts a new group.
         var separatorBefore = false
+        /// Plain-language help for the highlighted option, in the panel footer.
+        var help = ""
     }
     var title:String
     var options:[Option]
@@ -27,6 +29,10 @@ struct CanvasMenu {
     var cancellable = false
     /// A status line under the options (remaining capacity, a refusal).
     var footer = ""
+    var displayedFooter:String {
+        guard options.indices.contains(selected),!options[selected].help.isEmpty else { return footer }
+        return options[selected].help
+    }
     /// Top-left corner for a window that opens beside a map cell. The panel
     /// keeps a compact width and stays inside the viewport. A title menu
     /// hangs from this point by its top centre instead.
@@ -69,6 +75,9 @@ struct CanvasNotice {
     /// A script line that waits for input sits low, where dialogue does,
     /// even without a speaker, so a picture above it stays visible.
     var narration = false
+    /// MAIN337FE: a battle line whose speaker is in the lower half of the map
+    /// sits near the top of the viewport so it does not cover the unit.
+    var placeAtTop = false
     var onDismiss:() -> Void
     /// A spoken or narrated line that waits for input (it shows the continue mark).
     var waitsAsLine:Bool { timeout == nil && (portrait != nil || !speaker.isEmpty || narration) }
@@ -88,6 +97,10 @@ struct CanvasSheet {
         /// A map under the text, with dots placed in unit square coordinates.
         var picture:CGImage? = nil
         var marks:[(point:CGPoint,strong:Bool)] = []
+        /// Read-only strategy facts and source-derived grid shapes.
+        var strategy:StrategyGuideDetails.Description? = nil
+        var rangeComparison:CanvasRangeComparison.Model? = nil
+        var rangePatternPreview = false
     }
     struct Row {
         var label:String
@@ -111,6 +124,13 @@ struct CanvasSheet {
     var detail:Detail? = nil
     var buttons:[String] = []
     var hint = ""
+    /// Reference sheets can use the full canvas instead of the map viewport.
+    var fullCanvas = false
+    /// Optional fixed actions below a browsable list. Row selection only reads;
+    /// a button click or explicit keyboard focus is needed to invoke an action.
+    var onButton:((Int) -> Void)? = nil
+    var onRowButton:((Int,Int) -> Void)? = nil
+    var hasRowActions:Bool { onButton != nil || onRowButton != nil }
     /// A list row or button index, nil for cancel, zero when a timed line ends.
     var onChoose:(Int?) -> Void
 }
@@ -153,23 +173,50 @@ final class CanvasOverlayView:NSView {
     override init(frame:NSRect) {
         super.init(frame:frame)
         paceObserver = NotificationCenter.default.addObserver(forName:DialoguePace.changed,object:nil,queue:.main) { [weak self] _ in
+            // Turning skip on also completes a line that was already typing.
+            // Keep it revealed if skip stops again at the next boundary.
+            if DialoguePace.shared.skipping { self?.stopReveal() }
             self?.updateAuto();self?.needsDisplay = true
         }
     }
     convenience init() { self.init(frame:.zero) }
     required init?(coder:NSCoder) { nil }
-    deinit { if let observer = paceObserver { NotificationCenter.default.removeObserver(observer) } }
+    deinit {
+        noticeTimer?.invalidate();revealTimer?.invalidate();autoTimer?.invalidate()
+        if let observer = paceObserver { NotificationCenter.default.removeObserver(observer) }
+    }
     private(set) var selector:CanvasMenu?
     private(set) var notice:CanvasNotice?
     private(set) var brief:CanvasBrief?
     private(set) var terrain:CanvasTerrain?
     private(set) var sheet:CanvasSheet?
     private var noticeTimer:Timer?
+    private var noticeDeadline:Date?
+    private var timedDismiss:(() -> Void)?
+    private var suspendedAt:Date?
+    var isSuspended:Bool { suspendedAt != nil }
+    /// Cover an existing line or selector without acknowledging it or letting
+    /// its reading/timed countdown expire beneath an engine dialog.
+    func setSuspended(_ value:Bool,now:Date = Date()) {
+        if value {
+            if suspendedAt == nil { suspendedAt = now }
+        } else if let start = suspendedAt {
+            let elapsed = max(0,now.timeIntervalSince(start))
+            revealStart = revealStart?.addingTimeInterval(elapsed)
+            autoStart = autoStart?.addingTimeInterval(elapsed)
+            noticeDeadline = noticeDeadline?.addingTimeInterval(elapsed)
+            suspendedAt = nil;updateAuto()
+        }
+        needsDisplay = true
+    }
     /// Parent windows still on screen behind the active selector.
     private var parents:[CanvasMenu] = []
     private var sheetButton = 0
+    private var sheetActionFocused = false
     /// First vertical row shown when a list is taller than the viewport.
     private var firstVisible = 0
+    private(set) var detailScroll:CGFloat = 0
+    private var noticeScroll:CGFloat = 0
     /// The canvas area panels stay inside: the field map window by default,
     /// the battle map window while a battle screen is up.
     static let fieldViewport = CGRect(x:16,y:16,width:512,height:320)
@@ -193,23 +240,24 @@ final class CanvasOverlayView:NSView {
             let body = value.text.isEmpty ? 0 : ceil((value.text as NSString).boundingRect(with:CGSize(width:text.width,height:600),
                 options:[.usesLineFragmentOrigin],attributes:lineAttributes()).height)
             // Text from the top inset down, then the control row.
-            let height = max(value.portrait == nil ? 64 : Self.portraitSize.height+24,18+body+30)
-            return CGRect(x:viewport.midX-width/2,y:max(viewport.minY+14,viewport.maxY-8-height),width:width,height:height).integral
+            let height = min(viewport.height-32,max(value.portrait == nil ? 64 : Self.portraitSize.height+24,18+body+34*CanvasTheme.textScale))
+            let y = value.placeAtTop ? viewport.minY+18 : max(viewport.minY+14,viewport.maxY-8-height)
+            return CGRect(x:viewport.midX-width/2,y:y,width:width,height:height).integral
         }
         // A plain refusal is a small card in the middle of the map window.
         let style = CanvasTheme.attributes(font,CanvasTheme.text)
         let limit = viewport.width-48
         let width = min(limit,ceil((value.text as NSString).size(withAttributes:style).width))+40
-        let height = textHeight(value.text,width:width-40)+28
+        let height = min(viewport.height-32,textHeight(value.text,width:width-40)+28)
         return CGRect(x:viewport.midX-width/2,y:viewport.midY-height/2,width:width,height:height).integral
     }
     /// Called after the overlay closes so the owner can restore focus.
     var restoreFocus:(() -> Void)?
     var active:Bool { selector != nil || notice != nil || brief != nil || terrain != nil || sheet != nil }
     override var isFlipped:Bool { true }
-    override var acceptsFirstResponder:Bool { active }
-    override func hitTest(_ point:NSPoint) -> NSView? { active ? super.hitTest(point) : nil }
-    private let font = CanvasTheme.font(14)
+    override var acceptsFirstResponder:Bool { active && !isSuspended }
+    override func hitTest(_ point:NSPoint) -> NSView? { active && !isSuspended ? super.hitTest(point) : nil }
+    private var font:NSFont { CanvasTheme.font(14) }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
@@ -232,55 +280,72 @@ final class CanvasOverlayView:NSView {
     private var revealStart:Date?
     private var revealTimer:Timer?
     private func revealed(_ text:String) -> Int {
+        if DialoguePace.shared.skipping { return text.count }
         guard let start = revealStart else { return text.count }
-        return min(text.count,Int(Date().timeIntervalSince(start)*Self.revealRate))
+        return max(0,min(text.count,Int((suspendedAt ?? Date()).timeIntervalSince(start)*Self.revealRate)))
     }
+    /// The same count used by drawing; a skipped line never has a blank body.
+    var visibleNoticeCharacterCount:Int? { notice.map { revealed($0.text) } }
     private var revealing:Bool { notice.map { revealed($0.text) < $0.text.count } ?? false }
     private func stopReveal() { revealTimer?.invalidate();revealTimer = nil;revealStart = nil;needsDisplay = true }
     func show(_ value:CanvasNotice) {
         clear();notice = value;present()
-        if value.waitsAsLine,value.text.count > 1 {
+        if value.waitsAsLine,value.text.count > 1,!DialoguePace.shared.skipping {
             revealStart = Date()
             revealTimer = Timer.scheduledTimer(withTimeInterval:1.0/60,repeats:true) { [weak self] _ in
-                guard let self = self else { return }
+                guard let self = self,!self.isSuspended else { return }
                 self.needsDisplay = true
                 if !self.revealing { self.stopReveal();self.updateAuto() }
             }
         }
         updateAuto()
         guard let timeout = value.timeout else { return }
-        noticeTimer = Timer.scheduledTimer(withTimeInterval:timeout,repeats:false) { [weak self] _ in self?.dismissNotice() }
+        startTimedNotice(seconds:timeout) { [weak self] in self?.dismissNotice() }
     }
     func show(_ value:CanvasBrief) { clear();brief = value;present() }
     func show(_ value:CanvasTerrain) { clear();terrain = value;present() }
     /// The next step of a visit keeps the list position of the last one.
     func show(_ value:CanvasSheet) {
-        clear();sheet = value;sheetButton = 0;revealSheetRow();present()
+        clear();sheet = value;sheetButton = 0;sheetActionFocused = false;revealSheetRow();present()
         guard value.mode == .timed else { return }
-        noticeTimer = Timer.scheduledTimer(withTimeInterval:2,repeats:false) { [weak self] _ in self?.finishSheet(0) }
+        startTimedNotice(seconds:2) { [weak self] in self?.finishSheet(0) }
     }
-    private func clear() { selector = nil;notice = nil;brief = nil;terrain = nil;sheet = nil;parents = [] }
+    private func startTimedNotice(seconds:TimeInterval,_ dismiss:@escaping () -> Void) {
+        noticeDeadline = Date().addingTimeInterval(seconds);timedDismiss = dismiss
+        noticeTimer = Timer.scheduledTimer(withTimeInterval:1.0/30,repeats:true) { [weak self] _ in self?.advanceTimedNotice() }
+    }
+    /// The explicit clock also permits deterministic presentation tests.
+    func advanceTimedNotice(now:Date = Date()) {
+        guard !isSuspended,let deadline = noticeDeadline,now >= deadline else { return }
+        let dismiss = timedDismiss
+        noticeTimer?.invalidate();noticeTimer = nil;noticeDeadline = nil;timedDismiss = nil
+        dismiss?()
+    }
+    private func clear() { detailScroll = 0;noticeScroll = 0;selector = nil;notice = nil;brief = nil;terrain = nil;sheet = nil;parents = [] }
     private func present() {
         noticeTimer?.invalidate();noticeTimer = nil;revealTimer?.invalidate();revealTimer = nil;revealStart = nil
+        noticeDeadline = nil;timedDismiss = nil
         isHidden = false;needsDisplay = true
         window?.makeFirstResponder(self)
     }
     /// Auto mode closes a waiting line after DialoguePace.readingSeconds once
     /// all of it shows.
     private func updateAuto() {
+        guard !isSuspended else { return }
         guard let value = notice,value.waitsAsLine,onLineControl != nil,DialoguePace.shared.auto,!revealing else {
             autoTimer?.invalidate();autoTimer = nil;autoStart = nil;return
         }
         if autoStart == nil { autoStart = Date() }
         guard autoTimer == nil else { return }
         autoTimer = Timer.scheduledTimer(withTimeInterval:1.0/30,repeats:true) { [weak self] _ in
-            guard let self = self,let start = self.autoStart,let value = self.notice else { return }
+            guard let self = self,!self.isSuspended,let start = self.autoStart,let value = self.notice else { return }
             self.needsDisplay = true
             if Date().timeIntervalSince(start) >= DialoguePace.readingSeconds(value.text,speed:DialoguePace.shared.speed) { self.dismissNotice() }
         }
     }
     private func close() {
         noticeTimer?.invalidate();noticeTimer = nil;stopReveal()
+        noticeDeadline = nil;timedDismiss = nil
         autoTimer?.invalidate();autoTimer = nil;autoStart = nil;hoveredControl = nil
         clear();needsDisplay = true
         restoreFocus?()
@@ -301,7 +366,7 @@ final class CanvasOverlayView:NSView {
     }
     /// Fast-forward closes a plain line as a key press would, revealed or not.
     /// Questions and lists still wait for an answer.
-    func skipNotice() { stopReveal();dismissNotice() }
+    func skipNotice() { guard !isSuspended else { return };stopReveal();dismissNotice() }
     private func dismissBrief() {
         guard let value = brief else { return }
         close();value.onDismiss()
@@ -314,6 +379,11 @@ final class CanvasOverlayView:NSView {
         guard let value = sheet else { return }
         if case .timed = value.mode {} else { onSound?(answer == nil ? 1 : 0) }
         close();value.onChoose(answer)
+    }
+    private func finishSheetAction(_ index:Int) {
+        guard let value = sheet,value.mode == .list,value.buttons.indices.contains(index),value.hasRowActions else { return }
+        onSound?(0);close()
+        if let action = value.onRowButton { action(index,value.selected) } else { value.onButton?(index) }
     }
 
     private var geometry:CanvasGeometry { CanvasGeometry(bounds:bounds) }
@@ -330,7 +400,53 @@ final class CanvasOverlayView:NSView {
         var panel:CGRect; var title:CGRect; var options:[(index:Int,rect:CGRect)]; var footer:CGRect
         var moreAbove:Bool; var moreBelow:Bool
     }
-    private static let row:CGFloat = 26
+    private struct RowTextLayout {
+        var label:CGRect;var value:CGRect;var stacked:Bool
+    }
+    private func rowStacks(label:String,value:String,width:CGFloat,labelFont:NSFont,valueFont:NSFont) -> Bool {
+        !value.isEmpty && CanvasTheme.textWidth(label,font:labelFont)+CanvasTheme.textWidth(value,font:valueFont)+12 > width
+    }
+    private func rowHeight(label:String,value:String,width:CGFloat,labelFont:NSFont,valueFont:NSFont) -> CGFloat {
+        let labelHeight = CanvasTheme.lineHeight(labelFont),valueHeight = CanvasTheme.lineHeight(valueFont)
+        return rowStacks(label:label,value:value,width:width,labelFont:labelFont,valueFont:valueFont) ? labelHeight+valueHeight+11 : max(labelHeight,valueHeight)+8
+    }
+    private func rowTextLayout(label:String,value:String,in rect:CGRect,labelFont:NSFont,valueFont:NSFont) -> RowTextLayout {
+        let stacked = rowStacks(label:label,value:value,width:rect.width,labelFont:labelFont,valueFont:valueFont)
+        guard !value.isEmpty else {return .init(label:rect,value:.zero,stacked:false)}
+        if stacked {
+            let labelHeight = CanvasTheme.lineHeight(labelFont),valueHeight = CanvasTheme.lineHeight(valueFont),top = rect.midY-(labelHeight+valueHeight+3)/2
+            return .init(label:CGRect(x:rect.minX,y:top,width:rect.width,height:labelHeight),value:CGRect(x:rect.minX,y:top+labelHeight+3,width:rect.width,height:valueHeight),stacked:true)
+        }
+        let valueWidth = min(rect.width,CanvasTheme.textWidth(value,font:valueFont))
+        return .init(label:CGRect(x:rect.minX,y:rect.minY,width:max(0,rect.width-valueWidth-12),height:rect.height),value:CGRect(x:rect.maxX-valueWidth,y:rect.minY,width:valueWidth,height:rect.height),stacked:false)
+    }
+    private struct ButtonFlow {var buttons:[(index:Int,rect:CGRect)];var height:CGFloat}
+    private func buttonFlow(_ labels:[String],width:CGFloat) -> ButtonFlow {
+        guard !labels.isEmpty,width > 0 else {return .init(buttons:[],height:0)}
+        let font = CanvasTheme.font(13,.bold),gap:CGFloat = 8,pad:CGFloat = 16
+        var lines:[[(Int,CGSize)]] = [],current:[(Int,CGSize)] = [],used:CGFloat = 0
+        for (index,label) in labels.enumerated() {
+            let buttonWidth = min(width,max(76,CanvasTheme.textWidth(label,font:font)+pad*2))
+            let textHeight = ceil((label as NSString).boundingRect(with:CGSize(width:max(1,buttonWidth-pad*2),height:100_000),options:[.usesLineFragmentOrigin,.usesFontLeading],attributes:CanvasTheme.attributes(font,CanvasTheme.text)).height)+2
+            let size = CGSize(width:buttonWidth,height:max(30*CanvasTheme.textScale,textHeight+14))
+            if !current.isEmpty && used+gap+buttonWidth > width {lines.append(current);current = [];used = 0}
+            current.append((index,size));used += (current.count > 1 ? gap : 0)+buttonWidth
+        }
+        if !current.isEmpty {lines.append(current)}
+        var result:[(index:Int,rect:CGRect)] = [],y:CGFloat = 0
+        for line in lines {
+            let height = line.map {$0.1.height}.max() ?? 0,total = line.reduce(0) {$0+$1.1.width}+CGFloat(max(0,line.count-1))*gap
+            var x = max(0,width-total)
+            for (index,size) in line {result.append((index,CGRect(x:x,y:y,width:size.width,height:height)));x += size.width+gap}
+            y += height+gap
+        }
+        return .init(buttons:result,height:max(0,y-gap))
+    }
+    private func menuRowHeight(_ value:CanvasMenu,width:CGFloat) -> CGFloat {
+        let prefix:CGFloat = (value.options.contains {$0.checked != nil} ? 22 : 0)+(value.options.contains {$0.icon != nil} ? 22 : 0)
+        return max(26*CanvasTheme.textScale,value.options.map {rowHeight(label:$0.label,value:$0.value,width:max(1,width-48-prefix),labelFont:CanvasTheme.font(14),valueFont:CanvasTheme.font(12,.medium))}.max() ?? 0)
+    }
+    private static var row:CGFloat {26*CanvasTheme.textScale}
     /// Panel width, text heights and how many vertical rows fit in the
     /// viewport (the panel stays eight pixels shorter than it).
     private func metrics(_ value:CanvasMenu) -> (width:CGFloat,title:CGFloat,footer:CGFloat,shown:Int) {
@@ -340,28 +456,39 @@ final class CanvasOverlayView:NSView {
         let column = valueWidth > 0 ? valueWidth+(value.onAdjust != nil ? 52 : 28) : 0
         let width:CGFloat = value.horizontal ? 300 : value.anchor != nil ? min(viewport.width-16,max(96,labelWidth+column+44+check)) :
             min(viewport.width-16,max(240,labelWidth+column+64+check))
-        let title = textHeight(value.title,width:width-40),footer = textHeight(value.footer,width:width-40)
+        let title = textHeight(value.title,width:width-40)
+        let hasHelp = value.options.contains { !$0.help.isEmpty }
+        // Reserve the longest explanation so selecting a different setting
+        // never moves the menu or changes its visible row count.
+        let footer = hasHelp ? ([value.footer]+value.options.map(\.help)).map { text -> CGFloat in
+            text.isEmpty ? 0 : ceil((text as NSString).boundingRect(with:CGSize(width:width-40,height:400),
+                options:[.usesLineFragmentOrigin],attributes:attributes(CanvasTheme.muted,size:12)).height)
+        }.max() ?? 0 : textHeight(value.footer,width:width-40)
         let chrome = 24+(title > 0 ? title+12 : 0)+(footer > 0 ? footer+10 : 0)
-        let shown = value.horizontal ? value.options.count : min(value.options.count,max(1,Int((viewport.height-8-chrome)/Self.row)))
+        let shown = value.horizontal ? value.options.count : min(value.options.count,max(1,Int((viewport.height-8-chrome)/menuRowHeight(value,width:width))))
         return (width,title,footer,shown)
     }
     private func revealSelection() {
         guard let value = selector,!value.horizontal else { firstVisible = 0;return }
-        let shown = metrics(value).shown
+        let shown:Int
+        if case .title = value.style {shown = max(1,min(value.options.count,Int((viewport.height-8)/(Self.titleButton.height+Self.titleGap))))} else {shown = metrics(value).shown}
         if value.selected < firstVisible { firstVisible = value.selected }
         if value.selected >= firstVisible+shown { firstVisible = value.selected-shown+1 }
         firstVisible = min(max(0,firstVisible),max(0,value.options.count-shown))
     }
     /// The engine title screen: wide buttons in a column hanging from the
     /// anchor, each with its symbol, a value chip for a setting and a chevron.
-    private static let titleButton = CGSize(width:268,height:25),titleGap:CGFloat = 6
+    private static var titleButton:CGSize {CGSize(width:268*CanvasTheme.textScale,height:25*CanvasTheme.textScale)}
+    private static let titleGap:CGFloat = 6
     private func titleLayout(_ value:CanvasMenu) -> Layout {
-        let size = Self.titleButton,step = size.height+Self.titleGap
-        let height = CGFloat(value.options.count)*step-Self.titleGap
+        let size = CGSize(width:min(viewport.width-16,Self.titleButton.width),height:Self.titleButton.height),step = size.height+Self.titleGap
+        let shown = max(1,min(value.options.count,Int((viewport.height-8)/step)))
+        let first = min(firstVisible,max(0,value.options.count-shown))
+        let height = CGFloat(shown)*step-Self.titleGap
         let top = value.anchor ?? CGPoint(x:viewport.midX,y:viewport.midY-height/2)
-        let panel = CGRect(x:top.x-size.width/2,y:min(top.y,viewport.maxY-height-4),width:size.width,height:height).integral
-        let options = value.options.indices.map { (index:$0,rect:CGRect(x:panel.minX,y:panel.minY+CGFloat($0)*step,width:size.width,height:size.height)) }
-        return Layout(panel:panel,title:.zero,options:options,footer:.zero,moreAbove:false,moreBelow:false)
+        let panel = CGRect(x:top.x-size.width/2,y:max(viewport.minY+4,min(top.y,viewport.maxY-height-4)),width:size.width,height:height).integral
+        let options = (first..<first+shown).map { (index:$0,rect:CGRect(x:panel.minX,y:panel.minY+CGFloat($0-first)*step,width:size.width,height:size.height)) }
+        return Layout(panel:panel,title:.zero,options:options,footer:.zero,moreAbove:first > 0,moreBelow:first+shown < value.options.count)
     }
     private func drawTitleMenu(_ value:CanvasMenu,in context:CGContext) {
         let shape = titleLayout(value)
@@ -386,12 +513,12 @@ final class CanvasOverlayView:NSView {
                 context.setFillColor(CanvasTheme.accentFill)
                 context.fillEllipse(in:CGRect(x:x+4,y:rect.midY-3.5,width:7,height:7));x += 22
             } else if option.checked == false { x += 22 }
-            (option.label as NSString).draw(in:CGRect(x:x,y:rect.midY-10,width:rect.maxX-x-30,height:20),
+            (option.label as NSString).draw(in:CGRect(x:x,y:rect.midY-10*CanvasTheme.textScale,width:rect.maxX-x-30,height:20*CanvasTheme.textScale),
                                             withAttributes:CanvasTheme.attributes(CanvasTheme.font(14,selected ? .bold : .semibold),color))
             if !option.value.isEmpty {
                 let style = CanvasTheme.attributes(CanvasTheme.font(11.5,.medium),selected ? CanvasTheme.text : CanvasTheme.muted,alignment:.center)
                 let width = ceil((option.value as NSString).size(withAttributes:style).width)+18
-                let chip = CGRect(x:rect.maxX-34-width,y:rect.midY-8.5,width:width,height:17)
+                let chip = CGRect(x:rect.maxX-34-width,y:rect.midY-8.5*CanvasTheme.textScale,width:width,height:17*CanvasTheme.textScale)
                 CanvasTheme.fill(chip,CGColor(gray:1,alpha:selected ? 0.14 : 0.07),radius:8.5,in:context)
                 (option.value as NSString).draw(in:chip.offsetBy(dx:0,dy:1.5),withAttributes:style)
             }
@@ -409,8 +536,10 @@ final class CanvasOverlayView:NSView {
             return Layout(panel:art.frame,title:.zero,options:options,footer:.zero,moreAbove:false,moreBelow:false)
         case .panel:break
         }
+        if value.horizontal {return confirmationLayout(value)}
         let m = metrics(value),width = m.width
-        let rows:CGFloat = value.horizontal ? 32 : CGFloat(m.shown)*Self.row
+        let step = menuRowHeight(value,width:width)
+        let rows = CGFloat(m.shown)*step
         let height = 24+(m.title > 0 ? m.title+12 : 0)+rows+(m.footer > 0 ? m.footer+10 : 0)
         var panel = CGRect(x:viewport.minX+(viewport.width-width)/2,y:max(viewport.minY+4,viewport.minY+(viewport.height-height)/2),width:width,height:height).integral
         if let anchor = value.anchor {
@@ -429,13 +558,31 @@ final class CanvasOverlayView:NSView {
             }
         } else {
             for index in first..<first+m.shown {
-                options.append((index,CGRect(x:panel.minX+8,y:top+CGFloat(index-first)*Self.row,width:width-16,height:Self.row-2)))
+                options.append((index,CGRect(x:panel.minX+8,y:top+CGFloat(index-first)*step,width:width-16,height:step-2)))
             }
         }
         let footer = CGRect(x:panel.minX+20,y:top+rows+8,width:width-40,height:m.footer)
         return Layout(panel:panel,title:title,options:options,footer:footer,
                       moreAbove:first > 0,moreBelow:first+m.shown < value.options.count)
     }
+    private func confirmationLayout(_ value:CanvasMenu) -> Layout {
+        let font = CanvasTheme.font(13,.bold)
+        let actionsWidth = value.options.reduce(CGFloat(0)) {$0+max(76,CanvasTheme.textWidth($1.label,font:font)+32)}+CGFloat(max(0,value.options.count-1))*8
+        let width = min(viewport.width-24,max(420,min(560,actionsWidth+40)))
+        let inner = max(1,width-40),titleHeight = measured(value.title,width:inner,size:14)
+        let bodyHeight = measured(value.displayedFooter,width:inner,size:13)
+        let flow = buttonFlow(value.options.map(\.label),width:inner)
+        let height = min(viewport.height-16,20+titleHeight+(bodyHeight > 0 ? 14+bodyHeight : 0)+20+flow.height+16)
+        let panel = CGRect(x:viewport.midX-width/2,y:viewport.midY-height/2,width:width,height:height).integral
+        let title = CGRect(x:panel.minX+20,y:panel.minY+18,width:inner,height:titleHeight)
+        let buttonsTop = panel.maxY-16-flow.height
+        let footer = CGRect(x:panel.minX+20,y:title.maxY+14,width:inner,height:max(0,buttonsTop-title.maxY-28))
+        let buttons = flow.buttons.map {(index:$0.index,rect:$0.rect.offsetBy(dx:panel.minX+20,dy:buttonsTop))}
+        return Layout(panel:panel,title:title,options:buttons,footer:footer,moreAbove:false,moreBelow:false)
+    }
+    var menuPanelRect:CGRect? {selector.map {layout($0).panel}}
+    func menuOptionRect(_ index:Int) -> CGRect? {selector.flatMap {layout($0).options.first {$0.index == index}?.rect}}
+    var menuDescriptionRect:CGRect? {selector.map {layout($0).footer}}
     /// An SF Symbol tinted to one colour, drawn into the flipped canvas.
     private func drawSymbol(_ name:String,in rect:CGRect,color:NSColor) {
         guard let base = NSImage(systemSymbolName:name,accessibilityDescription:nil) else { return }
@@ -446,9 +593,13 @@ final class CanvasOverlayView:NSView {
         image.draw(in:box,from:.zero,operation:.sourceOver,fraction:1,respectFlipped:true,hints:nil)
     }
     private func drawButton(_ label:String,in rect:CGRect,focused:Bool,context:CGContext) {
-        if focused { CanvasTheme.fill(rect,CanvasTheme.accentFill,radius:6,in:context) } else { CanvasTheme.stroke(rect,radius:6,in:context) }
-        let style = CanvasTheme.attributes(CanvasTheme.font(13,.semibold),focused ? CanvasTheme.onAccent : CanvasTheme.text,alignment:.center)
-        (label as NSString).draw(in:CGRect(x:rect.minX,y:rect.midY-9,width:rect.width,height:20),withAttributes:style)
+        CanvasTheme.pill(rect,active:focused,in:context)
+        let style = CanvasTheme.attributes(CanvasTheme.font(13,.bold),focused ? CanvasTheme.onAccent : CanvasTheme.text,alignment:.center)
+        let width = max(1,rect.width-32),height = ceil((label as NSString).boundingRect(with:CGSize(width:width,height:100_000),options:[.usesLineFragmentOrigin,.usesFontLeading],attributes:style).height)+2
+        let box = CGRect(x:rect.minX+16,y:rect.midY-height/2,width:width,height:height)
+        context.saveGState();context.clip(to:rect.insetBy(dx:8,dy:4))
+        (label as NSString).draw(with:box,options:[.usesLineFragmentOrigin,.usesFontLeading],attributes:style)
+        context.restoreGState()
     }
     private func drawMore(_ more:(above:Bool,below:Bool),x:CGFloat,top:CGFloat,bottom:CGFloat,in context:CGContext) {
         context.setFillColor(CanvasTheme.muted.cgColor)
@@ -501,8 +652,10 @@ final class CanvasOverlayView:NSView {
                 CanvasTheme.divider(from:CGPoint(x:rect.minX+8,y:rect.minY-1.5),to:CGPoint(x:rect.maxX-8,y:rect.minY-1.5),in:context)
             }
             if selected {
-                CanvasTheme.fill(rect,CanvasTheme.selection,in:context)
-                CanvasTheme.fill(CGRect(x:rect.minX+2,y:rect.minY+5,width:3,height:rect.height-10),CanvasTheme.accentFill,radius:1.5,in:context)
+                CanvasTheme.gradient(rect,top:CGColor(red:0.91,green:0.75,blue:0.40,alpha:0.28),
+                                     bottom:CGColor(red:0.91,green:0.75,blue:0.40,alpha:0.10),radius:CanvasTheme.rowRadius,vertical:false,in:context)
+                CanvasTheme.stroke(rect,CanvasTheme.accentBorder,radius:CanvasTheme.rowRadius,in:context)
+                CanvasTheme.fill(CGRect(x:rect.minX+2.5,y:rect.minY+5,width:3,height:rect.height-10),CanvasTheme.accentFill,radius:1.5,in:context)
             }
             let color = !option.enabled ? CanvasTheme.disabled : option.destructive ? CanvasTheme.danger : CanvasTheme.text
             var inset = rect.insetBy(dx:12,dy:3)
@@ -515,24 +668,23 @@ final class CanvasOverlayView:NSView {
                            color:!option.enabled ? CanvasTheme.disabled : option.destructive ? CanvasTheme.danger : selected ? CanvasTheme.accent : CanvasTheme.muted)
                 inset = inset.offsetBy(dx:22,dy:0);inset.size.width -= 22
             }
-            (option.label as NSString).draw(in:inset,withAttributes:attributes(color))
+            let text = rowTextLayout(label:option.label,value:option.value,in:inset,labelFont:CanvasTheme.font(14),valueFont:CanvasTheme.font(12,.medium))
+            CanvasTheme.drawSingleLine(option.label,in:text.label,font:CanvasTheme.font(14),color:color,context:context)
             if !option.value.isEmpty {
-                // A value reads as a chip; one that left and right change carries arrows.
-                let adjustable = value.onAdjust != nil && option.enabled
-                let style = CanvasTheme.attributes(CanvasTheme.font(12,.medium),option.enabled ? (selected ? CanvasTheme.text : CanvasTheme.muted) : CanvasTheme.disabled,alignment:.center)
-                let width = ceil((option.value as NSString).size(withAttributes:style).width)+18
-                let chip = CGRect(x:rect.maxX-10-width-(adjustable ? 14 : 0),y:rect.midY-9,width:width,height:18)
-                CanvasTheme.fill(chip,selected ? CGColor(gray:1,alpha:0.12) : CanvasTheme.inset,radius:9,in:context)
-                (option.value as NSString).draw(in:chip.offsetBy(dx:0,dy:1.5),withAttributes:style)
-                if adjustable,selected {
-                    let arrows = CanvasTheme.attributes(CanvasTheme.font(12,.bold),CanvasTheme.accent,alignment:.center)
-                    ("‹" as NSString).draw(in:CGRect(x:chip.minX-13,y:chip.minY,width:12,height:18),withAttributes:arrows)
-                    ("›" as NSString).draw(in:CGRect(x:chip.maxX+1,y:chip.minY,width:12,height:18),withAttributes:arrows)
-                }
+                CanvasTheme.drawSingleLine(option.value,in:text.value,font:CanvasTheme.font(12,.medium),color:option.enabled ? CanvasTheme.muted : CanvasTheme.disabled,alignment:text.stacked ? .left : .right,context:context)
             }
         }
-        if !value.footer.isEmpty {
-            (value.footer as NSString).draw(with:shape.footer,options:[.usesLineFragmentOrigin],attributes:attributes(CanvasTheme.accent,size:12))
+        if !value.displayedFooter.isEmpty {
+            let hasHelp = value.options.contains { !$0.help.isEmpty }
+            if hasHelp {
+                CanvasTheme.divider(from:CGPoint(x:shape.footer.minX,y:shape.footer.minY-5),
+                                    to:CGPoint(x:shape.footer.maxX,y:shape.footer.minY-5),in:context)
+            }
+            context.saveGState();context.clip(to:shape.footer)
+            let bodyHeight = measured(value.displayedFooter,width:shape.footer.width,size:value.horizontal ? 13 : 12)
+            if value.horizontal {noticeScroll = min(noticeScroll,max(0,bodyHeight-shape.footer.height))}
+            (value.displayedFooter as NSString).draw(with:CGRect(x:shape.footer.minX,y:shape.footer.minY-(value.horizontal ? noticeScroll : 0),width:shape.footer.width,height:bodyHeight),options:[.usesLineFragmentOrigin,.usesFontLeading],attributes:attributes(CanvasTheme.muted,size:value.horizontal ? 13 : 12))
+            context.restoreGState()
         }
         if !value.horizontal,let first = shape.options.first,let last = shape.options.last {
             drawMore((shape.moreAbove,shape.moreBelow),x:shape.panel.maxX-16,top:first.rect.minY,bottom:last.rect.maxY,in:context)
@@ -542,83 +694,119 @@ final class CanvasOverlayView:NSView {
         var panel:CGRect; var header:CGFloat; var list:CGRect; var detail:CGRect; var footer:CGFloat
         var rows:[(index:Int,rect:CGRect)]; var buttons:[(index:Int,rect:CGRect)]
     }
-    private static let sheetRows = 8,sheetRow:CGFloat = 24
+    private static let sheetRows = 8
+    private func sheetRowHeight(_ value:CanvasSheet,width:CGFloat) -> CGFloat {
+        max(24,value.rows.map {rowHeight(label:$0.label,value:$0.value,width:max(1,width-20-($0.checked == nil ? 0 : 22)),labelFont:CanvasTheme.font(14),valueFont:CanvasTheme.number(13))}.max() ?? 24)
+    }
+    private func measured(_ text:String,width:CGFloat,size:CGFloat) -> CGFloat {
+        guard !text.isEmpty else {return 0}
+        return ceil((text as NSString).boundingRect(with:CGSize(width:max(1,width),height:100_000),options:[.usesLineFragmentOrigin],attributes:attributes(size:size)).height)+2
+    }
     private func sheetLayout(_ value:CanvasSheet) -> SheetLayout {
-        let size = CGSize(width:min(viewport.width-16,540),height:min(viewport.height-16,340))
-        let panel = CGRect(x:viewport.midX-size.width/2,y:viewport.midY-size.height/2,width:size.width,height:size.height)
-        // A sheet without a portrait keeps only the rows its text needs.
-        let header = panel.minY+(value.portrait != nil ? 78 : value.line.isEmpty ? 38 : 58),footer = panel.maxY-40
-        let list = CGRect(x:panel.minX+8,y:header+6,width:210,height:min(Self.sheetRow*CGFloat(Self.sheetRows),footer-header-10))
-        let detail = CGRect(x:list.maxX+14,y:header+10,width:panel.maxX-list.maxX-30,height:footer-header-18)
-        let shown = min(value.rows.count,Self.sheetRows),first = min(firstVisible,max(0,value.rows.count-shown))
-        let rows = (0..<shown).map { (index:first+$0,rect:CGRect(x:list.minX,y:list.minY+CGFloat($0)*Self.sheetRow,width:list.width,height:Self.sheetRow-2)) }
-        let width:CGFloat = 76,gap:CGFloat = 8,total = CGFloat(value.buttons.count)*(width+gap)-gap
-        let buttons = value.buttons.indices.map { (index:$0,rect:CGRect(x:panel.maxX-12-total+CGFloat($0)*(width+gap),y:footer+6,width:width,height:28)) }
+        let vp = value.fullCanvas ? CGRect(x:8,y:8,width:624,height:384) : self.viewport
+        let size = CGSize(width:min(vp.width-16,value.fullCanvas ? 608 : 540),height:min(vp.height-16,value.fullCanvas ? 368 : 340))
+        let panel = CGRect(x:vp.midX-size.width/2,y:vp.midY-size.height/2,width:size.width,height:size.height)
+        let flow = buttonFlow(value.buttons,width:panel.width-24)
+        let hint = AppControlRuntime.current.displayHint(value.hint,context:.list)
+        let hintHeight = measured(hint,width:panel.width-28,size:10)
+        let footerHeight = flow.height+(flow.height > 0 ? 8 : 0)+hintHeight+12
+        let footer = panel.maxY-footerHeight
+        let hasBadge = !value.badge.label.isEmpty || !value.badge.value.isEmpty
+        let textWidth = panel.width-32-(value.portrait == nil ? 0 : 59)-(hasBadge ? 112 : 0)
+        let speakerHeight = measured(value.speaker,width:textWidth,size:12)
+        let headerHeight = max(value.portrait == nil ? 0 : 74,14+speakerHeight+measured(value.line,width:textWidth,size:14)+6)
+        let listWidth:CGFloat = value.rows.isEmpty ? 0 : min(250,panel.width*0.47)
+        let step = sheetRowHeight(value,width:listWidth)
+        let header = min(panel.minY+headerHeight,footer-step-20)
+        let list = CGRect(x:panel.minX+8,y:header+6,width:listWidth,height:max(step,footer-header-12))
+        let detail = CGRect(x:list.maxX+14,y:header+8,width:panel.maxX-list.maxX-28,height:max(1,footer-header-16))
+        let capacity = max(1,min(Self.sheetRows,Int(list.height/step)))
+        let shown = min(value.rows.count,capacity),first = min(firstVisible,max(0,value.rows.count-shown))
+        let rows = (0..<shown).map {(index:first+$0,rect:CGRect(x:list.minX,y:list.minY+CGFloat($0)*step,width:list.width,height:step-2))}
+        let buttons = flow.buttons.map {(index:$0.index,rect:$0.rect.offsetBy(dx:panel.minX+12,dy:footer+6))}
         return SheetLayout(panel:panel,header:header,list:list,detail:detail,footer:footer,rows:rows,buttons:buttons)
     }
+    private func measuredWidth(_ text:String,size:CGFloat) -> CGFloat {ceil((text as NSString).size(withAttributes:attributes(size:size)).width)}
     /// Screen position of one button, for callers that test the window.
     func sheetButtonRect(_ index:Int) -> CGRect? { sheet.flatMap { sheetLayout($0).buttons.first{$0.index == index}?.rect } }
     func sheetRowRect(_ index:Int) -> CGRect? { sheet.flatMap { sheetLayout($0).rows.first{$0.index == index}?.rect } }
+    func sheetRowTextRects(_ index:Int) -> (label:CGRect,value:CGRect)? {
+        guard let value = sheet,value.rows.indices.contains(index),let rect = sheetRowRect(index) else {return nil}
+        let row = value.rows[index],prefix:CGFloat = row.checked == nil ? 0 : 22
+        var content = rect.insetBy(dx:10,dy:3);content.origin.x += prefix;content.size.width -= prefix
+        let result = rowTextLayout(label:row.label,value:row.value,in:content,labelFont:CanvasTheme.font(14),valueFont:CanvasTheme.number(13))
+        return (result.label,result.value)
+    }
     private func revealSheetRow() {
         guard let value = sheet else { firstVisible = 0;return }
-        let limit = max(0,value.rows.count-Self.sheetRows)
+        let visible = max(1,sheetLayout(value).rows.count)
+        let limit = max(0,value.rows.count-visible)
         if value.selected < firstVisible { firstVisible = value.selected }
-        if value.selected >= firstVisible+Self.sheetRows { firstVisible = value.selected-Self.sheetRows+1 }
+        if value.selected >= firstVisible+visible { firstVisible = value.selected-visible+1 }
         firstVisible = min(max(0,firstVisible),limit)
     }
-    private func drawDetail(_ detail:CanvasSheet.Detail,in rect:CGRect,context:CGContext) {
-        var y = rect.minY
-        var textWidth = rect.width
+    private func detailHeight(_ detail:CanvasSheet.Detail,width:CGFloat) -> CGFloat {
+        if detail.rangeComparison != nil {return 290*CanvasTheme.textScale}
+        if let strategy = detail.strategy {return CanvasStrategyDetail.requiredHeight(detail,strategy:strategy,width:width)}
+        let textWidth = width-(detail.portrait == nil ? 0 : 57)
+        var total = measured(detail.heading,width:textWidth,size:15)+measured(detail.body,width:textWidth,size:13)+16
+        if detail.portrait != nil {total = max(total,66)}
+        total += detail.list.reduce(0) {$0+measured($1,width:width,size:13)+5}
+        total += detail.facts.reduce(0) {$0+measured($1.label+"  "+$1.value,width:width,size:13)+6}
+        if detail.picture != nil {total += 160}
+        if detail.rangePatternPreview {total += 160*CanvasTheme.textScale}
+        return total
+    }
+    private func selectedDetail(_ value:CanvasSheet) -> CanvasSheet.Detail? {value.detail ?? (value.rows.indices.contains(value.selected) ? value.rows[value.selected].detail : nil)}
+    var sheetDetailViewport:CGRect? {sheet.map {sheetLayout($0).detail}}
+    var sheetPanelRect:CGRect? {sheet.map {sheetLayout($0).panel}}
+    private func scrollDetail(by delta:CGFloat,edge:Bool = false) {
+        guard let value = sheet,let detail = selectedDetail(value) else {return}
+        let rect = sheetLayout(value).detail,limit = max(0,detailHeight(detail,width:rect.width)-rect.height)
+        detailScroll = edge ? (delta < 0 ? 0 : limit) : min(limit,max(0,detailScroll+delta));needsDisplay = true
+    }
+    private func drawDetail(_ detail:CanvasSheet.Detail,in viewport:CGRect,context:CGContext) {
+        let height = max(viewport.height,detailHeight(detail,width:viewport.width))
+        detailScroll = min(detailScroll,max(0,height-viewport.height))
+        context.saveGState();context.clip(to:viewport);context.translateBy(x:0,y:-detailScroll)
+        defer {context.restoreGState()}
+        let rect = CGRect(x:viewport.minX,y:viewport.minY,width:viewport.width,height:height)
+        if let ranges = detail.rangeComparison {CanvasRangeComparison.draw(detail,model:ranges,in:rect,context:context);return}
+        if let strategy = detail.strategy {CanvasStrategyDetail.draw(detail,strategy:strategy,in:rect,context:context);return}
+        var y = rect.minY,textWidth = rect.width
         if let portrait = detail.portrait {
             let box = CGRect(x:rect.maxX-47,y:rect.minY,width:47,height:58)
-            context.saveGState();CanvasTheme.rounded(box,5,in:context);context.clip()
-            Renderer.image(portrait,in:box,context:context);context.restoreGState()
-            textWidth -= 57
+            context.saveGState();CanvasTheme.rounded(box,5,in:context);context.clip();Renderer.image(portrait,in:box,context:context);context.restoreGState();textWidth -= 57
         }
-        if !detail.heading.isEmpty {
-            (detail.heading as NSString).draw(in:CGRect(x:rect.minX,y:y,width:textWidth,height:22),withAttributes:CanvasTheme.attributes(CanvasTheme.font(15,.semibold),CanvasTheme.text))
-            y += 26
+        func text(_ value:String,size:CGFloat,color:NSColor,width:CGFloat) {
+            guard !value.isEmpty else {return}
+            let h = measured(value,width:width,size:size)
+            (value as NSString).draw(with:CGRect(x:rect.minX,y:y,width:width,height:h),options:[.usesLineFragmentOrigin],attributes:attributes(color,size:size));y += h+5
         }
-        if !detail.body.isEmpty {
-            let style = attributes(CanvasTheme.muted,size:13)
-            let height = ceil((detail.body as NSString).boundingRect(with:CGSize(width:textWidth,height:200),options:[.usesLineFragmentOrigin],attributes:style).height)
-            (detail.body as NSString).draw(with:CGRect(x:rect.minX,y:y,width:textWidth,height:height+2),options:[.usesLineFragmentOrigin],attributes:style)
-            y += height+8
-        }
-        if detail.portrait != nil { y = max(y,rect.minY+66) }
-        let columns:CGFloat = detail.wide ? 2 : 1
-        let cell = (rect.width-(columns-1)*14)/columns
-        func cellOrigin(_ index:Int,_ top:CGFloat,_ step:CGFloat) -> CGPoint {
-            let column = index%Int(columns),row = index/Int(columns)
-            return CGPoint(x:rect.minX+CGFloat(column)*(cell+14),y:top+CGFloat(row)*step)
-        }
-        for (index,item) in detail.list.enumerated() {
-            let at = cellOrigin(index,y,19)
-            (item as NSString).draw(in:CGRect(x:at.x,y:at.y,width:cell,height:18),withAttributes:attributes(CanvasTheme.text,size:13))
-        }
-        y += CGFloat((detail.list.count+Int(columns)-1)/Int(columns))*19
-        // Facts close an item's text from below; alone they follow the heading.
-        let closing = !detail.body.isEmpty
-        let factRows = (detail.facts.count+Int(columns)-1)/Int(columns)
-        let top = closing ? rect.maxY-CGFloat(factRows)*20 : y
-        if closing,!detail.facts.isEmpty { CanvasTheme.divider(from:CGPoint(x:rect.minX,y:top-5.5),to:CGPoint(x:rect.maxX,y:top-5.5),in:context) }
-        for (index,fact) in detail.facts.enumerated() {
-            let at = cellOrigin(index,top,20),line = CGRect(x:at.x,y:at.y,width:cell,height:18)
-            (fact.label as NSString).draw(in:line,withAttributes:attributes(closing ? CanvasTheme.muted : CanvasTheme.text,size:closing ? 12 : 13))
-            (fact.value as NSString).draw(in:line,withAttributes:CanvasTheme.attributes(CanvasTheme.number(13,.medium),CanvasTheme.text,alignment:.right))
+        text(detail.heading,size:15,color:CanvasTheme.text,width:textWidth)
+        text(detail.body,size:13,color:CanvasTheme.muted,width:textWidth)
+        if detail.portrait != nil {y = max(y,rect.minY+66)}
+        for item in detail.list {text(item,size:13,color:CanvasTheme.text,width:rect.width)}
+        for fact in detail.facts {text(fact.label+"  "+fact.value,size:13,color:CanvasTheme.text,width:rect.width)}
+        if detail.rangePatternPreview {
+            let step = 80*CanvasTheme.textScale,width = (rect.width-10)/2
+            for (index,kind) in CanvasRangePattern.Kind.allCases.enumerated() {
+                let x = rect.minX+CGFloat(index%2)*(width+10),top = y+CGFloat(index/2)*step
+                let sample = CGRect(x:x,y:top,width:32,height:32)
+                CanvasTheme.fill(sample,CGColor(gray:0.3,alpha:1),radius:2,in:context)
+                CanvasRangePattern.draw(kind:kind,in:sample,context:context)
+                (kind.label as NSString).draw(with:CGRect(x:x,y:top+37,width:width,height:step-37),options:[.usesLineFragmentOrigin],attributes:attributes(size:10))
+            }
+            y += 160*CanvasTheme.textScale
         }
         if let picture = detail.picture {
-            let area = CGRect(x:rect.minX,y:y,width:rect.width,height:rect.maxY-y)
+            let area = CGRect(x:rect.minX,y:y+6,width:rect.width,height:150)
             let scale = min(area.width/CGFloat(picture.width),area.height/CGFloat(picture.height))
             let box = CGRect(x:area.midX-CGFloat(picture.width)*scale/2,y:area.minY,width:CGFloat(picture.width)*scale,height:CGFloat(picture.height)*scale)
-            context.saveGState();context.interpolationQuality = .medium
-            CanvasTheme.rounded(box,4,in:context);context.clip()
-            Renderer.image(picture,in:box,context:context);context.restoreGState()
+            Renderer.image(picture,in:box,context:context)
             for mark in detail.marks {
                 let center = CGPoint(x:box.minX+mark.point.x*box.width,y:box.minY+mark.point.y*box.height),radius:CGFloat = mark.strong ? 4 : 2
-                let dot = CGRect(x:center.x-radius,y:center.y-radius,width:radius*2,height:radius*2)
-                context.setFillColor(mark.strong ? CanvasTheme.accentFill : CGColor(gray:1,alpha:0.85));context.fillEllipse(in:dot)
-                context.setStrokeColor(CGColor(gray:0,alpha:0.7));context.setLineWidth(1);context.strokeEllipse(in:dot)
+                context.setFillColor(mark.strong ? CanvasTheme.accentFill : CGColor(gray:1,alpha:0.85));context.fillEllipse(in:CGRect(x:center.x-radius,y:center.y-radius,width:radius*2,height:radius*2))
             }
         }
     }
@@ -632,28 +820,38 @@ final class CanvasOverlayView:NSView {
             Renderer.image(portrait,in:picture,context:context);context.restoreGState()
             textX = picture.maxX+12
         }
-        let badgeWidth:CGFloat = 96,textWidth = panel.maxX-textX-badgeWidth-20
-        (value.speaker as NSString).draw(in:CGRect(x:textX,y:panel.minY+10,width:textWidth,height:18),withAttributes:CanvasTheme.attributes(CanvasTheme.font(12,.semibold),CanvasTheme.accent))
-        (value.line as NSString).draw(with:CGRect(x:textX,y:panel.minY+29,width:textWidth,height:44),options:[.usesLineFragmentOrigin],attributes:attributes())
-        let badge = CGRect(x:panel.maxX-16-badgeWidth,y:panel.minY+10,width:badgeWidth,height:16)
+        let badgeWidth:CGFloat = 96,hasBadge = !value.badge.label.isEmpty || !value.badge.value.isEmpty
+        let textWidth = panel.maxX-textX-16-(hasBadge ? 112 : 0)
+        let speakerHeight = measured(value.speaker,width:textWidth,size:12)
+        CanvasTheme.drawSingleLine(value.speaker,in:CGRect(x:textX,y:panel.minY+10,width:textWidth,height:speakerHeight),font:CanvasTheme.font(12,.semibold),color:CanvasTheme.accent,context:context)
+        (value.line as NSString).draw(with:CGRect(x:textX,y:panel.minY+12+speakerHeight,width:textWidth,height:max(0,shape.header-panel.minY-16-speakerHeight)),options:[.usesLineFragmentOrigin],attributes:attributes())
+        let badge = CGRect(x:panel.maxX-16-badgeWidth,y:panel.minY+10,width:badgeWidth,height:16*CanvasTheme.textScale)
         (value.badge.label as NSString).draw(in:badge,withAttributes:CanvasTheme.attributes(CanvasTheme.font(11),CanvasTheme.muted,alignment:.right))
-        (value.badge.value as NSString).draw(in:badge.offsetBy(dx:0,dy:15).insetBy(dx:0,dy:-2),withAttributes:CanvasTheme.attributes(CanvasTheme.number(16,.semibold),CanvasTheme.text,alignment:.right))
+        (value.badge.value as NSString).draw(in:badge.offsetBy(dx:0,dy:15*CanvasTheme.textScale).insetBy(dx:0,dy:-2),withAttributes:CanvasTheme.attributes(CanvasTheme.number(16,.semibold),CanvasTheme.text,alignment:.right))
         CanvasTheme.divider(from:CGPoint(x:panel.minX,y:shape.header+0.5),to:CGPoint(x:panel.maxX,y:shape.header+0.5),in:context)
         CanvasTheme.divider(from:CGPoint(x:panel.minX,y:shape.footer+0.5),to:CGPoint(x:panel.maxX,y:shape.footer+0.5),in:context)
-        CanvasTheme.divider(from:CGPoint(x:shape.list.maxX+6.5,y:shape.header),to:CGPoint(x:shape.list.maxX+6.5,y:shape.footer),in:context)
-        let frozen = value.mode != .list
+        if !value.rows.isEmpty {CanvasTheme.divider(from:CGPoint(x:shape.list.maxX+6.5,y:shape.header),to:CGPoint(x:shape.list.maxX+6.5,y:shape.footer),in:context)}
+        let frozen = value.mode != .list || sheetActionFocused
         for (index,rect) in shape.rows {
             let row = value.rows[index]
-            if index == value.selected { CanvasTheme.fill(rect,frozen ? CanvasTheme.inset : CanvasTheme.selection,in:context) }
+            if index == value.selected {
+                if frozen { CanvasTheme.fill(rect,CanvasTheme.inset,in:context) }
+                else {
+                    CanvasTheme.gradient(rect,top:CGColor(red:0.91,green:0.75,blue:0.40,alpha:0.28),
+                                         bottom:CGColor(red:0.91,green:0.75,blue:0.40,alpha:0.10),radius:CanvasTheme.rowRadius,vertical:false,in:context)
+                    CanvasTheme.stroke(rect,CanvasTheme.accentBorder,radius:CanvasTheme.rowRadius,in:context)
+                    CanvasTheme.fill(CGRect(x:rect.minX+2.5,y:rect.minY+4,width:3,height:rect.height-8),CanvasTheme.accentFill,radius:1.5,in:context)
+                }
+            }
             var inset = rect.insetBy(dx:10,dy:3)
             if let checked = row.checked {
                 drawCheck(CGRect(x:inset.minX,y:rect.midY-7,width:14,height:14),checked:checked,enabled:row.enabled,context:context)
                 inset = inset.offsetBy(dx:22,dy:0);inset.size.width -= 22
             }
-            (row.label as NSString).draw(in:inset,withAttributes:attributes(!row.enabled ? CanvasTheme.disabled : frozen && index != value.selected ? CanvasTheme.muted : CanvasTheme.text))
+            let text = rowTextLayout(label:row.label,value:row.value,in:inset,labelFont:CanvasTheme.font(14),valueFont:CanvasTheme.number(13))
+            CanvasTheme.drawSingleLine(row.label,in:text.label,font:CanvasTheme.font(14),color:!row.enabled ? CanvasTheme.disabled : frozen && index != value.selected ? CanvasTheme.muted : CanvasTheme.text,context:context)
             if !row.value.isEmpty {
-                let color = row.warns ? CanvasTheme.danger : frozen ? CanvasTheme.disabled : CanvasTheme.muted
-                (row.value as NSString).draw(in:inset,withAttributes:CanvasTheme.attributes(CanvasTheme.number(13),color,alignment:.right))
+                CanvasTheme.drawSingleLine(row.value,in:text.value,font:CanvasTheme.number(13),color:row.warns ? CanvasTheme.danger : frozen ? CanvasTheme.disabled : CanvasTheme.muted,alignment:text.stacked ? .left : .right,context:context)
             }
         }
         if let first = shape.rows.first,let last = shape.rows.last {
@@ -662,18 +860,21 @@ final class CanvasOverlayView:NSView {
         if let detail = value.detail ?? (value.rows.indices.contains(value.selected) ? value.rows[value.selected].detail : nil) {
             drawDetail(detail,in:shape.detail,context:context)
         }
-        (value.hint as NSString).draw(in:CGRect(x:panel.minX+18,y:shape.footer+12,width:panel.width-200,height:16),withAttributes:attributes(CanvasTheme.muted,size:11))
-        for (index,rect) in shape.buttons { drawButton(value.buttons[index],in:rect,focused:index == sheetButton,context:context) }
+        let hintTop = (shape.buttons.map { $0.rect.maxY }.max() ?? shape.footer)+3
+        (AppControlRuntime.current.displayHint(value.hint,context:.list) as NSString).draw(with:CGRect(x:panel.minX+14,y:hintTop,width:panel.width-28,height:max(0,panel.maxY-hintTop-4)),options:[.usesLineFragmentOrigin],attributes:attributes(CanvasTheme.muted,size:10))
+        for (index,rect) in shape.buttons {
+            drawButton(value.buttons[index],in:rect,focused:index == sheetButton && (value.mode == .buttons || sheetActionFocused),context:context)
+        }
     }
     /// Controls along the bottom of a waiting line, right to left before the continue mark.
     private func lineControls(_ rect:CGRect) -> [(control:LineControl,label:String,rect:CGRect)] {
         guard onLineControl != nil,notice?.waitsAsLine == true else { return [] }
         let style = CanvasTheme.attributes(CanvasTheme.font(11,.medium),CanvasTheme.muted)
         var right = rect.maxX-30,result:[(control:LineControl,label:String,rect:CGRect)] = []
-        let pace = DialoguePace.shared,autoLabel = pace.auto ? "자동 · "+DialoguePace.speedLabels[min(max(0,pace.speed),DialoguePace.speedLabels.count-1)] : "자동 A"
-        for (control,label) in [(LineControl.skip,"건너뛰기 S"),(.auto,autoLabel),(.log,"기록 L")] where control != .log || showsLog {
+        let pace = DialoguePace.shared,autoLabel = pace.auto ? "자동 · "+DialoguePace.speedLabels[min(max(0,pace.speed),DialoguePace.speedLabels.count-1)] : "자동 "+AppControlRuntime.current.shortcutLabel(command:.auto,context:.dialogue)
+        for (control,label) in [(LineControl.skip,"건너뛰기 "+AppControlRuntime.current.shortcutLabel(command:.skip,context:.dialogue)),(.auto,autoLabel),(.log,"기록 "+AppControlRuntime.current.shortcutLabel(command:.log,context:.dialogue))] where control != .log || showsLog {
             let width = ceil((label as NSString).size(withAttributes:style).width)+16
-            result.append((control,label,CGRect(x:right-width,y:rect.maxY-25,width:width,height:19)))
+            result.append((control,label,CGRect(x:right-width,y:rect.maxY-25*CanvasTheme.textScale,width:width,height:19*CanvasTheme.textScale)))
             right -= width+4
         }
         return result
@@ -682,10 +883,16 @@ final class CanvasOverlayView:NSView {
         let pace = DialoguePace.shared
         for item in lineControls(rect) {
             let on = item.control == .auto ? pace.auto : item.control == .skip ? pace.skipping : false
-            if on { CanvasTheme.fill(item.rect,CanvasTheme.accentFill,radius:item.rect.height/2,in:context) }
-            else if item.control == hoveredControl { CanvasTheme.fill(item.rect,CanvasTheme.selection,radius:item.rect.height/2,in:context) }
-            let color = on ? CanvasTheme.onAccent : item.control == hoveredControl ? CanvasTheme.text : CanvasTheme.muted
-            (item.label as NSString).draw(in:item.rect.insetBy(dx:0,dy:3),withAttributes:CanvasTheme.attributes(CanvasTheme.font(11,.medium),color,alignment:.center))
+            if on { CanvasTheme.pill(item.rect,active:true,in:context) }
+            else if item.control == hoveredControl {
+                CanvasTheme.fill(item.rect,CanvasTheme.selection,radius:item.rect.height/2,in:context)
+                CanvasTheme.stroke(item.rect,CanvasTheme.accentBorder,radius:item.rect.height/2,in:context)
+            } else {
+                CanvasTheme.fill(item.rect,CGColor(red:0.04,green:0.05,blue:0.08,alpha:0.55),radius:item.rect.height/2,in:context)
+                CanvasTheme.stroke(item.rect,CGColor(gray:1,alpha:0.12),radius:item.rect.height/2,in:context)
+            }
+            let color = on ? CanvasTheme.onAccent : item.control == hoveredControl ? CanvasTheme.accent : CanvasTheme.muted
+            CanvasTheme.drawSingleLine(item.label,in:item.rect.insetBy(dx:4,dy:0),font:CanvasTheme.font(10.5,.semibold),color:color,alignment:.center,context:context)
         }
     }
     private func drawNotice(_ value:CanvasNotice,in context:CGContext) {
@@ -697,31 +904,33 @@ final class CanvasOverlayView:NSView {
             textX = rect.minX+lineText(value,width:rect.width).left
             if let portrait = value.portrait {
                 let picture = CGRect(origin:CGPoint(x:rect.minX+12,y:rect.minY+12),size:Self.portraitSize)
+                CanvasTheme.card(picture.insetBy(dx:-2,dy:-2),radius:6,in:context)
                 context.saveGState();CanvasTheme.rounded(picture,4,in:context);context.clip()
                 Renderer.image(portrait,in:picture,context:context);context.restoreGState()
-                CanvasTheme.stroke(picture,radius:4,in:context)
+                CanvasTheme.stroke(picture,CanvasTheme.accentBorder,radius:4,in:context)
             }
             // The speaker's name sits on a tag over the box's top edge.
             if !value.speaker.isEmpty {
-                let style = CanvasTheme.attributes(CanvasTheme.font(12,.semibold),CanvasTheme.onAccent,alignment:.center)
-                let width = ceil((value.speaker as NSString).size(withAttributes:style).width)+22
+                let style = CanvasTheme.attributes(CanvasTheme.font(12,.bold),CanvasTheme.onAccent,alignment:.center)
+                let width = ceil((value.speaker as NSString).size(withAttributes:style).width)+26
                 let tag = CGRect(x:textX-4,y:rect.minY-11,width:width,height:22)
-                context.saveGState()
-                context.setShadow(offset:CGSize(width:0,height:2),blur:6,color:CGColor(gray:0,alpha:0.45))
-                CanvasTheme.fill(tag,CanvasTheme.accentFill,radius:11,in:context)
-                context.restoreGState()
-                (value.speaker as NSString).draw(in:tag.insetBy(dx:0,dy:3),withAttributes:style)
+                CanvasTheme.pill(tag,active:true,in:context)
+                CanvasTheme.drawSingleLine(value.speaker,in:tag.insetBy(dx:8,dy:0),font:CanvasTheme.font(12,.bold),color:CanvasTheme.onAccent,alignment:.center,context:context)
             }
         }
         let top = line ? rect.minY+18 : rect.minY+14
         // Unrevealed characters are laid out but clear, so lines never re-wrap.
         let text = NSMutableAttributedString(string:value.text,attributes:line ? lineAttributes() : attributes())
-        let shown = revealed(value.text)
+        let shown = visibleNoticeCharacterCount ?? value.text.count
         if shown < value.text.count {
             let start = value.text.index(value.text.startIndex,offsetBy:shown)
             text.addAttribute(.foregroundColor,value:NSColor.clear,range:NSRange(start...,in:value.text))
         }
-        text.draw(with:CGRect(x:textX,y:top,width:rect.maxX-textX-18,height:rect.maxY-top-6),options:[.usesLineFragmentOrigin])
+        let body = CGRect(x:textX,y:top,width:rect.maxX-textX-18,height:max(1,rect.maxY-top-(value.waitsAsLine ? 30*CanvasTheme.textScale : 8)))
+        let height = ceil(text.boundingRect(with:CGSize(width:body.width,height:100_000),options:[.usesLineFragmentOrigin]).height)+2
+        noticeScroll = min(noticeScroll,max(0,height-body.height))
+        context.saveGState();context.clip(to:body)
+        text.draw(with:CGRect(x:body.minX,y:body.minY-noticeScroll,width:body.width,height:height),options:[.usesLineFragmentOrigin]);context.restoreGState()
         if value.waitsAsLine,shown >= value.text.count {
             CanvasTheme.continueMark(at:CGPoint(x:rect.maxX-16,y:rect.maxY-15),in:context)
         }
@@ -729,7 +938,35 @@ final class CanvasOverlayView:NSView {
     }
     private func drawTerrain(_ value:CanvasTerrain,in context:CGContext) {
         let facts = value.layout,x = Int(value.origin.x),y = Int(value.origin.y)
-        CanvasTheme.panel(CGRect(x:x,y:y,width:facts.size[0],height:facts.size[1]),in:context)
+        let card = CGRect(x:x,y:y,width:facts.size[0],height:facts.size[1])
+        CanvasTheme.panel(card,in:context)
+        if CanvasPresentation.current == .modern {
+            let tileBox = CGRect(x:card.minX+10,y:card.minY+12,width:36,height:36)
+            CanvasTheme.card(tileBox.insetBy(dx:-1,dy:-1),radius:6,in:context)
+            if let tile = value.tile {
+                context.saveGState();CanvasTheme.rounded(tileBox,5,in:context);context.clip()
+                Renderer.image(tile,in:tileBox,context:context);context.restoreGState()
+            }
+            CanvasTheme.stroke(tileBox,CanvasTheme.accentBorder,radius:5,in:context)
+            let rightX = tileBox.maxX+10,rightWidth = card.maxX-rightX-8
+            (value.name as NSString).draw(in:CGRect(x:rightX,y:card.minY+11,width:rightWidth,height:18),
+                withAttributes:CanvasTheme.attributes(CanvasTheme.font(13.5,.bold),CanvasTheme.accent))
+            (value.heading as NSString).draw(in:CGRect(x:rightX,y:card.minY+31,width:rightWidth,height:14),
+                withAttributes:CanvasTheme.attributes(CanvasTheme.font(10,.medium),CanvasTheme.muted))
+            (value.percent as NSString).draw(in:CGRect(x:rightX,y:card.minY+30,width:rightWidth,height:16),
+                withAttributes:CanvasTheme.attributes(CanvasTheme.number(12,.bold),CanvasTheme.text,alignment:.right))
+            if let recovery = value.recovery {
+                let badge = CGRect(x:card.minX+10,y:card.maxY-23,width:card.width-20,height:16)
+                CanvasTheme.fill(badge,CGColor(red:0.20,green:0.62,blue:0.42,alpha:0.28),radius:8,in:context)
+                CanvasTheme.stroke(badge,CGColor(red:0.40,green:0.84,blue:0.58,alpha:0.55),radius:8,in:context)
+                ("✦ "+recovery as NSString).draw(in:badge.insetBy(dx:0,dy:1.5),
+                    withAttributes:CanvasTheme.attributes(CanvasTheme.font(10.5,.semibold),NSColor(red:0.58,green:0.95,blue:0.72,alpha:1),alignment:.center))
+            } else {
+                let foot = CGRect(x:card.minX+10,y:card.maxY-21,width:card.width-20,height:14)
+                ("지형 정보" as NSString).draw(in:foot,withAttributes:CanvasTheme.attributes(CanvasTheme.font(10),CanvasTheme.muted,alignment:.center))
+            }
+            return
+        }
         if let tile = value.tile {
             Renderer.image(tile,in:CGRect(x:x+facts.tile[0],y:y+facts.tile[1],width:facts.tile[2],height:facts.tile[3]),context:context)
         }
@@ -743,7 +980,25 @@ final class CanvasOverlayView:NSView {
     }
     private func drawBrief(_ value:CanvasBrief,in context:CGContext) {
         let facts = value.layout
-        CanvasTheme.panel(OriginalBattleLayout.rect(facts.window),in:context)
+        let window = OriginalBattleLayout.rect(facts.window)
+        CanvasTheme.panel(window,in:context)
+        if value.button == nil {
+            let scale = CanvasTheme.textScale
+            let panel = CGRect(x:viewport.minX+18,y:viewport.minY+24,width:viewport.width-36,height:viewport.height-48)
+            CanvasTheme.panel(panel,in:context)
+            let heading = value.title+"  ·  "+value.heading
+            let headingHeight = measured(heading,width:panel.width-32,size:14)
+            (heading as NSString).draw(with:CGRect(x:panel.minX+16,y:panel.minY+12,width:panel.width-32,height:headingHeight),options:[.usesLineFragmentOrigin],attributes:attributes(CanvasTheme.accent,size:14))
+            let body = CGRect(x:panel.minX+16,y:panel.minY+headingHeight+22,width:panel.width-32,height:max(1,panel.height-headingHeight-78*scale))
+            let text = value.lines.map {"• "+$0}.joined(separator:"\n\n"),height = measured(text,width:body.width,size:14)
+            noticeScroll = min(noticeScroll,max(0,height-body.height))
+            context.saveGState();context.clip(to:body)
+            (text as NSString).draw(with:CGRect(x:body.minX,y:body.minY-noticeScroll,width:body.width,height:height),options:[.usesLineFragmentOrigin],attributes:attributes());context.restoreGState()
+            let bottom = panel.maxY-40*scale
+            (value.turns.trimmingCharacters(in:.whitespaces) as NSString).draw(in:CGRect(x:panel.minX+16,y:bottom+8,width:panel.width-130,height:22*scale),withAttributes:attributes(CanvasTheme.accent,size:13))
+            drawButton("확인",in:CGRect(x:panel.maxX-100,y:bottom,width:84,height:30*scale),focused:true,context:context)
+            return
+        }
         for box in [facts.textBox,facts.turnBox] {
             CanvasTheme.fill(OriginalBattleLayout.rect(box),CanvasTheme.inset,in:context)
         }
@@ -773,6 +1028,14 @@ final class CanvasOverlayView:NSView {
         context.restoreGState()
     }
     override func keyDown(with event:NSEvent) {
+        guard !isSuspended else { return }
+        guard let event = AppControlRuntime.current.remappedEvent(event,context:notice != nil || brief != nil ? .dialogue : .list) else {return}
+        if [116,121,115,119].contains(event.keyCode) {
+            let delta:CGFloat = [116,115].contains(event.keyCode) ? -100 : 100
+            if notice != nil || brief != nil || selector?.horizontal == true {noticeScroll = [115,119].contains(event.keyCode) ? (delta < 0 ? 0 : 100_000) : max(0,noticeScroll+delta);needsDisplay = true}
+            else {scrollDetail(by:delta,edge:[115,119].contains(event.keyCode))}
+            return
+        }
         if notice != nil {
             if [36,49,76,53].contains(event.keyCode),!event.isARepeat { dismissNotice() }
             return
@@ -814,11 +1077,25 @@ final class CanvasOverlayView:NSView {
         case .timed:if [36,49,76,53].contains(event.keyCode) { finishSheet(0) }
         case .list:
             switch event.keyCode {
+            case 48 where value.hasRowActions && !value.buttons.isEmpty:
+                let direction = event.modifierFlags.contains(.shift) ? -1 : 1
+                let next = (sheetActionFocused ? sheetButton : -1)+direction
+                if direction < 0 && !sheetActionFocused { sheetActionFocused = true;sheetButton = value.buttons.count-1 }
+                else if value.buttons.indices.contains(next) { sheetActionFocused = true;sheetButton = next }
+                else { sheetActionFocused = false }
+                needsDisplay = true
+            case 123,124:
+                guard sheetActionFocused else { return }
+                sheetButton = (sheetButton+(event.keyCode == 124 ? 1 : value.buttons.count-1))%max(1,value.buttons.count)
+                needsDisplay = true
             case 125,126:
+                sheetActionFocused = false
                 guard !value.rows.isEmpty else { return }
                 value.selected = (value.selected+(event.keyCode == 125 ? 1 : value.rows.count-1))%value.rows.count
-                sheet = value;revealSheetRow();needsDisplay = true
-            case 36,49,76:chooseSheetRow(value.selected)
+                sheet = value;detailScroll = 0;revealSheetRow();needsDisplay = true
+            case 36,49,76:
+                if sheetActionFocused { finishSheetAction(sheetButton) }
+                else { chooseSheetRow(value.selected) }
             case 53:finishSheet(nil)
             default:break
             }
@@ -836,13 +1113,15 @@ final class CanvasOverlayView:NSView {
         if value.rows[index].enabled { finishSheet(index) } else { refuse() }
     }
     override func mouseMoved(with event:NSEvent) {
+        guard !isSuspended else { return }
         let point = canvasPoint(event)
         if var value = sheet {
-            if value.mode == .list,let hit = sheetLayout(value).rows.first(where:{ $0.rect.contains(point) }),hit.index != value.selected {
-                value.selected = hit.index;sheet = value;needsDisplay = true
+            if value.mode == .list,let hit = sheetLayout(value).rows.first(where:{ $0.rect.contains(point) }),hit.index != value.selected || sheetActionFocused {
+                sheetActionFocused = false;value.selected = hit.index;sheet = value;detailScroll = 0;needsDisplay = true
             }
-            if value.mode == .buttons,let hit = sheetLayout(value).buttons.first(where:{ $0.rect.contains(point) }),hit.index != sheetButton {
-                sheetButton = hit.index;needsDisplay = true
+            if value.mode == .buttons || (value.mode == .list && value.hasRowActions),
+               let hit = sheetLayout(value).buttons.first(where:{ $0.rect.contains(point) }) {
+                sheetActionFocused = value.mode == .list;sheetButton = hit.index;needsDisplay = true
             }
         } else if var value = selector,let hit = layout(value).options.first(where:{ $0.rect.contains(point) }),
                   value.options[hit.index].enabled,hit.index != value.selected {
@@ -853,11 +1132,14 @@ final class CanvasOverlayView:NSView {
         }
     }
     override func mouseDown(with event:NSEvent) {
+        guard !isSuspended else { return }
         if let value = sheet {
             let point = canvasPoint(event),shape = sheetLayout(value)
             switch value.mode {
             case .timed:finishSheet(0)
-            case .list:if let hit = shape.rows.first(where:{ $0.rect.contains(point) }) { chooseSheetRow(hit.index) }
+            case .list:
+                if let hit = shape.buttons.first(where:{ $0.rect.contains(point) }),value.hasRowActions { finishSheetAction(hit.index) }
+                else if let hit = shape.rows.first(where:{ $0.rect.contains(point) }) { chooseSheetRow(hit.index) }
             case .buttons:if let hit = shape.buttons.first(where:{ $0.rect.contains(point) }) { finishSheet(hit.index) }
             }
             return
@@ -876,9 +1158,13 @@ final class CanvasOverlayView:NSView {
         else if value.cancellable,value.cancelsOnOutsideClick,!shape.panel.contains(point) { choose(nil) }
     }
     override func scrollWheel(with event:NSEvent) {
+        guard !isSuspended else { return }
+        if notice != nil || brief != nil || selector?.horizontal == true,event.scrollingDeltaY != 0 {noticeScroll = max(0,noticeScroll-event.scrollingDeltaY*3);needsDisplay = true;return}
+        if let value = sheet,sheetLayout(value).detail.contains(canvasPoint(event)),event.scrollingDeltaY != 0 {scrollDetail(by:-event.scrollingDeltaY*3);return}
         if var value = sheet,value.mode == .list,event.scrollingDeltaY != 0,!value.rows.isEmpty {
+            sheetActionFocused = false
             value.selected = min(max(0,value.selected+(event.scrollingDeltaY < 0 ? 1 : -1)),value.rows.count-1)
-            sheet = value;revealSheetRow();needsDisplay = true
+            sheet = value;detailScroll = 0;revealSheetRow();needsDisplay = true
             return
         }
         guard var value = selector,!value.horizontal,event.scrollingDeltaY != 0 else { return }
@@ -891,6 +1177,7 @@ final class CanvasOverlayView:NSView {
         needsDisplay = true
     }
     override func rightMouseDown(with event:NSEvent) {
+        guard !isSuspended else { return }
         if let value = sheet { finishSheet(value.mode == .list ? nil : value.mode == .timed ? 0 : value.buttons.count-1) }
         else if let value = selector,value.cancellable { choose(nil) } else if notice != nil { dismissNotice() } else if brief != nil { dismissBrief() } else if terrain != nil { dismissTerrain() }
     }

@@ -218,14 +218,14 @@ struct OriginalItemOperation:Codable {
                 continuation = .completion
             case let .damage(target,subtype):
                 let effect = try session.strategyDamageEffect(casterSlot:userSlot,targetSlot:target,subtype:subtype,kind:3)
-                continuation = .completion;return retain(effect)
+                continuation = .completion;return retain(effect,in:session)
             case let .bomb(target):
                 let effect = try session.itemBombEffect(targetSlot:target)
-                continuation = .completion;return retain(effect)
+                continuation = .completion;return retain(effect,in:session)
             case let .confuse(target,center,splash):
                 let effect = try session.itemConfusionEffect(targetSlot:target)
                 continuation = splash ? .confuseNeighbors(center:center,next:0) : .completion
-                return retain(effect)
+                return retain(effect,in:session)
             case let .confuseNeighbors(center,next):
                 guard (0...4).contains(next) else {throw BattleError.invalid("Original item neighbor continuation is invalid")}
                 if next == 4 {continuation = .completion;continue}
@@ -233,23 +233,25 @@ struct OriginalItemOperation:Codable {
                 continuation = .confuseNeighbors(center:center,next:next+1)
                 // MAIN2E419..2E423 compares sides against the item user.
                 guard board.contains(point),let target = board.occupant(point),(target.runtimeSlot < 15) != (userSlot < 15) else {continue}
-                return retain(try session.itemConfusionEffect(targetSlot:target.runtimeSlot))
+                return retain(try session.itemConfusionEffect(targetSlot:target.runtimeSlot),in:session)
             case let .healing(slots,next,subtype):
                 guard slots.count <= 45,(0...slots.count).contains(next),slots.allSatisfy({(0..<45).contains($0)}) else {throw BattleError.invalid("Original item healing continuation is invalid")}
                 if next == slots.count {continuation = .completion;continue}
                 let effect = try session.strategyHealingEffect(casterSlot:nil,targetSlot:slots[next],subtype:subtype)
-                continuation = .healing(slots:slots,next:next+1,subtype:subtype);return retain(effect)
+                continuation = .healing(slots:slots,next:next+1,subtype:subtype);return retain(effect,in:session)
             case .completion:
                 guard let current = session.units[userSlot] else {throw BattleError.unsupported("Original item user slot was removed before completion")}
                 // MAIN2E807..2E82B: a campaign hook may already have taken the item.
                 if try session.people.person(current.person).itemIDs.contains(item) {try session.people.discardItem(person:current.person,item:item)}
                 session.units[userSlot]!.scriptFlags |= 0x80;session.commitMove(userSlot)
                 let result = summary(in:session,completed:true)
+                if let newClass { session.logClassResult(userSlot:userSlot,item:item,newClass:newClass) }
                 continuation = .finished(result);return .finished(result)
             }
         }
     }
-    private mutating func retain(_ effect:OriginalStrategyTargetEffect) -> OriginalItemStep {
+    private mutating func retain(_ effect:OriginalStrategyTargetEffect,in session:OriginalBattleSession) -> OriginalItemStep {
+        session.logTargetResult(effect,actorSlot:userSlot,action:.item(item))
         effects.append(effect)
         if let notice = effect.retirement {
             pendingRetirement = OriginalStrategyPendingRetirement(effectIndex:effects.count-1,notice:notice)
@@ -279,7 +281,7 @@ extension OriginalBattleSession {
         }
         let retirement = try strategyRetirement(targetSlot)
         return OriginalStrategyTargetEffect(runtimeSlot:targetSlot,person:target.person,kind:"bomb",morale:morale,
-            quantity:damage,retiredPerson:retirement.person,retirement:retirement.notice)
+            quantity:damage,retiredPerson:retirement.person,retirement:retirement.notice,moraleChange:morale.map { $0.remainingMorale-stats.morale })
     }
     /// MAIN2E3B6..2E3CF: confusion items have no success roll.
     func itemConfusionEffect(targetSlot:Int) throws -> OriginalStrategyTargetEffect {

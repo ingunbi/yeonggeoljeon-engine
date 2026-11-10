@@ -98,6 +98,7 @@ struct OriginalAttackOperation:Codable {
                 if d.position.x > a.position.x {session.units[contextAttackerSlot]!.scriptFlags &= ~UInt8(0x10)}
                 else if d.position.x < a.position.x {session.units[contextAttackerSlot]!.scriptFlags |= 0x10}
                 let effect = try session.physicalContext(attackerSlot:contextAttackerSlot,targetSlot:contextTargetSlot,subtype:subtype)
+                session.logPhysicalResult(effect,counter:false)
                 contexts.append(effect);continuation = .counterDecision;return .context(effect)
             case .counterDecision:
                 guard let primary = contexts.first,let target = session.units[contextTargetSlot] else {throw BattleError.unsupported("Original counter decision lost its context target")}
@@ -106,6 +107,7 @@ struct OriginalAttackOperation:Codable {
                     // HP, EXP/level and live morale are read by this producer.
                     let nextAttacker = contextTargetSlot,nextTarget = contextAttackerSlot
                     let effect = try session.physicalContext(attackerSlot:nextAttacker,targetSlot:nextTarget,subtype:7)
+                    session.logPhysicalResult(effect,counter:true)
                     contextAttackerSlot = nextAttacker;contextTargetSlot = nextTarget
                     contexts.append(effect);continuation = .counterRetirement;return .context(effect)
                 }
@@ -140,7 +142,10 @@ struct OriginalAttackOperation:Codable {
         let cursor = session.retirements.count,person = try session.retireContextTarget(contextTargetSlot)
         let notice = session.retirements.dropFirst(cursor).first
         retirementChecks.append(OriginalAttackRetirementCheck(runtimeSlot:contextTargetSlot,queriedPerson:unit.person,retiredPerson:person,notice:notice))
-        if let notice {pendingRetirement = OriginalAttackPendingRetirement(checkIndex:retirementChecks.count-1,notice:notice)}
+        if let notice {
+            session.logRetirementResult(notice)
+            pendingRetirement = OriginalAttackPendingRetirement(checkIndex:retirementChecks.count-1,notice:notice)
+        }
         return notice
     }
 }

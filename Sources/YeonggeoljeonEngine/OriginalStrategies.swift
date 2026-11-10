@@ -19,6 +19,9 @@ struct OriginalStrategyTargetEffect: Codable {
     var ambush: Bool? = nil
     /// The target was confused before this effect (MAIN2D57D).
     var wasConfused: Bool? = nil
+    /// Actual signed morale change when a result has no damage/healing payload.
+    /// Optional so previously saved operation effects remain readable.
+    var moraleChange:Int? = nil
 }
 
 struct OriginalStrategyExecution: Codable {

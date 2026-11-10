@@ -13,6 +13,10 @@ struct OriginalSettings:Codable,Equatable {
     var moveSpeed = 0
     /// 본다 or 안 본다 (high nibble). Zero asks for the enlarged combat view.
     var unitCombat = 0
+    /// Engine-only presentation choice. The legacy unitCombat nibble remains
+    /// untouched because physicalPrelude consumes source RNG according to it.
+    var combatPresentationMode:CombatPresentationPolicy.Mode = .all
+    var showDuelPresentation = true
     /// Bit 0x1000: the camera follows enemy moves (MAIN2C4D6). The source
     /// starts with it clear; the engine window starts with it set.
     var enemyMove = true
@@ -26,6 +30,12 @@ struct OriginalSettings:Codable,Equatable {
     static let scrollSteps = [1,2,4,8]
     /// Engine addition: a shown line closes by itself (see DialoguePace),
     /// at one of DialoguePace.speedLabels.
+    var showResumeBrief = true
+    var pauseInBackground = true
+    var controls = AppControlPreferences()
+    var tutorials = TutorialGuidance.Preferences()
+    var eventHintLevel = ReviewedEventHints.Level.off
+    var eventHintCatalogPath:String? = nil
     var autoAdvance = false
     var autoSpeed = 1
     /// Engine addition: battle presentation (walks, effects, the enlarged
@@ -39,7 +49,7 @@ struct OriginalSettings:Codable,Equatable {
     static let currentRevision = 1
     var revision = Self.currentRevision
 
-    private enum CodingKeys:String,CodingKey { case speed,moveSpeed,unitCombat,enemyMove,monochrome,volume,scroll,autoAdvance,autoSpeed,battlePace,revision }
+    private enum CodingKeys:String,CodingKey { case speed,moveSpeed,unitCombat,enemyMove,monochrome,volume,scroll,autoAdvance,autoSpeed,battlePace,revision,pauseInBackground,showResumeBrief,combatPresentationMode,showDuelPresentation,controls,tutorials,eventHintLevel,eventHintCatalogPath }
     init() {}
     /// Settings stored by an older build keep their values; a missing key takes its default.
     init(from decoder:Decoder) throws {
@@ -47,11 +57,20 @@ struct OriginalSettings:Codable,Equatable {
         speed = try values.decodeIfPresent(Int.self,forKey:.speed) ?? blank.speed
         moveSpeed = try values.decodeIfPresent(Int.self,forKey:.moveSpeed) ?? blank.moveSpeed
         unitCombat = try values.decodeIfPresent(Int.self,forKey:.unitCombat) ?? blank.unitCombat
+        let storedMode = try values.decodeIfPresent(String.self,forKey:.combatPresentationMode)
+        combatPresentationMode = storedMode.flatMap(CombatPresentationPolicy.Mode.init(rawValue:)) ?? (unitCombat == 0 ? .all : .none)
+        showDuelPresentation = try values.decodeIfPresent(Bool.self,forKey:.showDuelPresentation) ?? blank.showDuelPresentation
         enemyMove = try values.decodeIfPresent(Bool.self,forKey:.enemyMove) ?? blank.enemyMove
         if (try values.decodeIfPresent(Int.self,forKey:.revision) ?? 0) < 1 { enemyMove = true }
         monochrome = try values.decodeIfPresent(Bool.self,forKey:.monochrome) ?? blank.monochrome
         volume = try values.decodeIfPresent(Float.self,forKey:.volume) ?? blank.volume
         scroll = try values.decodeIfPresent(Int.self,forKey:.scroll).flatMap { Self.scrollSteps.contains($0) ? $0 : nil } ?? blank.scroll
+        showResumeBrief = try values.decodeIfPresent(Bool.self,forKey:.showResumeBrief) ?? blank.showResumeBrief
+        pauseInBackground = try values.decodeIfPresent(Bool.self,forKey:.pauseInBackground) ?? blank.pauseInBackground
+        controls = (try? values.decodeIfPresent(AppControlPreferences.self,forKey:.controls)) ?? blank.controls
+        tutorials = (try? values.decodeIfPresent(TutorialGuidance.Preferences.self,forKey:.tutorials)) ?? blank.tutorials
+        eventHintLevel = (try? values.decodeIfPresent(ReviewedEventHints.Level.self,forKey:.eventHintLevel)) ?? .off
+        eventHintCatalogPath = (try? values.decodeIfPresent(String.self,forKey:.eventHintCatalogPath)).flatMap { $0.hasPrefix("/") && $0.count <= 4096 ? $0 : nil }
         autoAdvance = try values.decodeIfPresent(Bool.self,forKey:.autoAdvance) ?? blank.autoAdvance
         autoSpeed = try values.decodeIfPresent(Int.self,forKey:.autoSpeed).flatMap { DialoguePace.speedLabels.indices.contains($0) ? $0 : nil } ?? blank.autoSpeed
         battlePace = try values.decodeIfPresent(Int.self,forKey:.battlePace).flatMap { Self.battlePaceRates.indices.contains($0) ? $0 : nil } ?? blank.battlePace
@@ -65,6 +84,7 @@ struct OriginalSettings:Codable,Equatable {
         set {
             guard let data = try? JSONEncoder().encode(newValue) else { return }
             UserDefaults.standard.set(data,forKey:key)
+            AppControlRuntime.update(newValue.controls)
             NotificationCenter.default.post(name:changed,object:nil)
         }
     }
@@ -73,6 +93,31 @@ struct OriginalSettings:Codable,Equatable {
     /// Field time runs at the source's step over the chosen one. 노웨이트
     /// has no wait at all, so it takes a short frame of the window's own.
     var timeScale:Double { speed == 0 ? 6 : 2/Double(speed) }
+}
+
+/// Modern labels explain which presentation changes. Stored source choices
+/// and all timing rules stay unchanged (MAIN2CBDD, 27DC4, 2C4D6).
+enum BattleSettingPresentation {
+    static func label(_ action:String,original:String) -> String {
+        switch action {
+        case "battle-pace":return "전투 재생 배속"
+        case "move-speed":return "지도 이동 속도"
+        case "unit-combat":return "확대 전투 연출"
+        case "enemy-move":return "적 이동 따라가기"
+        default:return original
+        }
+    }
+    static func help(_ action:String) -> String {
+        switch action {
+        case "battle-pace":return "전투 연출 전체의 재생 배속입니다.\n이동·공격·책략·일기토에 함께 적용됩니다."
+        case "move-speed":return "지도 위 걷기 속도입니다(1 느림 → 5 빠름).\n재생 배속도 함께 적용됩니다. 이동력은 그대로입니다."
+        case "unit-combat":return "확대 화면만 선택합니다. 생략한 결과는 지도에 표시합니다.\n중요 교전: 주력 장수·확정 격파·아군 병력 25% 이하."
+        case "duel-presentation":return "일기토 확대 연출을 표시합니다.\n생략해도 대사와 전투 결과는 그대로 진행됩니다."
+        case "enemy-move":return "적이 이동할 때 화면이 해당 부대를 따라갑니다.\n끄면 화면 밖 적의 이동 연출은 생략합니다."
+        case "auto":return "대사를 읽을 시간을 둔 뒤 자동으로 넘깁니다.\n선택지가 나오면 입력을 기다립니다."
+        default:return ""
+        }
+    }
 }
 
 /// Engine additions for reading pace. The source waits for a key on every
@@ -89,15 +134,21 @@ final class DialoguePace {
     private var loading = false
     private var observer:NSObjectProtocol?
     private init() {
-        reload()
+        // A view can already be observing before the first shared access.
+        // Publishing here would let it re-enter shared's once-only initializer.
+        reload(notifying:false)
         observer = NotificationCenter.default.addObserver(forName:OriginalSettings.changed,object:nil,queue:.main) { [weak self] _ in self?.reload() }
     }
-    private func reload() {
+    private func reload(notifying:Bool = true) {
         let value = OriginalSettings.current
+        let changed = auto != value.autoAdvance || speed != value.autoSpeed
         loading = true;auto = value.autoAdvance;speed = value.autoSpeed;loading = false
+        // Observers see the complete pair, never an intermediate setting.
+        if notifying && changed { post() }
     }
     private func persist() {
-        if !loading { var value = OriginalSettings.current;value.autoAdvance = auto;value.autoSpeed = speed;OriginalSettings.current = value }
+        guard !loading else { return }
+        var value = OriginalSettings.current;value.autoAdvance = auto;value.autoSpeed = speed;OriginalSettings.current = value
         post()
     }
     /// Lines close at once and time runs fast until the player has
@@ -111,36 +162,4 @@ final class DialoguePace {
         let pace = reading[min(max(0,speed),reading.count-1)]
         return min(pace.most,max(pace.least,pace.base+Double(text.count)*pace.perCharacter))
     }
-}
-
-/// Five native slots, as the original has five MSAVE files. They hold
-/// `OriginalCampaignResume` JSON; original slots are never read or written.
-struct OriginalSaveSlots {
-    static let count = 5
-    struct Entry:Codable,Equatable { var title:String;var date:Date }
-    let directory:URL
-    /// Engine slots beside the five: the autosave and the quick slot.
-    enum Named:String,CaseIterable { case auto,quick }
-    private func file(_ name:String) -> URL { directory.appendingPathComponent("\(name).json") }
-    private func label(_ name:String) -> URL { directory.appendingPathComponent("\(name).label.json") }
-    private func entry(_ name:String) -> Entry? {
-        guard FileManager.default.fileExists(atPath:file(name).path),let data = try? Data(contentsOf:label(name)) else { return nil }
-        return try? JSONDecoder().decode(Entry.self,from:data)
-    }
-    private func write<Snapshot:Encodable>(_ snapshot:Snapshot,title:String,name:String,date:Date) throws {
-        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
-        try JSONEncoder().encode(snapshot).write(to:file(name),options:.atomic)
-        try JSONEncoder().encode(Entry(title:title,date:date)).write(to:label(name),options:.atomic)
-    }
-    func entries() -> [Entry?] { (0..<Self.count).map { entry("slot-\($0)") } }
-    func write<Snapshot:Encodable>(_ snapshot:Snapshot,title:String,slot:Int,date:Date = Date()) throws {
-        guard (0..<Self.count).contains(slot) else { throw EngineError.invalid("Save slot is outside the five slots") }
-        try write(snapshot,title:title,name:"slot-\(slot)",date:date)
-    }
-    func read(slot:Int) throws -> OriginalCampaignResume { try OriginalCampaignResume.read(from:file("slot-\(slot)")) }
-    func entry(_ name:Named) -> Entry? { entry(name.rawValue) }
-    func write<Snapshot:Encodable>(_ snapshot:Snapshot,title:String,named name:Named,date:Date = Date()) throws {
-        try write(snapshot,title:title,name:name.rawValue,date:date)
-    }
-    func read(_ name:Named) throws -> OriginalCampaignResume { try OriginalCampaignResume.read(from:file(name.rawValue)) }
 }

@@ -610,17 +610,25 @@ extension OriginalAI {
         guard (0..<36).contains(abilityID),let categories = profile.strategyCategories,categories.count == 36 else {
             throw OriginalAIError.invalid("strategy range category/ability identity")
         }
-        let category = categories[abilityID],aggregate = category == 3,point = origin ?? actor.position
+        let friendly = categories[abilityID] == 3 || abilityID >= 21
+        return try strategyRangeCells(profile:profile,board:board,point:origin ?? actor.position,abilityID:abilityID).compactMap { cell -> Int? in
+            guard let target = board.occupant(cell),
+                  (target.sourceFaction == actor.sourceFaction) == friendly else { return nil }
+            return target.runtimeSlot
+        }
+    }
+    /// Shared range-only query; no target selection, random score or mutation.
+    static func strategyRangeCells(profile:OriginalMovementProfile,board:OriginalMovementBoard,point:GridPoint,abilityID:Int) throws -> [GridPoint] {
+        guard (0..<36).contains(abilityID),let categories = profile.strategyCategories,categories.count == 36 else {
+            throw OriginalAIError.invalid("strategy range category/ability identity")
+        }
+        let category = categories[abilityID],aggregate = category == 3
         let rangeCode = aggregate ? Int(UInt8(truncatingIfNeeded:(abilityID-30)%3)|0x80) : category|0x80
         if rangeCode == 255 { return [] }
         let friendly = aggregate || abilityID >= 21
         var cells = try rangeCells(profile:profile,board:board,point:point,raw:rangeCode)
         if friendly { cells.insert(point,at:0) }
-        return cells.compactMap { cell -> Int? in
-            guard let target = board.occupant(cell),
-                  (target.sourceFaction == actor.sourceFaction) == friendly else { return nil }
-            return target.runtimeSlot
-        }
+        return cells
     }
     /// D0FA retains ascending availability order, source range candidate order,
     /// RNG calls for every candidate, strict ties, and byte truncation after a

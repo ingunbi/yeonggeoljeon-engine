@@ -4,6 +4,8 @@ import Foundation
 /// CF5:3C5E over the map. Mode zero closes by itself, mode one waits for input.
 enum OriginalBattleNotice:Equatable {
     case ambush(friendly:Bool)
+    case counter(friendly:Bool)
+    case phase(enemy:Bool)
     case strategyFailed(person:Int)
     case level(person:Int,level:Int)
     case learned(abilities:[Int])
@@ -44,6 +46,8 @@ enum OriginalBattleCue:Equatable {
     case shot(from:GridPoint,to:GridPoint,stone:Bool)
     /// Half cells, so a clash can sit between two units (MAIN3213A).
     case effect(Int,halfX:Int,halfY:Int)
+    /// MAIN2858A..2871F (1CB6:502A): flashes a damage or recovery number on the map.
+    case number(slot:Int,value:Int,color:Int,passes:Int = 3)
     /// The enlarged view, held after the context has committed its result.
     case combat(OriginalCombatSnapshot)
     case notice(OriginalBattleNotice)
@@ -51,7 +55,7 @@ enum OriginalBattleCue:Equatable {
     var isPresentation:Bool {
         switch self {
         case .combat,.notice:return true
-        case .walk,.shot,.effect:return false
+        case .walk,.shot,.effect,.number:return false
         }
     }
 }
@@ -124,6 +128,7 @@ struct OriginalBattleAnimator {
         case .walk(_,let path,_):return Double(max(0,path.count-1))*cellSeconds
         case .shot(let from,let to,_):return Double(max(abs(to.x-from.x),abs(to.y-from.y))*32)/4*Self.tick
         case .effect(let index,_,_):return (index == 8 ? 2 : 4)*Self.frameTicks*Self.tick
+        case .number(_,_,_,let passes):return Double(max(1,passes))*18*Self.tick
         case .combat:return 0
         case .notice(let value):return noticeDismissed ? elapsed : value.waitsForInput ? .infinity : Self.noticeSeconds
         }
@@ -136,7 +141,7 @@ struct OriginalBattleAnimator {
             if index == 8 { return 41 }
             if index == 9 { return 37 }
             return index < effectSounds.count ? effectSounds[index] : nil
-        case .combat:return nil
+        case .number,.combat:return nil
         case .notice(let value):return value.sound
         }
     }
@@ -174,5 +179,11 @@ struct OriginalBattleAnimator {
         let dx = to.x-from.x,dy = to.y-from.y
         let frame = stone ? 4 : abs(dx) > abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0)
         return (frame,Double(from.x)+Double(dx)*fraction,Double(from.y)+Double(dy)*fraction)
+    }
+    /// MAIN2858A..2871F (1CB6:502A): twelve ticks visible and six blank per pass.
+    var number:(slot:Int,value:Int,color:Int,visible:Bool)? {
+        guard case .number(let slot,let value,let color,_)? = cues.first else { return nil }
+        let tickInPass = Int(elapsed/Self.tick)%18
+        return (slot,value,color,tickInPass < 12)
     }
 }

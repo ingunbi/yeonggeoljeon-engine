@@ -237,6 +237,7 @@ extension OriginalBattleSession {
                 guard let unit = units[slot],unit.status == 2 else {continue}
                 if slot < 15 && scriptValue24 != 0 {
                     let experience = try people.applyExperience(person:unit.person,gain:Int(scriptValue24))
+                    if experience.ignoredReason == nil { resultLog.totals.experience(person:unit.person,gain:Int(scriptValue24),victory:true) }
                     closingNotices += try levelNotices(person:unit.person,experience:experience)
                 }
                 units[slot]!.status = 1

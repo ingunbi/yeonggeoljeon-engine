@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
+import Foundation
+import CoreGraphics
+#if canImport(AppKit)
 import AppKit
+#endif
 
 /// Coordinates of MAIN's battle screen, in the 640×400 source canvas. The story
 /// producer reads them from checked MAIN writers; `source` lets the native view
@@ -36,12 +40,12 @@ struct OriginalBattleLayout:Codable,Equatable {
                               titleColumn:10,headingColumn:38,headerY:112,textColumn:12,textY:152,lineStep:32,lineWidth:34,lineEnd:216,
                               turnColumn:11,turnY:248),
         terrain:Terrain(size:[128,80],tile:[8,16,32,32],textX:48,headingY:16,percentY:36,nameY:56,percentWidth:64),followMargin:6)
-    /// The engine's own arrangement of the same parts: a slim top bar, fifteen
-    /// by twelve cells, and a sidebar with seven list rows, a unit card and the
-    /// small map. Only the map window's size differs in play.
+    /// The engine's arrangement reserves two header rows and a contextual
+    /// action bar around fifteen by ten cells. Rules and cell size are unchanged;
+    /// only the camera's visible extent differs from MAIN's screen.
     func modern(mapWidth:Int? = nil,mapHeight:Int? = nil) -> Self {
         var value = self
-        value.viewport = [0,16,480,384];value.functionButton = [0,0,56,16]
+        value.viewport = [0,48,480,320];value.functionButton = [6,25,52,20]
         value.sideButtons = [[488,32,72,20],[560,32,72,20]]
         value.list = UnitList(rect:[484,58,152,140],rowHeight:20,rows:7,nameColumn:61,statusColumn:69,textY:60,
                               gauge:[490,74,140,3],track:[633,58,3,140],hover:[484,152])
@@ -65,6 +69,38 @@ struct OriginalBattleLayout:Codable,Equatable {
     }
 }
 
+/// Engine presentation controls. Each action is routed back to the existing
+/// command routine; these rectangles are not original executable facts.
+enum BattlePlayerAction:Equatable {
+    case menu,conditions,threat,pace,nextUnit,endTurn,command,wait,confirmStrategy,cancel
+}
+struct BattleControlButton {
+    var action:BattlePlayerAction
+    var label:String
+    var rect:CGRect
+    var enabled:Bool
+    var primary = false
+}
+enum ModernBattleControls {
+    static let header = CGRect(x:0,y:0,width:480,height:48)
+    static let footer = CGRect(x:0,y:368,width:480,height:32)
+    static let cinematicViewport = CGRect(x:0,y:48,width:480,height:352)
+    static let title = CGRect(x:10,y:3,width:274,height:19)
+    static let turn = CGRect(x:290,y:3,width:184,height:19)
+    static let top:[(action:BattlePlayerAction,rect:CGRect)] = [
+        (.menu,CGRect(x:6,y:25,width:52,height:20)),
+        (.conditions,CGRect(x:62,y:25,width:68,height:20)),
+        (.threat,CGRect(x:134,y:25,width:68,height:20)),
+        (.pace,CGRect(x:206,y:25,width:68,height:20)),
+        (.nextUnit,CGRect(x:278,y:25,width:72,height:20)),
+        (.endTurn,CGRect(x:354,y:25,width:120,height:20))
+    ]
+    static let command = CGRect(x:174,y:372,width:136,height:24)
+    static let wait = CGRect(x:316,y:372,width:82,height:24)
+    static let confirm = CGRect(x:276,y:372,width:122,height:24)
+    static let cancel = CGRect(x:404,y:372,width:70,height:24)
+}
+
 struct OriginalBattleTexts:Codable,Equatable {
     var forces:[String]; var forceSuffix:String; var retired:String; var source:JSONValue?
 }
@@ -79,7 +115,7 @@ struct OriginalBattleParts:Codable,Equatable {
 
 struct OriginalBattleConditionTexts:Codable,Equatable {
     var titleFormat:String; var currentTurn:String; var turnLimit:String
-    var playerPhase:String; var heading:String; var chapterLabels:[String]; var source:JSONValue?
+    var playerPhase:String; var enemyPhase:String? = nil; var heading:String; var chapterLabels:[String]; var source:JSONValue?
 }
 
 struct OriginalBattleTerrainTexts:Codable,Equatable {
@@ -107,6 +143,7 @@ struct OriginalBattleCommands:Codable,Equatable {
             itemMessages.values.allSatisfy({ !$0.isEmpty }) && kindLabels.count == 4 && familyLabels.count == 3 &&
             classNames.count == 19 && terrainRefusals.count == 3 && conditions.chapterLabels.count == 5 &&
             ![conditions.titleFormat,conditions.currentTurn,conditions.turnLimit,conditions.playerPhase,conditions.heading].contains("") &&
+            conditions.enemyPhase?.isEmpty != true &&
             terrain.names.count == 20 && terrain.names.allSatisfy({ !$0.isEmpty }) &&
             ![terrain.defense,terrain.none,terrain.percent,terrain.recovery].contains("")
     }
@@ -205,9 +242,10 @@ enum OriginalBattleCommand {
     /// cannot pay for, and fire rows in rain, stay listed but disabled.
     static func strategyRows(classID:Int,level:Int,mp:UInt8,rain:Bool,levels:[[Int]],costs:[Int]) -> [StrategyRow] {
         // MAIN2DB64 skips the whole list for class 17.
-        guard classID != 17,levels.count == 36,costs.count == 36 else { return [] }
+        guard (0..<19).contains(classID),classID != 17,levels.count == 36,costs.count == 36,
+              levels.allSatisfy({$0.count == 19}) else { return [] }
         return (0..<36).filter { levels[$0][classID] <= level }.map { ability in
-            StrategyRow(ability:ability,cost:costs[ability],enabled:costs[ability] <= Int(mp) && !(ability < 5 && rain))
+            StrategyRow(ability:ability,cost:costs[ability],enabled:BattleAssistance.strategyReasons(ability:ability,cost:costs[ability],mp:mp,rain:rain).isEmpty)
         }
     }
 }
@@ -279,6 +317,7 @@ struct OriginalBattleGauge:Equatable {
 
 /// Images and texts of the battle screen, resolved from local story data.
 /// Without those facts the view keeps the layout on plain panels.
+#if canImport(AppKit)
 struct OriginalBattleStyle {
     var layout = OriginalBattleLayout.source
     var frame:CGImage?
@@ -316,3 +355,4 @@ struct OriginalBattleStyle {
         return style
     }
 }
+#endif

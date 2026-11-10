@@ -71,6 +71,7 @@ def title_menu(main: bytes) -> list[dict]:
 # Battle system menu (MAIN 27D12..27EA3): nine DS:3AA0 items.
 BATTLE_MENU_COUNT_AT, BATTLE_MENU_TABLE_AT, BATTLE_MENU_TABLE = 0x27D12, 0x27D21, 0x3AA0
 BATTLE_RETREAT_ITEM, BATTLE_QUIT_ITEM = 1, 8
+END_TURN_CONFIRM_CALL, END_TURN_AUTO_CALL, END_TURN_CONFIRM_POINTER_VAR = 0x27D65, 0x27F55, 0x3D1C
 RETREAT_CONFIRM_CALL, RETREAT_CONFIRM_POINTER_VAR = 0x27D83, 0x3D1E
 RETREAT_REFUSED_CALL, RETREAT_REFUSED_POINTER = 0x27DA6, 0x3D2E
 QUIT_CONFIRM_CALL, QUIT_CONFIRM_POINTER = 0x27E87, 0x3D4F
@@ -107,6 +108,14 @@ def battle_menu(main: bytes) -> dict:
         if paragraph != MAIN_DATA_PARAGRAPH:
             raise SceneError("MAIN.EXE battle menu item is outside the data segment")
         labels[item] = checked_text(main, offset, "battle menu item")
+    for call_at in (END_TURN_CONFIRM_CALL, END_TURN_AUTO_CALL):
+        end_call = span(main, call_at, 12, "MAIN.EXE")
+        if (end_call[0], end_call[1], end_call[2], end_call[5], end_call[6], end_call[7]) != (0x1E, 0xFF, 0x36, 0x6A, 2, 0x9A) or \
+                struct.unpack_from("<H", end_call, 3)[0] != END_TURN_CONFIRM_POINTER_VAR or \
+                struct.unpack_from("<HH", end_call, 8) != SELECTOR[::-1]:
+            raise SceneError("MAIN.EXE turn-end confirmation call does not match the examined profile")
+    end_pointer = struct.unpack_from("<H", span(main, MAIN_DATA_SEGMENT + END_TURN_CONFIRM_POINTER_VAR, 2, "MAIN.EXE"))[0]
+    end_text, end_source = checked_text(main, end_pointer, "turn-end confirmation")
     # push ds; push word [3D1E]; push 2; far call CF5:3C5E
     call = span(main, RETREAT_CONFIRM_CALL, 12, "MAIN.EXE")
     if (call[0], call[1], call[2], call[5], call[6], call[7]) != (0x1E, 0xFF, 0x36, 0x6A, 2, 0x9A) or \
@@ -126,6 +135,10 @@ def battle_menu(main: bytes) -> dict:
             raise SceneError("MAIN.EXE battle menu result write does not match the examined profile")
     return {"items": [{"index": item, "text": labels[item][0], "action": BATTLE_MENU_ACTIONS[item],
                        "textSource": labels[item][1]} for item in range(BATTLE_MENU_COUNT)],
+            "endTurnConfirm": {"text": end_text, "textSource": end_source,
+                               "callSource": source_span("MAIN.EXE", main, END_TURN_CONFIRM_CALL, 12),
+                               "autoCallSource": source_span("MAIN.EXE", main, END_TURN_AUTO_CALL, 12),
+                               "selectorMode": 2, "yesResult": 1, "noResult": 0, "presentationOrder": [1, 0]},
             "retreat": {"label": labels[BATTLE_RETREAT_ITEM][0], "labelSource": labels[BATTLE_RETREAT_ITEM][1],
                         "confirm": {"text": retreat_text, "textSource": retreat_source,
                                     "callSource": source_span("MAIN.EXE", main, RETREAT_CONFIRM_CALL, 12),

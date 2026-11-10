@@ -59,6 +59,11 @@ func originalIntegrationSelfTests() throws {
     let blow = try forecasting.physicalContext(attackerSlot:0,targetSlot:15,subtype:0)
     try check(forecast.damage == blow.strike.damage && forecast.moraleLoss == blow.strike.moraleLoss,"the forecast matches the blow")
     try check(forecast.counterPercent == min(150,try forecastPeople.person(1).attackScalar)*100/150,"the counter chance reads the defender's attack scalar")
+    let rngAfterBlow = forecasting.rng
+    let stratForecast = try forecasting.strategyForecast(0,abilityID:0,target:15)
+    let itemForecast = try forecasting.itemForecast(0,item:0x21,target:15)
+    try check(!stratForecast.isEmpty && stratForecast.contains("%") && itemForecast.hasPrefix("-") && forecasting.rng == rngAfterBlow,
+              "strategy and item forecasts summarize base effect without advancing the battle RNG")
     var lineRoster = OriginalRoster();lineRoster.header = header
     lineRoster.slots[0] = placements[0];lineRoster.slots[0].x = 0;lineRoster.slots[0].y = 0
     lineRoster.slots[1] = placements[2];lineRoster.slots[1].x = 8;lineRoster.slots[1].y = 0

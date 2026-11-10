@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+private typealias NSFont = UIFont
+private typealias NSColor = UIColor
+#endif
 import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 
 struct ActorRenderProof: Codable {
     var person: Int; var frame: Int; var flip: Bool
@@ -10,9 +18,11 @@ struct ActorRenderProof: Codable {
 struct RenderedFrame {
     var image: CGImage; var checksum: String; var actors: [ActorRenderProof]
     func writePNG(_ path: URL) throws {
-        let rep = NSBitmapImageRep(cgImage:image)
-        guard let bytes = rep.representation(using:.png,properties:[:]) else { throw EngineError.invalid("PNG encoding failed") }
-        try bytes.write(to:path,options:.atomic)
+        let bytes = NSMutableData()
+        guard let output = CGImageDestinationCreateWithData(bytes,UTType.png.identifier as CFString,1,nil) else {throw EngineError.invalid("PNG encoding failed")}
+        CGImageDestinationAddImage(output,image,nil)
+        guard CGImageDestinationFinalize(output) else {throw EngineError.invalid("PNG encoding failed")}
+        try (bytes as Data).write(to:path,options:.atomic)
     }
 }
 
@@ -71,7 +81,7 @@ final class Renderer {
     private func load(_ path: String) throws -> CGImage {
         if let image = images[path] { return image }
         let url = try data.containedFile(path)
-        guard let image = NSBitmapImageRep(data:try Data(contentsOf:url))?.cgImage else {
+        guard let source = CGImageSourceCreateWithData(try Data(contentsOf:url) as CFData,nil),let image = CGImageSourceCreateImageAtIndex(source,0,nil) else {
             throw EngineError.invalid("Cannot decode image: \(path)")
         }
         images[path] = image; return image
@@ -211,13 +221,19 @@ final class Renderer {
             }
             context.restoreGState()
         }
+        #if canImport(AppKit)
         let graphics = NSGraphicsContext(cgContext:context,flipped:true)
+        #endif
         if let panel = runtime.storyPanel {
             let picture = try load(panel.image)
             guard picture.width == 224,picture.height == 144 else { throw EngineError.invalid("Original story figure does not match the source panel dimensions") }
             Self.image(picture,in:CGRect(x:160,y:40,width:224,height:144),context:context)
         }
+        #if canImport(AppKit)
         NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = graphics
+        #else
+        UIGraphicsPushContext(context)
+        #endif
         if let screen = framed {
             // CF5:51B2 draws portrait0 at its HUD slot; source0B captions go to
             // DS:DB4C, printed in the lower-left box (MAIN1FC5E..1FC8E).
@@ -273,7 +289,11 @@ final class Renderer {
             }
             text(message,rect:CGRect(x:28,y:350,width:580,height:40))
         }
+        #if canImport(AppKit)
         NSGraphicsContext.restoreGraphicsState()
+        #else
+        UIGraphicsPopContext()
+        #endif
         if runtime.blackAlpha > 0 {
             context.setFillColor(CGColor(gray:0,alpha:runtime.blackAlpha)); context.fill(CGRect(x:0,y:0,width:640,height:400))
         }

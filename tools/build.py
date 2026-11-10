@@ -100,7 +100,9 @@ def install_copy(app: Path, parent: Path) -> Path:
             # A ZIP backup cannot register another executable .app with macOS.
             run("/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent",
                 str(target), str(backup))
-            with zipfile.ZipFile(backup, metadata_encoding="utf-8") as archive:
+            # CRC verification does not depend on a filename-encoding override.
+            # Keep this compatible with macOS's system Python 3.9.
+            with zipfile.ZipFile(backup) as archive:
                 if archive.testzip() is not None:
                     raise ValueError("previous app backup failed ZIP verification")
             rollback = temp / "previous-bundle"
@@ -173,7 +175,8 @@ def main() -> None:
             contents = path.read_bytes()
             (native_stage / path.name).write_bytes(contents)
             native_sources[path.name] = hashlib.sha256(contents).hexdigest()
-        run("xcrun", "swiftc", "-swift-version", "5", "-target", "arm64-apple-macos13.0", "-O", *map(str, sorted(native_stage.glob("*.swift"))),
+        run("xcrun", "swiftc", "-swift-version", "5", "-target", "arm64-apple-macos13.0",
+            "-module-cache-path", str(BUILD / "ModuleCache"), "-O", *map(str, sorted(native_stage.glob("*.swift"))),
             "-framework", "AppKit", "-o", str(executable))
         info = {"CFBundleIdentifier": "org.yeonggeoljeon.engine.research",
                 "CFBundleName": "영걸전 엔진",

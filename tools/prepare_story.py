@@ -185,7 +185,7 @@ CONDITION_SHAPES = {
     "headingText": (0x27916, "688f3c"), "objective": (0x2795B, "68dcd4 9ada0eb61c"),
 }
 CONDITION_TEXTS = {"titleFormat": (0x278E1, 0x3C82), "currentTurn": (0x279B0, 0x3C98), "turnLimit": (0x279C7, 0x3CB0),
-                   "playerPhase": (0x27ADD, 0x3D20)}
+                   "playerPhase": (0x27ADD, 0x3D20), "enemyPhase": (0x274AE, 0x3BA8)}
 OK_BUTTON = 0x19F0
 # Terrain window (MAIN 0x2A5F4..0x2A8C6), opened by a click on an empty cell.
 TERRAIN_WINDOW_SHAPES = {
@@ -280,7 +280,8 @@ def battle_conditions(main: bytes) -> dict:
             raise ResourceError(f"MAIN conditions text {name} at {at:#x} does not match the examined profile")
         texts[name] = data_text(main, pointer)
     return {**texts, "heading": data_text(main, 0x3C8F), "chapterLabels": near_texts(main, 0x3C78, 5),
-            "source": {"window": "MAIN.EXE:0x27876..0x27A3A", "phaseNotice": "MAIN.EXE:0x27AC6..0x27AE8"}}
+            "source": {"window": "MAIN.EXE:0x27876..0x27A3A", "phaseNotice": "MAIN.EXE:0x27AC6..0x27AE8",
+                       "enemyPhaseNotice": "MAIN.EXE:0x274A8..0x274B9"}}
 
 
 def battle_terrain(main: bytes) -> dict:

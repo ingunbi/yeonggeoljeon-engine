@@ -1,8 +1,9 @@
 # Yeonggeoljeon Engine
 
 Develop the engine from original-game observations and source-bound format
-research. Keep the former Eiketsuden Reloaded fork separate. Do not import its
-code, generated content packs, saves, or substitute art into this repository.
+research. The former Eiketsuden Reloaded fork is outside this project's scope.
+Do not inspect it or use it as an implementation reference. Do not reuse any of
+its code, generated content packs, saves, or substitute art in this repository.
 Record analysis references and distinguish static derivation from runtime
 comparison. Do not claim an isolated clean-room process.
 

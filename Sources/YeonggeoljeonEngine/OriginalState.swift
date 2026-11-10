@@ -131,11 +131,14 @@ final class OriginalPeople {
         }
     }
     /// MAIN23289..232BC: joined people of the first person's force, in person order.
+    static func isCompanion(flags:Int,leaderFlags:Int) -> Bool {
+        flags&31 == leaderFlags&31 && flags&0x80 != 0
+    }
     func companions() throws -> [Int] {
-        let force = try person(0).sourceFlags&31
+        let leaderFlags = try person(0).sourceFlags
         return try (0..<384).filter {
             let flags = try person($0).sourceFlags
-            return flags&31 == force && flags&0x80 != 0
+            return Self.isCompanion(flags:flags,leaderFlags:leaderFlags)
         }
     }
     /// CF5:7590 writes one inventory slot; 255 clears it.

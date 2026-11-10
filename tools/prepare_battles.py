@@ -161,6 +161,70 @@ def placement_units(operands: bytes, opcode: int, source: dict, people: bytes) -
     return known, conditional, metadata
 
 
+def tile_atlas(tiles: list[IndexedImage], columns: int = 16) -> IndexedImage:
+    """Pack exact source 16px tiles; unused trailing cells are not valid tile IDs."""
+    if not tiles or len(tiles) > 256 or not 1 <= columns <= 16:
+        raise ResourceError("battle atlas tile count/columns are outside source bounds")
+    if any(t.width != 16 or t.height != 16 or len(t.pixels) != 256 for t in tiles):
+        raise ResourceError("battle atlas requires complete 16x16 source tiles")
+    width, height = columns * 16, ((len(tiles) + columns - 1) // columns) * 16
+    pixels = bytearray(width * height)
+    for index, tile in enumerate(tiles):
+        paint(pixels, width, height, tile, (index % columns) * 16, (index // columns) * 16)
+    return IndexedImage(width, height, bytes(pixels))
+
+
+def export_atlases(game: Path, output: Path, main: bytes) -> dict:
+    carrier, identity = read_resource(game, "HEXZCHP.R3")
+    archive = Archive(carrier, "HEXZCHP.R3")
+    if len(archive) != 3:
+        raise ResourceError("examined battle atlas requires three source banks")
+    banks = [archive.decode(i) for i in range(3)]
+    if [len(bank.data) for bank in banks] != [10240, 22272, 22400]:
+        raise ResourceError("battle atlas banks differ from the examined loader")
+    alternate = set(struct.unpack_from("<19H", main, 0x37DA0 + 0x3DCC))
+    colors = palette_at(main, 0x38DF0 + 3 * 48)
+    atlases = []
+    (output / "images").mkdir(parents=True, exist_ok=True)
+    for bank_id in (1, 2):
+        raw = banks[0].data + banks[bank_id].data
+        tiles = [planar_image(raw[i:i + 128], 16, 16) for i in range(0, len(raw), 128)]
+        png = png_bytes(tile_atlas(tiles), colors)
+        image = f"images/battle-tiles-{bank_id}.png"
+        (output / image).write_bytes(png)
+        atlases.append({"id": str(bank_id), "image": image, "tileCount": len(tiles), "columns": 16,
+                        "sha256": hashlib.sha256(png).hexdigest(),
+                        "source": {"commonBank": banks[0].provenance(), "selectedBank": banks[bank_id].provenance(),
+                                   "tileSources": [{"member": 0 if i < 80 else bank_id,
+                                                    "decodedOffset": (i if i < 80 else i - 80) * 128,
+                                                    "length": 128} for i in range(len(tiles))],
+                                   "paletteOffset": 0x38DF0 + 3 * 48}})
+    result = {"format": 1, "tileSize": 16, "atlases": atlases,
+              "mapImages": {f"images/battle-map-{i:02}.png": str(2 if i in alternate else 1) for i in range(58)},
+              "provenance": {"source": identity, "mainSha256": hashlib.sha256(main).hexdigest(),
+                             "selectorTableOffset": 0x37DA0 + 0x3DCC,
+                             "method": "static tile decoding; not original DOS framebuffer comparison"}}
+    (output / "battle-tile-atlases.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return result
+
+
+def prepare_atlases(game: Path, output: Path) -> dict:
+    """Optional local-only extension; never rewrites maps, campaign, or saves."""
+    game, output = game.resolve(), output.resolve()
+    if output == game or game in output.parents:
+        raise ResourceError("battle atlas output must be outside the original directory")
+    before = inventory(game)
+    main, _ = read_resource(game, "MAIN.EXE")
+    if hashlib.sha256(main).hexdigest() != EXAMINED_MAIN:
+        raise ResourceError("MAIN does not match the examined battle profile")
+    result = export_atlases(game, output, main)
+    if before != inventory(game):
+        raise ResourceError("original files changed during atlas extraction")
+    result["provenance"]["originalHashesPreserved"] = True
+    (output / "battle-tile-atlases.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return result
+
+
 def export_maps(game: Path, output: Path, main: bytes) -> tuple[list, list]:
     carrier, _ = read_resource(game, "HEXZMAP.R3")
     archive = Archive(carrier, "HEXZMAP.R3")
@@ -229,6 +293,7 @@ def prepare(game: Path, output: Path) -> dict:
     people, _ = read_resource(game, "BAKDATA.R3")
     output.mkdir(parents=True, exist_ok=True)
     maps, limitations = export_maps(game, output, main)
+    export_atlases(game, output, main)
     definitions, failures, sources = [], [], []
     for chapter in range(5):
         resource = f"SNR{chapter}D.R3"
@@ -318,12 +383,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--atlas-only", action="store_true", help="write only optional battle atlas PNGs/metadata")
     args = parser.parse_args()
     try:
-        result = prepare(args.game_dir, args.output)
+        result = prepare_atlases(args.game_dir, args.output) if args.atlas_only else prepare(args.game_dir, args.output)
     except (OSError, ResourceError, SceneError) as error:
         print(f"battle preparation failed: {error}", file=sys.stderr)
         return 1
+    if args.atlas_only:
+        print(json.dumps({"atlases": len(result["atlases"]), "originalHashesPreserved": result["provenance"]["originalHashesPreserved"]}))
+        return 0
     print(json.dumps({"battles": len(result["battles"]), "maps": len(result["maps"]),
                       "framingFailures": len(result["provenance"]["framingFailures"]),
                       "originalHashesPreserved": result["provenance"]["originalHashesPreserved"]}))

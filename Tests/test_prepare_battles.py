@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from prepare_battles import battle_identity_map, map_names, map_record, minimap_image, placement_units, prepare, tile_colors
+from prepare_battles import battle_identity_map, map_names, map_record, minimap_image, placement_units, prepare, tile_colors, tile_atlas, prepare_atlases
 from prepare_scene import SceneError
 from resource_formats import IndexedImage, ResourceError
 
@@ -34,6 +34,24 @@ def roster(opcode, records, side=0):
 
 
 class BattleExtractionTests(unittest.TestCase):
+    def test_atlas_preserves_tile_rows_and_last_partial_row(self):
+        tiles = [IndexedImage(16, 16, bytes([i]) * 256) for i in range(3)]
+        atlas = tile_atlas(tiles, columns=2)
+        self.assertEqual((atlas.width, atlas.height), (32, 32))
+        self.assertEqual(atlas.pixels[0:32], bytes(16) + bytes([1]) * 16)
+        self.assertEqual(atlas.pixels[16*32:17*32], bytes([2]) * 16 + bytes(16))
+        self.assertEqual(atlas.pixels[31*32:32*32], bytes([2]) * 16 + bytes(16))
+
+    def test_atlas_rejects_incomplete_or_unbounded_source_tiles(self):
+        for tiles, columns in [([], 16), ([IndexedImage(8, 32, bytes(256))], 16),
+                                ([IndexedImage(16, 16, bytes(256))] * 257, 16),
+                                ([IndexedImage(16, 16, bytes(256))], 0)]:
+            with self.assertRaises(ResourceError):
+                tile_atlas(tiles, columns)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ResourceError):
+                prepare_atlases(Path(directory), Path(directory) / "output")
+
     def test_shared_source_sites_own_one_stable_identity(self):
         self.assertEqual(battle_identity_map(1, 2, 3, [500, 200, 500]),
                          {200: "1:2:3", 500: "1:2:3:1"})

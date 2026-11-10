@@ -126,12 +126,24 @@ func originalScriptActionSelfTests() throws {
     map.units[0]!.preferredTarget = 15;map.units[0]!.orderMode = 0
     map.units[1]!.preferredTarget = 15;map.units[1]!.orderMode = 4
     let beforeHP = try map.people.person(5).rawTroops
+    let beforeRemovalRNG = map.rng
     _ = try map.applyScriptMapCommand(Command("remove",person:5),roster:setup)
     try check(map.units[15]!.status == 4 && map.units[15]!.scriptFlags&4 == 0 && map.objectiveEvents.isEmpty,
         "scripted removal retires an active slot while suppressing its native objective/death effects")
     try check(map.units[0]!.preferredTarget == nil && map.units[0]!.orderMode == 1 && map.units[1]!.preferredTarget == 15,
         "scripted retirement clears cached references only for source order0")
     try check(try map.people.person(5).rawTroops == beforeHP,"scripted removal does not invent troop damage")
+    try check(map.resultLog.totals.retiredPeople == [5] && map.resultLog.entries.count == 1 &&
+              map.resultLog.entries[0].action == .retirement && map.rng == beforeRemovalRNG && map.retirements.isEmpty,
+              "public script removal adds one confirmed native retirement without source notices or RNG draws")
+    let removedLog = map.resultLog
+    _ = try map.applyScriptMapCommand(Command("remove",person:5),roster:setup)
+    try check(map.resultLog == removedLog,"repeated removal of the inactive unit cannot duplicate its retirement")
+    let hiddenRemoval = try scriptActionFixture()
+    hiddenRemoval.units[15]!.scriptFlags &= ~UInt8(0x20)
+    _ = try hiddenRemoval.applyScriptMapCommand(Command("remove",person:5),roster:setup)
+    try check(hiddenRemoval.units[15]!.status == 4 && hiddenRemoval.resultLog.entries.isEmpty && hiddenRemoval.resultLog.totals.retiredPeople.isEmpty,
+              "hidden scripted removal cannot reveal an enemy through a name or anonymous log row")
     map.units[0]!.status = 1;map.units[1]!.status = 2
     let firstAlias = try map.applyScriptMapCommand(Command("move",person:0,x:4,y:4,facing:3),roster:setup)
     try check(firstAlias.movementPath == nil && map.units[0]!.goal == GridPoint(x:4,y:4) && map.units[1]!.position == GridPoint(x:1,y:2),

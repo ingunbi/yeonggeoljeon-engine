@@ -50,12 +50,48 @@ final class OriginalBattleSession {
     var sourceOptionsWord:Int = 0 // MAIN1A423 initial object+4; saved/user settings are separate.
     private(set) var exchanges:[OriginalStrikeExchange] = []
     private(set) var strategyExecutions:[OriginalStrategyExecution] = []
+    var resultLog = BattleResultLog()
+    var restoredSourceOptions = false
     var objectiveEvents:[OriginalCampaignEvent] = []
     /// Source sound numbers from script actions, for the window to drain.
     var scriptSounds:[Int] = []
     private(set) var retirements:[OriginalRetirementNotice] = []
     private var nextRetirementSequence = 0
     private var movementOrigins:[Int:GridPoint] = [:]
+    var pendingMovementSlots:[Int] { movementOrigins.keys.sorted() }
+    /// A rebuilt flow must not dispatch already completed retirement events.
+    private(set) var resumedRetirementsDelivered = 0
+
+    func suspensionState() -> OriginalBattleSuspension {
+        OriginalBattleSuspension(battleID:definition.id,terrain:terrain,pictureTiles:pictureTiles,scriptActions:scriptActions,
+            movementOrigins:movementOrigins,retirements:retirements,nextRetirementSequence:nextRetirementSequence,
+            exchanges:exchanges,strategyExecutions:strategyExecutions,objectiveEvents:objectiveEvents,
+            sourceOptionsWord:sourceOptionsWord,scriptSounds:scriptSounds,resultLog:resultLog)
+    }
+    func restoreSuspension(_ saved:OriginalCampaignCheckpoint,state:OriginalBattleSuspension) throws {
+        let start = OriginalBattleStartResume(battleID:state.battleID,terrain:state.terrain,pictureTiles:state.pictureTiles,scriptActions:state.scriptActions)
+        try start.restoreState(saved,in:self,beforeFirstTurn:false)
+        try state.resultLog?.validate()
+        guard (0...65535).contains(state.sourceOptionsWord),state.nextRetirementSequence >= 0,
+              (state.nextRetirementSequence < Int.max),state.retirements.count <= 65536,
+              Set(state.retirements.map(\.sequence)).count == state.retirements.count,
+              state.retirements.allSatisfy({ $0.sequence >= 0 && $0.sequence < state.nextRetirementSequence &&
+                  (0..<45).contains($0.runtimeSlot) && (0..<384).contains($0.person) }),
+              state.movementOrigins.allSatisfy({ slot,point in
+                  guard let unit = units[slot] else { return false }
+                  return slot < 15 && unit.status == 2 && unit.scriptFlags&0x40 != 0 && unit.scriptFlags&0x80 == 0 &&
+                      (0..<width).contains(point.x) && (0..<height).contains(point.y)
+              }),state.scriptSounds.allSatisfy({(0...255).contains($0)}) else {
+            throw EngineError.invalid("Native suspension has an invalid battle continuation")
+        }
+        movementOrigins = state.movementOrigins;retirements = state.retirements;nextRetirementSequence = state.nextRetirementSequence
+        exchanges = state.exchanges;strategyExecutions = state.strategyExecutions;objectiveEvents = state.objectiveEvents
+        sourceOptionsWord = state.sourceOptionsWord;scriptSounds = state.scriptSounds
+        resultLog = state.resultLog ?? BattleResultLog()
+        if state.resultLog == nil { resultLog.totals.complete = false }
+        restoredSourceOptions = true
+        resumedRetirementsDelivered = retirements.count
+    }
     private func movementFacing(_ flags:UInt8,path:[GridPoint]) throws -> UInt8 {
         guard path.count >= 2 else { return flags }
         let a = path[path.count-2],b = path[path.count-1]
@@ -262,6 +298,7 @@ final class OriginalBattleSession {
         }
         let before = try people.person(attacker.person).experience
         let experience = try people.applyExperience(person:attacker.person,gain:gain.total)
+        if experience.ignoredReason == nil { resultLog.totals.experience(person:attacker.person,gain:gain.total,victory:false) }
         let combat = try combatSnapshot(kind:1,subtype:subtype,attackerSlot:attackerSlot,targetSlot:targetSlot,attacker:a,defender:d,
             attackValue:strike.attack,defenseValue:strike.defense,damage:strike.damage,moraleLoss:strike.moraleLoss,
             experience:before,gain:gain.total)
@@ -386,6 +423,83 @@ extension OriginalBattleSession {
         let counters = strike.counterRoll != nil && [0,2,5].contains(subtype) && strike.damage < d.troops && target.scriptFlags&2 == 0
         return OriginalAttackForecast(damage:strike.damage,moraleLoss:strike.moraleLoss,defeats:strike.damage >= d.troops,
                                       counterPercent:counters ? min(150,max(0,d.attackScalar))*100/150 : 0)
+    }
+    /// Engine addition: base effect and hit rate for a strategy target, from
+    /// MAIN315ED, 2D80A, 2EC00 and 2EE20 without advancing the battle RNG.
+    func strategyForecast(_ casterSlot:Int,abilityID:Int,target targetSlot:Int) throws -> String {
+        let caster = try live(casterSlot),target = try live(targetSlot)
+        guard let categories = movement.strategyCategories,categories.indices.contains(abilityID) else { return "" }
+        let a = try people.stats(caster.person,morale:caster.morale),d = try people.stats(target.person,morale:target.morale)
+        let category = categories[abilityID]
+        func hitPercent(_ denominator:Int) -> Int {
+            let bound = a.intellectScalar+a.level*a.intellectScalar/100
+            guard bound > 0 else { return 0 }
+            var threshold = (d.intellectScalar+d.level*d.intellectScalar/100)/denominator
+            if [12,15,18].contains(d.classID) { threshold = Int(UInt16(truncatingIfNeeded:threshold*2)) }
+            return max(0,min(100,(bound-1-threshold)*100/bound))
+        }
+        if abilityID < 15 {
+            let family = abilityID/5,coefficient = (4*category+family+2)*100
+            let offense = 2*(a.intellectScalar+a.level*a.intellectScalar/50),defense = d.intellectScalar+d.level*d.intellectScalar/50
+            var damage = Int(UInt16(truncatingIfNeeded:offense-defense+coefficient))
+            if [12,15,18].contains(d.classID) { damage /= 2 }
+            let terrainID = Int(terrain[target.position.y*width+target.position.x])
+            if (family == 0 && terrainID == 1) || (family == 1 && combat.strategyEnvironmentLookup[Int(turns.weatherIndex)] == 2) {
+                damage += damage/4
+            }
+            let loss = min(d.troops,max(0,damage)),hit = hitPercent(4)
+            return loss >= d.troops ? "-\(loss) 격파 · \(hit)%" : "-\(loss) · \(hit)%"
+        }
+        if abilityID <= 17 { return "혼란 \(hitPercent(2))%" }
+        if abilityID <= 20 {
+            let loss = try OriginalCombat.moraleStrategyAmount(casterLevel:a.level,targetLevel:d.level,category:category,targetMorale:d.morale)
+            return "사기 -\(loss) · \(hitPercent(4))%"
+        }
+        let flags = abilityID >= 30 ? (abilityID > 32 ? 1 : 2) : (abilityID >= 27 ? 3 : abilityID >= 24 ? 1 : 2)
+        let high = abilityID >= 30 ? (abilityID-30)%3 : category
+        return try healingForecast(caster:a,target:d,conditionFlags:Int(target.scriptFlags),high:high,flags:flags)
+    }
+    /// Engine addition: base effect for an item target (MAIN315ED, 2E3B6, 2E5DA, 2EE20).
+    func itemForecast(_ userSlot:Int,item:Int,target targetSlot:Int) throws -> String {
+        _ = try live(userSlot)
+        let target = try live(targetSlot),d = try people.stats(target.person,morale:target.morale)
+        switch OriginalItemUse.of(item) {
+        case .attack(let family,let power):
+            let coefficient = (4*power+family+2)*100,defense = d.intellectScalar+d.level*d.intellectScalar/50
+            var damage = Int(UInt16(truncatingIfNeeded:coefficient-defense))
+            if [12,15,18].contains(d.classID) { damage /= 2 }
+            let terrainID = Int(terrain[target.position.y*width+target.position.x])
+            if (family == 0 && terrainID == 1) || (family == 1 && combat.strategyEnvironmentLookup[Int(turns.weatherIndex)] == 2) {
+                damage += damage/4
+            }
+            let loss = min(d.troops,max(0,damage))
+            return loss >= d.troops ? "-\(loss) 격파" : "-\(loss)"
+        case .confuse(_,let splash):
+            return splash ? "범위 혼란" : "혼란"
+        case .recovery(let kind,let power),.areaRecovery(let kind,let power):
+            return try healingForecast(caster:nil,target:d,conditionFlags:Int(target.scriptFlags),high:power,flags:kind)
+        case .bomb:
+            let low = min(d.troops,90*15),high = min(d.troops,110*15)
+            return low == high ? "-\(low) 격파" : "-\(low)~\(high)"
+        default:
+            return ""
+        }
+    }
+    private func healingForecast(caster:OriginalPersonStats?,target:OriginalPersonStats,conditionFlags:Int,high:Int,flags:Int) throws -> String {
+        var parts:[String] = []
+        if flags&1 != 0 {
+            let base = (high+1)*600+(caster.map{$0.level*$0.intellectScalar/20} ?? 0)
+            let maximum = try OriginalCombat.maxTroops(classID:target.classID,level:target.level,tables:combat)
+            let gain = max(0,min(base,maximum-target.troops))
+            if gain > 0 { parts.append("+\(gain)") }
+        }
+        if flags&2 != 0 {
+            let base = (high+3)*10+(caster.map{$0.level/10} ?? 0)
+            let gain = max(0,min(100-target.morale,base))
+            if gain > 0 { parts.append("사기 +\(gain)") }
+            else if conditionFlags&2 != 0 { parts.append("혼란 회복") }
+        }
+        return parts.joined(separator:" · ")
     }
     /// Engine addition: every cell a visible enemy could strike after a move
     /// this turn, from the player's own move rule and the class attack range.

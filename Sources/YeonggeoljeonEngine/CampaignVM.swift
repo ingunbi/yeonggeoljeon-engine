@@ -76,6 +76,8 @@ struct OriginalBattleMenuTexts: Codable, Equatable {
     /// MAIN27D12: nine DS:3AA0 labels. Only some have restored handlers.
     var items: [OriginalTitleMenuItem]
     static let actions = ["end-turn", "retreat", "conditions", "unit-combat", "move-speed", "enemy-move", "bgm", "sound", "quit"]
+    /// MAIN27D65 and 27F55: DS:[3D1C] -> DS:3CC0 turn-end confirmation.
+    var endTurnConfirm: OriginalFrameworkText? = nil
     var retreat: OriginalBattleMenuEntry
     var quit: OriginalBattleMenuEntry
 }

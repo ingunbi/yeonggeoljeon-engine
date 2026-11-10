@@ -124,10 +124,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var window: NSWindow?
     var data:DataSet?
     var researchWindows:[NSWindow] = []
+    private var pendingTerminationWindow:NSWindow?
+    private var applicationTerminationPending = false
+    private var approvedWindowClose:ObjectIdentifier?
+    func applicationShouldTerminate(_ sender:NSApplication) -> NSApplication.TerminateReply {
+        if applicationTerminationPending { return .terminateLater }
+        guard pendingTerminationWindow == nil else { return .terminateCancel }
+        let games = sender.windows.compactMap { window -> (NSWindow,OriginalCampaignView)? in
+            guard let view = window.contentView as? OriginalCampaignView,view.requiresTerminationProtection else { return nil }
+            return (window,view)
+        }
+        guard let (window,view) = games.first else { return .terminateNow }
+        guard games.count == 1 else {
+            window.makeKeyAndOrderFront(nil);view.explainMultipleCampaignExit();return .terminateCancel
+        }
+        applicationTerminationPending = true;pendingTerminationWindow = window
+        // NSApplication must receive terminateLater before the callback replies.
+        DispatchQueue.main.async { [weak self,weak view] in
+            guard let self = self else { return }
+            let started = view?.requestProtectedTermination { [weak self] approved in self?.finishApplicationTermination(approved) } ?? false
+            if !started { self.finishApplicationTermination(false) }
+        }
+        return .terminateLater
+    }
+    private func finishApplicationTermination(_ approved:Bool) {
+        guard applicationTerminationPending else { return }
+        applicationTerminationPending = false;pendingTerminationWindow = nil
+        NSApplication.shared.reply(toApplicationShouldTerminate:approved)
+    }
+    func windowShouldClose(_ sender:NSWindow) -> Bool {
+        if approvedWindowClose == ObjectIdentifier(sender) { approvedWindowClose = nil;return true }
+        guard let view = sender.contentView as? OriginalCampaignView,view.requiresTerminationProtection else { return true }
+        guard pendingTerminationWindow == nil else { return false }
+        pendingTerminationWindow = sender
+        let started = view.requestProtectedTermination { [weak self,weak sender] approved in
+            guard let self = self else { return }
+            self.pendingTerminationWindow = nil
+            guard approved,let sender = sender else { return }
+            self.approvedWindowClose = ObjectIdentifier(sender);sender.performClose(nil)
+        }
+        if !started { pendingTerminationWindow = nil }
+        return false
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func windowWillClose(_ notification:Notification) {
         guard let closing = notification.object as? NSWindow else { return }
-        (closing.contentView as? EngineTimedView)?.stop()
+        if let view = closing.contentView as? OriginalCampaignView {view.closed()}
+        else {(closing.contentView as? EngineTimedView)?.stop()}
         researchWindows.removeAll { $0 === closing }
         if window === closing { window = nil }
     }
@@ -158,14 +201,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         game.addItem(.separator())
         _ = add(game,"불러오기…",Selector(("openLoad:")),"o")
         _ = add(game,"저장…",Selector(("openSave:")),"s",[.command,.shift])
-        _ = add(game,"빠른 저장",Selector(("quickSave:")),"s")
-        _ = add(game,"빠른 불러오기",Selector(("quickLoad:")),"l")
+        _ = add(game,"중단 저장 후 타이틀로…",Selector(("quickSave:")),"s")
+        _ = add(game,"중단한 게임 이어하기…",Selector(("quickLoad:")),"l")
         game.addItem(.separator())
         _ = add(game,"대사 기록",Selector(("openDialogueLog:")),"j")
         _ = add(game,"대사 자동 넘기기",Selector(("toggleAutoAdvance:")),"e")
-        _ = add(game,"다음 선택까지 건너뛰기",Selector(("toggleSkip:")),"k")
+        _ = add(game,"선택·전투 진입까지 건너뛰기",Selector(("toggleSkip:")),"k")
         _ = add(game,"빨리 감기 고정",Selector(("toggleFastForward:")),"t")
         _ = add(game,"적 공격 범위",Selector(("toggleThreat:")),"d")
+        _ = add(game,"누적 전적",Selector(("openBattleHistory:")))
+        _ = add(game,"여정",Selector(("openCampaignJourney:")))
+        _ = add(game,"이벤트 힌트",Selector(("openEventHints:")))
+        _ = add(game,"전투 다시 보기",Selector(("openBattleReplays:")))
+        _ = add(game,"클리어 전투 연습",Selector(("openPracticeBattles:")))
+        _ = add(game,"조작과 가독성…",Selector(("openControlSettings:")))
+        _ = add(game,"일시정지 / 재개",Selector(("togglePause:")),"p")
+        _ = add(game,"다른 앱 사용 중 일시정지 전환",Selector(("toggleBackgroundPause:")))
         let view = submenu("보기")
         let frames = add(view,"원작 화면 틀",#selector(toggleOriginalFrames(_:)),"f",[.command,.shift],target:self)
         frames.state = CanvasPresentation.current == .original ? .on : .off
@@ -185,12 +236,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         _ = add(research,"이전 실험 규칙 연구…",#selector(browseBattles),target:self)
         _ = add(research,"캠페인 분석…",#selector(browseCampaign),target:self)
         let windows = submenu("윈도우")
+        _ = add(windows,"창 닫기",#selector(NSWindow.performClose(_:)),"w")
         _ = add(windows,"최소화",#selector(NSWindow.performMiniaturize(_:)),"m")
         _ = add(windows,"확대/축소",#selector(NSWindow.performZoom(_:)))
         windows.addItem(.separator())
         _ = add(windows,"모두 앞으로 가져오기",#selector(NSApplication.arrangeInFront(_:)))
         NSApplication.shared.mainMenu = menu
         NSApplication.shared.windowsMenu = windows
+        let help = submenu("도움말")
+        _ = add(help,"플레이 안내",#selector(showPlayGuide(_:)),"/",target:self)
+        NSApplication.shared.helpMenu = help
+    }
+    @objc private func showPlayGuide(_ sender:Any?) {
+        let alert = NSAlert()
+        alert.messageText = "영걸전 플레이 안내"
+        alert.informativeText = "이동할 곳이나 대화할 인물을 클릭하세요. 전투에서는 아군을 선택하고 이동한 다음 행동을 고릅니다."
+        let rows:[(String,String)] = [
+            ("대화", "클릭 / Return: 글자 모두 보기, 다음 대사\nA: 자동 넘기기 · S: 선택·전투 진입까지 건너뛰기 · L: 대사 기록"),
+            ("마을 · 세계지도", "Esc / 오른쪽 클릭: 메뉴\n세계지도 방향키: 화면 이동\n장수 → 장수 정보 · 책략 → 장수 선택: 책략 습득표"),
+            ("전투", "Tab / Shift-Tab: 행동할 부대 선택\nReturn: 현재 위치에서 행동 · Space: 선택 부대 대기\n명령창 / 전투 메뉴 → 책략 습득표: 앞으로 배울 책략 확인\nEsc / 오른쪽 클릭: 취소 · D: 적 공격 범위\nR: 부대 필터 · I: 상태 설명\nV: 이동 전 미리보기 · F: 피해 근거 · H: 회복 도우미\nShift-D: 위험 종류 · P: 적 위협 고정\nO: 목표 표시 · G: 성장 보상 안내\n방향키 / 휠 / 미니맵: 화면 이동\n턴 종료는 화면의 ‘턴 종료’ 버튼을 누르세요."),
+            ("저장 · 이어하기", "⌘S / F5: 중단 저장 후 타이틀로 · 예약 중 다시 누르면 취소\n⌘L / F9: 중단한 게임 이어하기\n중단 저장은 별도 1칸이며, 한 번 이어하면 소모됩니다.\n공격·이동·적 턴, 상점·출전·도구 선택은 처리가 끝나면 저장합니다.\n일반 슬롯은 마을·세계지도에서 ⌘⇧S로 저장합니다.\n‘전투 시작’ 자동 저장은 해당 전투의 첫 턴부터 재개합니다.")
+        ]
+        let stack = NSStackView();stack.orientation = .vertical;stack.alignment = .leading;stack.spacing = 14
+        for (title,body) in rows {
+            let heading = NSTextField(labelWithString:title);heading.font = .systemFont(ofSize:13,weight:.semibold)
+            let detail = NSTextField(wrappingLabelWithString:body);detail.font = .systemFont(ofSize:12)
+            detail.textColor = .secondaryLabelColor
+            let group = NSStackView(views:[heading,detail]);group.orientation = .vertical;group.alignment = .leading;group.spacing = 4
+            stack.addArrangedSubview(group)
+            group.widthAnchor.constraint(equalToConstant:440).isActive = true
+        }
+        stack.frame = CGRect(x:0,y:0,width:440,height:stack.fittingSize.height)
+        alert.accessoryView = stack;alert.addButton(withTitle:"계속하기");alert.runModal()
     }
     /// Whole multiples of the 640×400 canvas on a 2× screen (2, 3 and 4 device pixels).
     static let windowSizes = [NSSize(width:640,height:400),NSSize(width:960,height:600),NSSize(width:1280,height:800)]
@@ -224,6 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if view is OriginalCampaignView { window.contentAspectRatio = NSSize(width:8,height:5) }
         window.makeKeyAndOrderFront(nil); window.makeFirstResponder(view)
     }
+    func showPractice(_ view:OriginalCampaignView,title:String) {show(view,title:title)}
     private func showBrowser(_ controller:RecordBrowser,title:String) {
         let window = NSWindow(contentViewController:controller)
         window.isReleasedWhenClosed = false; window.delegate = self
@@ -322,6 +400,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 struct EngineOptions {
     var data:URL?, output:URL?, inputs:URL?, resume:URL?, battleID:String?, campaignRecord:String?
+    var archiveRoot:URL?
+    var omitRendering = false
     var renderMusic:Int?
     var renderEffect:Int?
     var verify = false, tests = false, verifyBattle = false, verifyCampaign = false,verifyVM = false,verifyPlay = false
@@ -340,16 +420,18 @@ func arguments() throws -> EngineOptions {
         case "--verify-campaign": options.verifyCampaign = true
         case "--verify-vm":options.verifyVM = true
         case "--verify-play":options.verifyPlay = true
+        case "--omit-rendering":options.omitRendering = true
         case "--list-battles": options.listBattles = true
         case "--list-campaign": options.listCampaign = true
         case "--experimental-rules": options.experimental = true
-        case "--data", "--output", "--inputs", "--resume", "--battle", "--campaign-record", "--render-music", "--render-effect":
+        case "--data", "--output", "--inputs", "--resume", "--battle", "--campaign-record", "--render-music", "--render-effect", "--record-battle-archives":
             let key = args[i]; i += 1
             guard i < args.count else { throw EngineError.invalid("Missing value for \(key)") }
             if key == "--data" { options.data = URL(fileURLWithPath:args[i],isDirectory:true) }
             else if key == "--output" { options.output = URL(fileURLWithPath:args[i],isDirectory:true) }
             else if key == "--inputs" { options.inputs = URL(fileURLWithPath:args[i]) }
             else if key == "--resume" { options.resume = URL(fileURLWithPath:args[i]) }
+            else if key == "--record-battle-archives" {options.archiveRoot = URL(fileURLWithPath:args[i],isDirectory:true)}
             else if key == "--battle" { options.battleID = args[i] }
             else if key == "--render-music" { options.renderMusic = Int(args[i]) }
             else if key == "--render-effect" { options.renderEffect = Int(args[i]) }
@@ -374,6 +456,7 @@ func arguments() throws -> EngineOptions {
     }
     guard options.verifyPlay == (options.inputs != nil) else { throw EngineError.invalid("--verify-play requires --inputs PATH, and inputs belong only to that verification") }
     guard options.resume == nil || options.verifyPlay else { throw EngineError.invalid("--resume belongs only to --verify-play") }
+    guard options.verifyPlay || (options.archiveRoot == nil && !options.omitRendering) else {throw EngineError.invalid("Battle recording and omitted rendering belong only to --verify-play")}
     if options.verifyBattle && options.battleID == nil { throw EngineError.invalid("--verify-battle requires an explicit --battle ID") }
     return options
 }
@@ -381,6 +464,7 @@ func arguments() throws -> EngineOptions {
 do {
     let options = try arguments()
     if options.tests {
+        try dialoguePaceStartupSelfTests()
         try selfTests();try battleSelfTests();try campaignSelfTests();try campaignVMSelfTests()
         try originalCombatSelfTests();try originalAISelfTests();try originalTurnSelfTests();try originalIntegrationSelfTests()
         try originalScriptBattleSelfTests();try originalStrategyAISelfTests();try originalStrategiesSelfTests()
@@ -388,6 +472,26 @@ do {
         try originalEndingSelfTests();try originalBattleSpriteSelfTests();try originalRetirementSelfTests()
         try originalStrategyFlowInputSelfTests();try originalPlayInputSelfTests();try originalExplorationInputSelfTests()
         try originalAttackOperationSelfTests();try originalFrameworkSelfTests();try originalResumeSelfTests();try originalSaveImportSelfTests()
+        try campaignPersistenceSelfTests()
+        try campaignTerminationSelfTests()
+        try pauseCoordinatorSelfTests()
+        try campaignJournalSelfTests()
+        try battleArchiveSelfTests()
+        try nativeSaveSlotsSelfTests()
+        try battleAssistanceSelfTests()
+        try combatPresentationPolicySelfTests()
+        try managementHelpersSelfTests()
+        try referenceHelpersSelfTests()
+        try playerAssistancePreferencesSelfTests()
+        try suspendSaveStoreSelfTests()
+        try strategyLearningGuideSelfTests()
+        try strategyGuideDetailsSelfTests()
+        try canvasSheetActionSelfTests()
+        try canvasOverlayLayoutSelfTests()
+        try canvasOverlaySuspensionSelfTests()
+        try canvasDialogueSelfTests()
+        try battleResultLogSelfTests()
+        try promotionPreviewSelfTests()
         try originalBattleScreenSelfTests();try originalItemSelfTests();try originalShopSelfTests();try originalBattleAnimationSelfTests();try originalMusicSelfTests();exit(0)
     }
     guard let root = options.data ?? Bundle.main.resourceURL?.appendingPathComponent("GameData",isDirectory:true) else {
@@ -435,7 +539,7 @@ do {
             guard let battle = catalog.battles.first(where:{$0.id == id}) else { throw EngineError.invalid("Unknown source battle ID: \(id)") }
             if options.experimental { try verifyBattle(battle,policy:.experimentalV1,input:data.root,output:output) }
             else { try verifyOriginalBattle(id,data:data,output:output) }
-        } else if options.verifyPlay,let inputs = options.inputs { try verifyOriginalPlay(data,inputs:inputs,output:output,resume:options.resume) }
+        } else if options.verifyPlay,let inputs = options.inputs { try verifyOriginalPlay(data,inputs:inputs,output:output,resume:options.resume,archiveRoot:options.archiveRoot,omitRendering:options.omitRendering) }
         else if options.verifyVM { try verifyOriginalCampaignHost(data,output:output) }
         else if options.verifyCampaign {
             let catalog = try CampaignCatalog.load(from:data.root.appendingPathComponent("campaign.json"))

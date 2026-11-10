@@ -150,7 +150,7 @@ struct OriginalStrategyOperation:Codable {
             case let .damage(target,subtype,family,splash):
                 let effect = try session.strategyDamageEffect(casterSlot:casterSlot,targetSlot:target,subtype:subtype)
                 continuation = splash ? .damageCenter(target:target,subtype:subtype,family:family) : .completion
-                return retain(effect)
+                return retain(effect,in:session)
             case let .damageCenter(target,subtype,family):
                 // Deliberately after retirement acknowledgement: the script
                 // may move the primary, change terrain, or replace neighbors.
@@ -167,11 +167,11 @@ struct OriginalStrategyOperation:Codable {
                 }
                 let effect = try session.strategyDamageEffect(casterSlot:casterSlot,targetSlot:target.runtimeSlot,subtype:subtype)
                 continuation = .damageNeighbors(center:center,subtype:subtype,family:family,next:next+1)
-                return retain(effect)
+                return retain(effect,in:session)
             case let .condition(target,center,splash):
                 let effect = try session.strategyConditionEffect(casterSlot:casterSlot,targetSlot:target)
                 continuation = splash ? .conditionNeighbors(center:center,next:0) : .completion
-                return retain(effect)
+                return retain(effect,in:session)
             case let .conditionNeighbors(center,next):
                 guard (0...4).contains(next) else {throw BattleError.invalid("Original strategy neighbor continuation is invalid")}
                 if next == 4 {continuation = .completion;continue}
@@ -181,27 +181,29 @@ struct OriginalStrategyOperation:Codable {
                 }
                 let effect = try session.strategyConditionEffect(casterSlot:casterSlot,targetSlot:target.runtimeSlot)
                 continuation = .conditionNeighbors(center:center,next:next+1)
-                return retain(effect)
+                return retain(effect,in:session)
             case let .morale(target):
                 let effect = try session.strategyMoraleEffect(casterSlot:casterSlot,targetSlot:target,category:category)
-                continuation = .completion;return retain(effect)
+                continuation = .completion;return retain(effect,in:session)
             case let .healing(slots,next,subtype):
                 guard slots.count <= 45,(0...slots.count).contains(next),slots.allSatisfy({(0..<45).contains($0)}) else {throw BattleError.invalid("Original healing continuation is invalid")}
                 if next == slots.count {continuation = .completion;continue}
                 let effect = try session.strategyHealingEffect(casterSlot:casterSlot,targetSlot:slots[next],subtype:subtype)
-                continuation = .healing(slots:slots,next:next+1,subtype:subtype);return retain(effect)
+                continuation = .healing(slots:slots,next:next+1,subtype:subtype);return retain(effect,in:session)
             case .completion:
                 guard let current = session.units[casterSlot] else {throw BattleError.unsupported("Original caster slot was removed before command completion")}
                 let casterClass = try session.people.person(current.person).classID
                 let completion = try OriginalCombat.completeStrategy(abilityID:abilityID,casterClassID:casterClass,currentMP:Int(current.mp),mpCost:mpCost)
                 let experience = completion.flatExperience == 0 ? nil : try session.people.applyExperience(person:current.person,gain:completion.flatExperience)
+                if let experience = experience,experience.ignoredReason == nil { session.resultLog.totals.experience(person:current.person,gain:completion.flatExperience,victory:false) }
                 session.units[casterSlot]!.mp = UInt8(completion.remainingMP);session.units[casterSlot]!.scriptFlags |= 0x80;session.commitMove(casterSlot)
                 let result = summary(in:session,completed:true,completion:completion,experience:experience)
                 continuation = .finished(result);return .finished(result)
             }
         }
     }
-    private mutating func retain(_ effect:OriginalStrategyTargetEffect)->OriginalStrategyStep {
+    private mutating func retain(_ effect:OriginalStrategyTargetEffect,in session:OriginalBattleSession)->OriginalStrategyStep {
+        session.logTargetResult(effect,actorSlot:casterSlot,action:.strategy(abilityID))
         effects.append(effect)
         if let notice = effect.retirement {
             pendingRetirement = OriginalStrategyPendingRetirement(effectIndex:effects.count-1,notice:notice)
@@ -233,6 +235,7 @@ extension OriginalBattleSession {
         }
         let before = try people.person(source.person).experience
         let experience = try people.applyExperience(person:source.person,gain:gain.total)
+        if experience.ignoredReason == nil { resultLog.totals.experience(person:source.person,gain:gain.total,victory:false) }
         let combat = try combatSnapshot(kind:kind,subtype:subtype,attackerSlot:casterSlot,targetSlot:targetSlot,attacker:a,defender:d,
             attackValue:try OriginalCombat.attackStat(a,tables:self.combat),defenseValue:try OriginalCombat.defenseStat(d,tables:self.combat),
             damage:value.damage,moraleLoss:value.moraleLoss,experience:before,gain:gain.total)
@@ -262,7 +265,7 @@ extension OriginalBattleSession {
             retirement = try strategyRetirement(targetSlot)
         }
         return OriginalStrategyTargetEffect(runtimeSlot:targetSlot,person:target.person,kind:"morale",success:success,morale:morale,
-            retiredPerson:retirement.person,retirement:retirement.notice)
+            retiredPerson:retirement.person,retirement:retirement.notice,moraleChange:morale.map { $0.remainingMorale-d.morale })
     }
     /// A nil caster is the source slot255 path used by items.
     func strategyHealingEffect(casterSlot:Int?,targetSlot:Int,subtype:Int) throws -> OriginalStrategyTargetEffect {

@@ -117,6 +117,8 @@ extension OriginalCombatCatalog {
         case .moraleRecovered(let amount):return originalFormat(texts.moraleUp,[String(amount)])
         case .moraleFull:return texts.moraleFull
         case .ambush(let friendly):return friendly ? texts.ambushFriendly : texts.ambushEnemy
+        case .counter(let friendly):return friendly ? texts.counterFriendly : texts.counterEnemy
+        case .phase(let enemy):return enemy ? "적군 순서" : ""
         case .strategyFailed(let id):return originalFormat(texts.strategyFailed,[person(id)])
         case .level(let id,let level):return originalFormat(texts.levelUp,[person(id),String(level)])
         case .learned(let abilities):return originalFormat(texts.learned,[abilities.map(strategy).joined()])

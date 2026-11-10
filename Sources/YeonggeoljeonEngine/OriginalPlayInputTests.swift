@@ -161,5 +161,32 @@ func originalPlayInputSelfTests() throws {
     try move.performBattle(in:strategyFlow,enabled:true)
     try primitive(#"{"kind":"battle-strategy","slot":0,"ability":3,"target":15}"#).performBattle(in:strategyFlow,enabled:true)
     guard strategyFlow.lastStrategy != nil,strategyFlow.session.units[0]!.mp < mp else {throw EngineError.invalid("Play strategy did not use source flow and MP mutation")};checks += 1
+    let recordFlow = try battleFlow();try recordFlow.start()
+    var acceptedInputs:[OriginalPlayInput] = []
+    recordFlow.onAcceptedInput = {acceptedInputs.append($0)}
+    try recordFlow.session.people.update(0) {$0.itemIDs[0] = 5}
+    _ = try recordFlow.manualItem(0,item:5)
+    guard acceptedInputs.isEmpty else {throw EngineError.invalid("Refused item use entered the replay")};checks += 1
+    recordFlow.session.units[0]!.scriptFlags &= ~UInt8(0x20)
+    try recordFlow.manualReleaseAmbush(0)
+    guard acceptedInputs.map(\.kind) == [.battleReleaseAmbush] else {throw EngineError.invalid("Ambush release was not recorded once")};checks += 1
+    guard try recordFlow.manualGive(0,to:1,item:5) else {throw EngineError.invalid("Synthetic replay gift failed")}
+    guard acceptedInputs.map(\.kind) == [.battleReleaseAmbush,.battleGive] else {throw EngineError.invalid("Gift duplicated its internal wait in replay")};checks += 1
+    let replayFlow = try battleFlow();try replayFlow.start()
+    try replayFlow.session.people.update(0) {$0.itemIDs[0] = 5}
+    replayFlow.session.units[0]!.scriptFlags &= ~UInt8(0x20)
+    for input in acceptedInputs {try input.performBattle(in:replayFlow,enabled:true)}
+    guard replayFlow.session.units == recordFlow.session.units,replayFlow.session.rng == recordFlow.session.rng,
+          try replayFlow.session.people.person(0).itemIDs == recordFlow.session.people.person(0).itemIDs,
+          try replayFlow.session.people.person(1).itemIDs == recordFlow.session.people.person(1).itemIDs else {
+        throw EngineError.invalid("Accepted gift/ambush replay differs from its source execution")
+    };checks += 1
+    try primitive(#"{"kind":"battle-options","index":4116}"#).performBattle(in:replayFlow,enabled:true)
+    guard replayFlow.session.sourceOptionsWord == 4116 else {throw EngineError.invalid("Replay lost source option word")};checks += 1
+    try rejected(#"{"format":1,"inputs":[{"kind":"battle-options","index":65536}]}"#)
+    let cancelFlow = try battleFlow();try cancelFlow.start();let initialPosition = cancelFlow.session.units[0]!.position
+    try move.performBattle(in:cancelFlow,enabled:true)
+    try primitive(#"{"kind":"battle-cancel-move","slot":0}"#).performBattle(in:cancelFlow,enabled:true)
+    guard cancelFlow.session.units[0]!.position == initialPosition,cancelFlow.session.pendingMovementSlots.isEmpty else {throw EngineError.invalid("Replay cancellation did not restore its actual source move")};checks += 1
     print("Original play input self-tests: \(checks) assertions passed")
 }

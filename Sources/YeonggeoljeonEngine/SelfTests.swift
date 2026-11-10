@@ -93,6 +93,10 @@ func selfTests() throws {
     // seg0:4F8E moves the world view by the scroll step and clamps it to the map.
     var world = map
     world.width = 1024;world.height = 640;world.geometry = "world"
+    world.walkWidth = 32;world.walkHeight = 20;world.walkGrid = Array(repeating:String(repeating:".",count:32),count:20)
+    world.neighborsEven = [Neighbor(dx:0,dy:-1,direction:0),.init(dx:1,dy:-1,direction:1),.init(dx:1,dy:0,direction:2),.init(dx:1,dy:1,direction:3),
+                           .init(dx:0,dy:1,direction:4),.init(dx:-1,dy:1,direction:5),.init(dx:-1,dy:0,direction:6),.init(dx:-1,dy:-1,direction:7)]
+    world.neighborsOdd = world.neighborsEven;world.placementDirections = Array(0..<8)
     let scrolling = Runtime(try data([]),hostDriven:true)
     scrolling.acknowledge()
     try scrolling.configureMap(4097,resource:world,actors:nil)
@@ -103,6 +107,27 @@ func selfTests() throws {
     try check(scrolling.scrollWorld(dx:1,dy:1,step:64) && scrolling.camera == [512,320],"the view stops at the map's far edge")
     try check(!scrolling.scrollWorld(dx:1,dy:0,step:1) && scrolling.scrollWorld(dx:-1,dy:-1,step:64) && scrolling.camera == [0,0],
               "a clamped step reports no move, and the near edge clamps too")
+    try scrolling.enqueue([Command("place",person:1,x:2,y:2),Command("place",person:2,x:20,y:15)])
+    try check(scrolling.snapshot().followPerson == 1,"MAIN20DFE..20F64 follows the first actor placed on a world map by default")
+    try scrolling.enqueue([Command("move",person:1,x:25,y:15)])
+    scrolling.advance(microseconds:10_000_000)
+    try check(scrolling.camera == [512,320],"default slot-zero world follow scrolls the camera with a march to a battlefield")
+    try scrolling.worldCamera(x:0,y:0,source:nil)
+    try check(scrolling.snapshot().followPerson == nil && scrolling.camera == [0,0],"3B world-camera clears followPerson")
+    try scrolling.enqueue([Command("move",person:2,x:24,y:15)])
+    scrolling.advance(microseconds:10_000_000)
+    try check(scrolling.camera == [512,320],"a world-map NPC march scrolls into view even when followPerson was cleared or points elsewhere")
+    // MAIN257AC..2591F: citizens keep wandering while the player walks and avoid occupied cells.
+    var townWalk = map;townWalk.walkBytes = Array(repeating:0x7F,count:49)
+    let townStage = Runtime(try data([]),hostDriven:true);townStage.acknowledge()
+    try townStage.configureMap(1,resource:townWalk,actors:nil)
+    try townStage.enqueue([Command("map",map:1),Command("place",person:1,x:0,y:2),Command("place",person:2,x:2,y:2),Command("show")])
+    townStage.advance(microseconds:Runtime.screenFadeMicroseconds*2)
+    let playerRoute = try townStage.sourceRoute(person:1,to:GridPoint(x:6,y:2))
+    try townStage.enqueueSourceRoute(person:1,route:playerRoute,finalFacing:playerRoute.last!.facing)
+    townStage.wander(person:2,direction:1) { _ in true }
+    try check(!townStage.hostWaiting && townStage.actors[2]?.position != GridPoint(x:2,y:2),
+              "a citizen wanders while the player's own walk route is active")
     let older = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"speed":3,"monochrome":true}"#.utf8))
     let stepped = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"scroll":4}"#.utf8))
     let uneven = try JSONDecoder().decode(OriginalSettings.self,from:Data(#"{"scroll":3}"#.utf8))

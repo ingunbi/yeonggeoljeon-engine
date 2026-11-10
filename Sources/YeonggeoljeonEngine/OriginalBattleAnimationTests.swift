@@ -63,16 +63,16 @@ func originalBattleAnimationSelfTests() throws {
     let slots = OriginalSaveSlots(directory:folder)
     try check(slots.entries().allSatisfy { $0 == nil } && slots.entries().count == 5,"five empty slots")
     let when = Date(timeIntervalSince1970:1000)
-    try slots.write(["a":1],title:"첫째",slot:2,date:when)
+    try slots.write(try nativeSaveTestResume(money:1),title:"첫째",slot:2,date:when)
     try check(slots.entries()[2] == OriginalSaveSlots.Entry(title:"첫째",date:when) && slots.entries()[1] == nil,"a slot keeps its title and date")
-    try slots.write(["a":2],title:"둘째",slot:2,date:when)
+    try slots.write(try nativeSaveTestResume(money:2),title:"둘째",slot:2,date:when)
     try check(slots.entries()[2]?.title == "둘째","a slot can be overwritten")
     try check(slots.entry(.auto) == nil && slots.entry(.quick) == nil,"no engine slot is written yet")
-    try slots.write(["a":3],title:"auto",named:.auto,date:when)
+    try slots.write(try nativeSaveTestResume(money:3),title:"auto",named:.auto,date:when)
     try check(slots.entry(.auto) == OriginalSaveSlots.Entry(title:"auto",date:when) && slots.entry(.quick) == nil,"the autosave sits beside the five")
     try check(slots.entries().compactMap { $0 }.count == 1,"named slots do not take a numbered one")
-    do { try slots.write(["a":1],title:"",slot:5);throw EngineError.invalid("Slot five was accepted") }
-    catch EngineError.invalid(let text) where text.hasPrefix("Save slot") { checks += 1 }
+    do { try slots.write(try nativeSaveTestResume(money:1),title:"",slot:5);throw EngineError.invalid("Slot five was accepted") }
+    catch OriginalSaveSlots.Failure.invalidSlot { checks += 1 }
     // The enlarged view: a synthetic catalog with identity-sized tables.
     func entry(_ value:Int) -> [Int] { Array(repeating:value,count:19) }
     var classes = OriginalCombatCatalog.Classes(prep:entry(255),run:entry(1),swing:entry(4),attack:entry(6),total:entry(8),shot:entry(255))
@@ -133,6 +133,17 @@ func originalBattleAnimationSelfTests() throws {
     try check(player.finished && player.frame == nil,"a scene can be cut short")
     func noticeText(_ notice:OriginalBattleNotice) -> String { catalog.text(notice,person:{ "p\($0)" },strategy:{ "s\($0)" }) }
     try check(noticeText(.ambush(friendly:true)) == "go" && noticeText(.ambush(friendly:false)) == "oh","each side has its ambush line")
+    try check(noticeText(.counter(friendly:true)) == "c" && noticeText(.counter(friendly:false)) == "C","each side has its counterattack line")
+    try check(noticeText(.phase(enemy:true)) == "적군 순서","the enemy phase notice uses the source text")
+    var numberFlash = OriginalBattleAnimator()
+    numberFlash.play([.number(slot:5,value:180,color:7,passes:3)])
+    try check(numberFlash.number?.slot == 5 && numberFlash.number?.value == 180 && numberFlash.number?.visible == true,"a map number starts visible")
+    _ = numberFlash.advance(13*tick)
+    try check(numberFlash.number?.visible == false,"twelve ticks visible then six blank per pass")
+    _ = numberFlash.advance(6*tick)
+    try check(numberFlash.number?.visible == true,"the next pass shows the number again")
+    _ = numberFlash.advance(36*tick)
+    try check(numberFlash.isIdle,"three passes take fifty-four ticks")
     try check(noticeText(.strategyFailed(person:4)) == "p4 no" && noticeText(.level(person:4,level:9)) == "p4 L9","notices fill the source formats")
     try check(noticeText(.learned(abilities:[1,2])) == "s1s2!","names join with no separator, as CF5:46D4 appends them")
     try check(noticeText(.strategyUsed(person:2,ability:3)) == "p2 used s3" && noticeText(.strategyCry(ability:3)) == "s3 cry","a caster's lines name the strategy")

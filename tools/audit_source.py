@@ -14,6 +14,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_SUFFIXES = {".swift", ".py", ".md", ".toml", ".yml", ".yaml"}
 ALLOWED_NAMES = {".gitignore", ".gitattributes", "LICENSE"}
+ALLOWED_MANIFESTS = {"iOS/SharedSources.json"}
 EXCLUDED_ROOTS = {".git", "build", ".local", ".build", ".swiftpm", "__pycache__"}
 
 
@@ -34,7 +35,7 @@ def audit(paths: list[Path]) -> dict:
         if path.is_symlink():
             errors.append(f"source symlink requires review: {relative}")
             continue
-        if path.suffix not in ALLOWED_SUFFIXES and path.name not in ALLOWED_NAMES:
+        if path.suffix not in ALLOWED_SUFFIXES and path.name not in ALLOWED_NAMES and relative.as_posix() not in ALLOWED_MANIFESTS:
             errors.append(f"file type is outside the public source allowlist: {relative}")
             continue
         data = path.read_bytes()

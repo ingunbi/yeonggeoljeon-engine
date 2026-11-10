@@ -11,7 +11,8 @@ import struct
 from campaign_vm_format import (MAIN_DATA_PARAGRAPH, MAIN_DATA_SEGMENT, RETRY_PROMPT_CALL, RETRY_PROMPT_POINTER,
                                 SAVE_DECLINE_CALL, SAVE_DECLINE_POINTER, SAVE_PROMPT_CALL, SAVE_PROMPT_POINTER,
                                 TITLE_MENU_COUNT_AT, TITLE_MENU_TABLE, TITLE_MENU_TABLE_AT, BATTLE_MENU_COUNT_AT,
-                                BATTLE_MENU_TABLE, BATTLE_MENU_TABLE_AT, RETREAT_CONFIRM_CALL, RETREAT_CONFIRM_POINTER_VAR,
+                                BATTLE_MENU_TABLE, BATTLE_MENU_TABLE_AT, END_TURN_CONFIRM_CALL, END_TURN_AUTO_CALL,
+                                END_TURN_CONFIRM_POINTER_VAR, RETREAT_CONFIRM_CALL, RETREAT_CONFIRM_POINTER_VAR,
                                 RETREAT_REFUSED_CALL, RETREAT_REFUSED_POINTER, QUIT_CONFIRM_CALL, QUIT_CONFIRM_POINTER,
                                 RETREAT_RESULT_AT, QUIT_RESULT_AT, FIELD_MENU_TABLE_AT, FIELD_MENU_TABLE,
                                 FIELD_MENU_HANDLERS_AT, FIELD_MENU_HANDLERS, FIELD_QUIT_CALL, FIELD_QUIT_POINTER,
@@ -66,6 +67,11 @@ def synthetic_main(text: bytes, pointer: int = RETRY_PROMPT_POINTER, mode: int =
         offset = 0x2C80 + item * 0x10
         struct.pack_into("<HH", data, MAIN_DATA_SEGMENT + BATTLE_MENU_TABLE + item * 4, offset, MAIN_DATA_PARAGRAPH)
         data[MAIN_DATA_SEGMENT + offset:MAIN_DATA_SEGMENT + offset + len(label) + 1] = label + b"\0"
+    end_call = bytes([0x1E, 0xFF, 0x36]) + struct.pack("<H", END_TURN_CONFIRM_POINTER_VAR) + bytes([0x6A, 2, 0x9A]) + struct.pack("<HH", 0x3C5E, 0x0CF5)
+    for call_at in (END_TURN_CONFIRM_CALL, END_TURN_AUTO_CALL):
+        data[call_at:call_at + 12] = end_call
+    struct.pack_into("<H", data, MAIN_DATA_SEGMENT + END_TURN_CONFIRM_POINTER_VAR, 0x2D70)
+    data[MAIN_DATA_SEGMENT + 0x2D70:MAIN_DATA_SEGMENT + 0x2D79] = b"endturn?\0"
     call = bytes([0x1E, 0xFF, 0x36]) + struct.pack("<H", RETREAT_CONFIRM_POINTER_VAR) + bytes([0x6A, 2, 0x9A]) + struct.pack("<HH", 0x3C5E, 0x0CF5)
     data[RETREAT_CONFIRM_CALL:RETREAT_CONFIRM_CALL + 12] = call
     struct.pack_into("<H", data, MAIN_DATA_SEGMENT + RETREAT_CONFIRM_POINTER_VAR, 0x2D80)
@@ -104,6 +110,7 @@ class CampaignVMFormatTests(unittest.TestCase):
 
     def test_battle_menu_retreat_and_quit_texts_and_results_are_checked(self):
         menu = framework_prompts(synthetic_main(b"x"))["battleMenu"]
+        self.assertEqual(menu["endTurnConfirm"]["text"], "endturn?")
         self.assertEqual((menu["retreat"]["label"], menu["retreat"]["confirm"]["text"], menu["retreat"]["refused"]["text"]),
                          ("retreat", "confirm", "refused"))
         self.assertEqual((menu["retreat"]["rawResult"], menu["quit"]["rawResult"], menu["quit"]["confirm"]["text"]), (1, 4, "quit?"))

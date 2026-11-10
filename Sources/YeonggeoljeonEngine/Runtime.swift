@@ -220,6 +220,16 @@ struct CommandSnapshot: Codable, Equatable {
     var closesAfter: Double? = nil
 }
 
+/// Engine suspension at a presentation boundary. The current dialogue and
+/// unconsumed commands remain separate so resuming never replays a source effect.
+struct RuntimeSuspension:Codable {
+    var pendingCommands:[Command]
+    var dialogueRemaining:Int64
+    var registration:Int
+    var hostMaps:[Int:MapResource]
+    var hostActors:[String:ActorResource]?
+}
+
 /// Contract: research/bootstrap-contract.md. Original-byte exporters own image,
 /// walk-grid, neighbor, timing and command provenance; this runtime consumes
 /// those facts without importing a pre-existing game's implementation or pack.
@@ -284,13 +294,15 @@ final class Runtime {
     /// A citizen's one frame of wandering (MAIN25845..258CF): the facing and
     /// walking frame always change, and the cell only if the map allows it.
     func wander(person:Int,direction:Int,moved:(GridPoint) -> Bool) {
-        guard hostWaiting,var actor = actors[person],let map = currentMap,let width = map.walkWidth,let bytes = map.walkBytes,
+        guard hostDriven,mode == "scene",dialogue == nil,waitRemaining == 0,fadeRemaining == 0,
+              var actor = actors[person],!actor.walking,let map = currentMap,let width = map.walkWidth,let bytes = map.walkBytes,
               let neighbors = actor.position.x&1 == 0 ? map.neighborsEven : map.neighborsOdd,
               let step = neighbors.first(where:{ $0.direction == direction }) else { return }
         let next = GridPoint(x:actor.position.x+step.dx,y:actor.position.y+step.dy)
         let index = next.y*width+next.x
         actor.facing = direction;actor.phase = actor.phase == 0 ? 1 : 0
-        if next.x >= 0,next.x < width,bytes.indices.contains(index),bytes[index] == 0x7F,moved(next) { actor.position = next }
+        if next.x >= 0,next.x < width,bytes.indices.contains(index),bytes[index] == 0x7F,
+           !actors.values.contains(where:{ $0.position == next }),moved(next) { actor.position = next }
         actors[person] = actor
     }
     func setNativeFacing(person:Int,direction:Int) throws {
@@ -443,6 +455,29 @@ final class Runtime {
                  dialogue: dialogue, batch: batch, endReason: endReason, inputCount: inputCount,
                  visible: visible, caption: caption, termination: termination,followPerson:followPerson,storyPanel:storyPanel,palette:palette)
     }
+    /// A request made during movement/fades waits until the next stable frame.
+    /// A displayed dialogue, including a timed line, is itself a safe boundary.
+    func suspension() -> RuntimeSuspension? {
+        guard hostDriven,mode == "scene",!busy,batch == nil,termination == nil,endReason == nil,
+              dialogue != nil || hostWaiting,routeFollow == nil else { return nil }
+        return RuntimeSuspension(pendingCommands:Array(commands.dropFirst(cursor)),dialogueRemaining:dialogueRemaining,
+            registration:registration,hostMaps:hostMaps,hostActors:hostActors)
+    }
+    func restoreSuspension(_ value:Snapshot,state:RuntimeSuspension) throws {
+        guard state.pendingCommands.count <= 1_000_000,state.dialogueRemaining >= 0,
+              state.registration >= 0,(state.registration < Int.max),
+              state.registration > (value.actors.map(\.registration).max() ?? -1),
+              value.dialogue != nil || (state.pendingCommands.isEmpty && state.dialogueRemaining == 0),
+              value.dialogue?.closesAfter != nil || state.dialogueRemaining == 0,
+              state.hostMaps.count <= 1024,(state.hostActors?.count ?? 0) <= 2048 else {
+            throw EngineError.invalid("Native suspension has an invalid presentation continuation")
+        }
+        hostMaps = state.hostMaps;hostActors = state.hostActors
+        var idle = value;idle.dialogue = nil
+        try restoreIdle(idle)
+        registration = state.registration;dialogue = value.dialogue;dialogueRemaining = state.dialogueRemaining
+        commands = state.pendingCommands;cursor = 0
+    }
     private func record(_ index: Int, _ command: Command, _ details: String = "") {
         trace.append(TraceEntry(microseconds: clock, command: index, operation: command.op, source: command.source, textSource: command.textSource, details: details))
     }
@@ -523,7 +558,10 @@ final class Runtime {
                     actors[person] = ActorState(person: person, position: p, facing: try facing(c), phase: 0, registration: slot, walking: false)
                     // MAIN21FB4: the first actor spawned on the world centres the
                     // camera (E818(0)) when it lies outside the 33×21 tile window.
+                    // MAIN20DFE..20F64 also initializes DS:3836=0 / DS:DAB6=0 so slot 0
+                    // is followed by default until a 3B/3C instruction overrides it.
                     if hostDriven,first,currentMap?.geometry == "world" {
+                        followPerson = person
                         let x = p.x-camera[0]/16,y = p.y-camera[1]/16
                         if !(0...32).contains(x) || !(0...20).contains(y) { try centerWorldCamera(p) }
                     }
@@ -550,6 +588,10 @@ final class Runtime {
                     let (total, overflow2) = travel.addingReportingOverflow(timing.terminalMicroseconds)
                     guard !overflow && !overflow2 else { throw EngineError.invalid("Movement clock overflow") }
                     batch = MoveBatch(motions: motions, elapsed: 0, duration: total, step: timing.stepMicroseconds, terminal: timing.terminalMicroseconds)
+                    if hostDriven,currentMap?.geometry == "world",
+                       followPerson == nil || !motions.contains(where:{ $0.person == followPerson }) {
+                        routeFollow = motions.first?.person
+                    }
                     updateActors()
                     if total == 0 { settleBatch() }
                 case "say":
