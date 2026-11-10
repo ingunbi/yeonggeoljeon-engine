@@ -88,11 +88,15 @@ enum StrategyGuideDetails {
 
     private static func rangeLabel(_ offsets:[OriginalAIOffset],includesSelf:Bool) -> String {
         let points = Set(offsets.filter { $0.dx != 0 || $0.dy != 0 }.map { GridPoint(x:$0.dx,y:$0.dy) })
-        let nearby = Set((-1...1).flatMap { x in (-1...1).compactMap { y in x == 0 && y == 0 ? nil : GridPoint(x:x,y:y) } })
+        // Plain loops: older Swift compilers time out type-checking nested closures here.
+        var nearby = Set<GridPoint>(),wide = Set<GridPoint>()
+        for x in -2...2 {
+            for y in -2...2 where x != 0 || y != 0 {
+                if abs(x) <= 1 && abs(y) <= 1 { nearby.insert(GridPoint(x:x,y:y)) }
+                if abs(x) != 2 || abs(y) != 2 { wide.insert(GridPoint(x:x,y:y)) }
+            }
+        }
         let middle = nearby.union([GridPoint(x:0,y:-2),GridPoint(x:2,y:0),GridPoint(x:0,y:2),GridPoint(x:-2,y:0)])
-        let wide = Set((-2...2).flatMap { x in (-2...2).compactMap { y in
-            (x == 0 && y == 0) || (abs(x) == 2 && abs(y) == 2) ? nil : GridPoint(x:x,y:y)
-        } })
         let label:String
         if points == nearby { label = "주변 1칸 · 대각 포함" }
         else if points == middle { label = "직선 2칸 · 대각 1칸" }

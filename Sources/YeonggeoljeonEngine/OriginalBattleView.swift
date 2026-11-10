@@ -117,9 +117,10 @@ final class OriginalBattleView:NSView {
         didSet {
             guard presentation != oldValue else { return }
             layoutFacts = presentation == .modern ? BattleMapViewport.layout(source:style.layout,width:session.width,height:session.height,mode:mapViewMode,textScale:CanvasTheme.textScale) : style.layout
-            let focus = (selected ?? inspected ?? speakingSlot).flatMap { session.units[$0]?.position }
-                ?? (session.units[0]?.status == 2 ? session.units[0]?.position : nil)
-                ?? session.units.values.filter({ !$0.enemy && $0.status == 2 }).min(by:{ $0.slot < $1.slot })?.position
+            let chosen:GridPoint? = (selected ?? inspected ?? speakingSlot).flatMap { session.units[$0]?.position }
+            let leader:GridPoint? = session.units[0]?.status == 2 ? session.units[0]?.position : nil
+            let first:GridPoint? = session.units.values.filter({ !$0.enemy && $0.status == 2 }).min(by:{ $0.slot < $1.slot })?.position
+            let focus = chosen ?? leader ?? first
             camera = OriginalBattleCamera(width:session.width,height:session.height,layout:layoutFacts)
             if let focus = focus { camera.center(on:focus) }
             overlay.viewport = layoutFacts.viewportRect;listTop = 0;needsDisplay = true

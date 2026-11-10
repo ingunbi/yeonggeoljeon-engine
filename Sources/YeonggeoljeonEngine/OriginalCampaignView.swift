@@ -726,7 +726,12 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         // 2CB4:125E plays song 18 for the duel and 1824 restores the one before.
         if host.ending == nil { audio?.select(host.battle?.scriptActions.duel?.active == true ? 18 : host.vm.state.currentMusic) }
         retryBattleStartSave()
-        battleView?.externalStatus = errorText ?? suspendStatus ?? inputNotice ?? battleSaveNotice ?? autosaveNotice ?? host.notice ?? host.playerStatus ?? (practiceMode ? "연습 전투 · 본편에 반영되지 않음" : nil)
+        // Split for older compilers, which time out type-checking one long chain.
+        let saveStatus:String? = battleSaveNotice ?? autosaveNotice
+        let hostStatus:String? = host.notice ?? host.playerStatus
+        let practiceStatus:String? = practiceMode ? "연습 전투 · 본편에 반영되지 않음" : nil
+        let localStatus:String? = errorText ?? suspendStatus ?? inputNotice
+        battleView?.externalStatus = localStatus ?? saveStatus ?? hostStatus ?? practiceStatus
         let pace = DialoguePace.shared
         if pace.skipping,skipReachedDecision { pace.skipping = false }
         battleView?.fastForward = fastForward || pace.skipping
