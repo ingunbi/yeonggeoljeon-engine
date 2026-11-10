@@ -1966,7 +1966,7 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         }
         context.saveGState()
         context.translateBy(x:shape.origin.x,y:shape.origin.y);context.scaleBy(x:shape.scale,y:shape.scale)
-        if screen != nil { drawWorldGuides(in:context);drawWalkMarker(in:context) }
+        if screen != nil { drawWorldGuides(in:context);drawTownHover(in:context);drawWalkMarker(in:context) }
         // A sheet carries its own money and covers this corner.
         if modern,overlay.sheet == nil,let screen = screen { drawFieldHUD(screen,in:context) }
         if screen != nil { drawHoverTag(in:context) }
@@ -2143,7 +2143,10 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         hoveredFieldButton = modernField && host.fieldMenuReady && !overlay.active && !fading
             ? fieldButtons.first(where:{ $0.rect.contains(canvasP) })?.index : nil
         // A city or a person the pointer can act on shows the pointing hand.
-        defer { (hoveredCity != nil || hoveredPerson != nil || hoveredFieldButton != nil ? NSCursor.pointingHand : NSCursor.arrow).set() }
+        defer {
+            let door = hoveredTownCell.flatMap(townMarker) != nil
+            (hoveredCity != nil || hoveredPerson != nil || hoveredFieldButton != nil || door ? NSCursor.pointingHand : NSCursor.arrow).set()
+        }
         var cityHit:Int?
         if world,hoveredFieldButton == nil {
             var p = canvasP
@@ -2151,12 +2154,51 @@ final class OriginalCampaignView:NSView,EngineTimedView {
             cityHit = selectableCities.first { cityRect($0)?.contains(p) == true }?.id
         }
         if cityHit != hoveredCity { hoveredCity = cityHit;needsDisplay = true }
-        guard host.explorationInputReady,[0,2].contains(host.vm.state.packedMap>>12),!overlay.active,!fading,hoveredFieldButton == nil else { hoveredPerson = nil;return }
+        guard host.explorationInputReady,[0,2].contains(host.vm.state.packedMap>>12),!overlay.active,!fading,hoveredFieldButton == nil else {
+            hoveredPerson = nil;if hoveredTownCell != nil { hoveredTownCell = nil;needsDisplay = true };return
+        }
         var p = canvasP
         if modernField { p = CanvasFieldMap.mapPoint(canvas:p) }
         hoveredPerson = talkTarget(at:p).map(\.person)
+        let target = hoveredPerson == nil ? townTarget(atMap:p) : nil
+        if target != hoveredTownCell { hoveredTownCell = target;needsDisplay = true }
     }
-    override func mouseExited(with event:NSEvent) { hoveredPerson = nil;hoveredCity = nil;hoveredFieldButton = nil;edgeScroll = nil }
+    /// The settlement cell under the pointer, or the door or path it means
+    /// (OriginalTownPointer), for a point in map pixels on screen.
+    private var hoveredTownCell:GridPoint?
+    private func townTarget(atMap point:CGPoint) -> GridPoint? {
+        guard let map = host.stage.currentMap,let width = map.walkWidth,let height = map.walkHeight,let walk = map.walkBytes else { return nil }
+        let v = host.stage.viewport,camera = host.stage.camera
+        return OriginalTownPointer.target(at:CGPoint(x:point.x-CGFloat(v[0])+CGFloat(camera[0]),y:point.y-CGFloat(v[1])+CGFloat(camera[1])),
+                                          walk:walk,width:width,height:height)
+    }
+    private func townMarker(_ cell:GridPoint) -> Int? {
+        guard let map = host.stage.currentMap,let width = map.walkWidth,let walk = map.walkBytes,walk.indices.contains(cell.y*width+cell.x) else { return nil }
+        let marker = walk[cell.y*width+cell.x]
+        return marker == 127 || marker&0x80 != 0 ? nil : marker
+    }
+    /// A diamond on the cell the pointer would walk to; a door also says where it leads.
+    private func drawTownHover(in context:CGContext) {
+        guard let cell = hoveredTownCell,hoveredPerson == nil,host.explorationInputReady,!overlay.active,!fading,
+              [0,2].contains(host.vm.state.packedMap>>12) else { return }
+        let v = host.stage.viewport,camera = host.stage.camera,c = OriginalTownPointer.center(cell)
+        let mid = canvasPoint(map:CGPoint(x:CGFloat(v[0])+c.x-CGFloat(camera[0]),y:CGFloat(v[1])+c.y-CGFloat(camera[1])))
+        let scale = (canvasPoint(map:CGPoint(x:16,y:0)).x-canvasPoint(map:.zero).x)/16
+        let half = CGSize(width:16*scale,height:8*scale)
+        let marker = townMarker(cell)
+        context.saveGState()
+        context.move(to:CGPoint(x:mid.x,y:mid.y-half.height));context.addLine(to:CGPoint(x:mid.x+half.width,y:mid.y))
+        context.addLine(to:CGPoint(x:mid.x,y:mid.y+half.height));context.addLine(to:CGPoint(x:mid.x-half.width,y:mid.y));context.closePath()
+        context.setFillColor(marker == nil ? CGColor(gray:1,alpha:0.16) : CanvasTheme.accentFill.copy(alpha:0.28) ?? CanvasTheme.accentFill)
+        context.setStrokeColor(marker == nil ? CGColor(gray:1,alpha:0.7) : CanvasTheme.accentFill);context.setLineWidth(1.5)
+        context.drawPath(using:.fillStroke)
+        context.restoreGState()
+        if let marker = marker {
+            let label = marker == 124 ? "마을 밖으로" : marker == 125 ? "나가기" : "들어가기"
+            CanvasTheme.chip(label,at:CGPoint(x:mid.x,y:max(14,mid.y-half.height-14)),maximumWidth:120,color:CanvasTheme.accent,in:context)
+        }
+    }
+    override func mouseExited(with event:NSEvent) { hoveredPerson = nil;hoveredCity = nil;hoveredFieldButton = nil;hoveredTownCell = nil;edgeScroll = nil }
     // Engine guides over the field: the cities the player can pick now, the
     // march to the one under the pointer, and where a town click is walking.
     private var hoveredCity:Int?
@@ -2219,11 +2261,14 @@ final class OriginalCampaignView:NSView,EngineTimedView {
         let age = Date().timeIntervalSince(marker.start)
         guard age < 0.7,host.vm.state.packedMap>>12 != 1 else { walkMarker = nil;return }
         let v = host.stage.viewport,camera = host.stage.camera,p = marker.point
-        let foot = canvasPoint(map:CGPoint(x:v[0]+16*p.x+16-camera[0],y:v[1]+16*p.y+8*(p.x&1)+12-camera[1]))
-        let grow = CGFloat(1+age*0.6),alpha = CGFloat(1-age/0.7)
-        let ring = CGRect(x:foot.x-11*grow,y:foot.y-5.5*grow,width:22*grow,height:11*grow)
+        let c = OriginalTownPointer.center(p)
+        let mid = canvasPoint(map:CGPoint(x:CGFloat(v[0])+c.x-CGFloat(camera[0]),y:CGFloat(v[1])+c.y-CGFloat(camera[1])))
+        let scale = (canvasPoint(map:CGPoint(x:16,y:0)).x-canvasPoint(map:.zero).x)/16
+        let grow = CGFloat(1+age*0.5)*scale,alpha = CGFloat(1-age/0.7)
+        context.move(to:CGPoint(x:mid.x,y:mid.y-8*grow));context.addLine(to:CGPoint(x:mid.x+16*grow,y:mid.y))
+        context.addLine(to:CGPoint(x:mid.x,y:mid.y+8*grow));context.addLine(to:CGPoint(x:mid.x-16*grow,y:mid.y));context.closePath()
         context.setStrokeColor(CanvasTheme.accentFill.copy(alpha:alpha) ?? CanvasTheme.accentFill);context.setLineWidth(2)
-        context.strokeEllipse(in:ring)
+        context.strokePath()
     }
     private func drawHoverTag(in context:CGContext) {
         guard let person = hoveredPerson,host.explorationInputReady,!overlay.active,let actor = host.stage.actors[person],
@@ -2266,10 +2311,10 @@ final class OriginalCampaignView:NSView,EngineTimedView {
                 }
                 if let actor = talkTarget(at:CGPoint(x:x,y:y)) { try host.talk(to:actor.person) }
                 else {
-                    let gx = Int(floor((x-CGFloat(v[0])+CGFloat(host.stage.camera[0]))/16))
-                    let gy = Int(floor((y-CGFloat(v[1])+CGFloat(host.stage.camera[1])-CGFloat(8*(gx&1)))/16))
-                    try host.walk(to:GridPoint(x:gx,y:gy))
-                    walkMarker = (GridPoint(x:gx,y:gy),Date())
+                    if let cell = townTarget(atMap:CGPoint(x:x,y:y)) {
+                        try host.walk(to:cell)
+                        walkMarker = (cell,Date())
+                    }
                 }
             } else { try host.acknowledge() }
         } catch { recordInputError(error) }

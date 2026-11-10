@@ -146,6 +146,19 @@ func selfTests() throws {
               "auto advance is off by default and 보통 reads a line for 0.8 to 2.5 seconds")
     try check(abs(DialoguePace.readingSeconds(twenty,speed:0)-1.6) < 0.001 && abs(DialoguePace.readingSeconds(twenty,speed:2)-0.4) < 0.001 &&
               DialoguePace.readingSeconds(long,speed:2) == 1.5,"느리게 and 빠르게 bracket 보통")
+    // Town clicks read the 32×16 diamond lattice and turn a click on a
+    // building or beside the path into its door or the path.
+    let centre = OriginalTownPointer.center(GridPoint(x:3,y:2))
+    try check(centre == CGPoint(x:64,y:48) && OriginalTownPointer.cell(at:centre,width:8,height:6) == GridPoint(x:3,y:2) &&
+              OriginalTownPointer.cell(at:CGPoint(x:centre.x+15,y:centre.y),width:8,height:6) == GridPoint(x:3,y:2) &&
+              OriginalTownPointer.cell(at:CGPoint(x:centre.x+8,y:centre.y+7),width:8,height:6) != GridPoint(x:3,y:2),
+              "a point picks the diamond that holds it")
+    var lattice = Array(repeating:255,count:48)
+    lattice[2*8+3] = 7;lattice[5*8+0] = 127;lattice[5*8+1] = 127
+    try check(OriginalTownPointer.target(at:CGPoint(x:centre.x+30,y:centre.y-20),walk:lattice,width:8,height:6) == GridPoint(x:3,y:2) &&
+              OriginalTownPointer.target(at:OriginalTownPointer.center(GridPoint(x:1,y:5)),walk:lattice,width:8,height:6) == GridPoint(x:1,y:5) &&
+              OriginalTownPointer.target(at:CGPoint(x:400,y:10),walk:lattice,width:8,height:6) == nil,
+              "a click near a door enters it, a path cell walks there, and far clicks do nothing")
     // MAIN24BD6 places the merchant by palace room type (DS:3838), not by index.
     var merchant = OriginalShopCatalog.Merchant(person:374,x:15,y:11,sourceFacing:4,music:15)
     try check(!merchant.hosts(palaceIndex:10),"without the type table no room hosts the merchant")

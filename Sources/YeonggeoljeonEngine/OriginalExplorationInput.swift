@@ -18,6 +18,47 @@ struct OriginalExplorationFacing:Codable,Equatable {var person:Int;var nativeDir
 /// MAIN252A1..253B4: settlement fallbacks after an unmatched kind2 probe.
 /// Marker7C leaves to the world, 7D returns through saved context7A76, 7E has
 /// no built-in, and every other key enters room/palace map 2000|key.
+/// Engine pointer over a settlement's walk grid. The grid is a lattice of
+/// 32×16 diamonds centred at (16x+16, 16y+8(x&1)+8) in map pixels: drawn
+/// that way the walk masks tile the road art exactly (town maps 0..11), and
+/// actors stand with their feet at that centre's lower half. Which cell
+/// MAIN reads under its own pointer is not traced; this mapping is the art's.
+enum OriginalTownPointer {
+    static func center(_ cell:GridPoint) -> CGPoint { CGPoint(x:16*cell.x+16,y:16*cell.y+8*(cell.x&1)+8) }
+    /// The diamond that holds a map-pixel point, if any.
+    static func cell(at point:CGPoint,width:Int,height:Int) -> GridPoint? {
+        var best:(cell:GridPoint,distance:CGFloat)?
+        let column = Int(floor(point.x/16))
+        for x in (column-2)...(column+1) where (0..<width).contains(x) {
+            let row = Int(floor((point.y-CGFloat(8*(x&1)))/16))
+            for y in (row-1)...(row+1) where (0..<height).contains(y) {
+                let c = center(GridPoint(x:x,y:y)),distance = abs(point.x-c.x)/16+abs(point.y-c.y)/8
+                if best == nil || distance < best!.distance { best = (GridPoint(x:x,y:y),distance) }
+            }
+        }
+        guard let found = best,found.distance <= 1.0001 else { return nil }
+        return found.cell
+    }
+    /// The cell a click means: the walkable one under it; otherwise the door
+    /// (any marker) nearest a click on a building, within 96 pixels, unless a
+    /// walkable cell within 48 pixels is clearly nearer. Distance counts rows
+    /// twice, as the lattice is twice as wide as it is tall.
+    static func target(at point:CGPoint,walk:[Int],width:Int,height:Int) -> GridPoint? {
+        guard walk.count == width*height else { return nil }
+        if let cell = cell(at:point,width:width,height:height),walk[cell.y*width+cell.x]&0x80 == 0 { return cell }
+        var door:(cell:GridPoint,distance:CGFloat)?,floor:(cell:GridPoint,distance:CGFloat)?
+        for y in 0..<height {
+            for x in 0..<width where walk[y*width+x]&0x80 == 0 {
+                let c = center(GridPoint(x:x,y:y)),distance = hypot(point.x-c.x,(point.y-c.y)*2)
+                if walk[y*width+x] != 127 {
+                    if distance <= 96,door == nil || distance < door!.distance { door = (GridPoint(x:x,y:y),distance) }
+                } else if distance <= 48,floor == nil || distance < floor!.distance { floor = (GridPoint(x:x,y:y),distance) }
+            }
+        }
+        if let near = floor,let entry = door { return near.distance+24 < entry.distance ? near.cell : entry.cell }
+        return door?.cell ?? floor?.cell
+    }
+}
 enum OriginalSettlementBuiltin:Codable,Equatable {
     case roomEntry(marker:Int)
     case worldExit
