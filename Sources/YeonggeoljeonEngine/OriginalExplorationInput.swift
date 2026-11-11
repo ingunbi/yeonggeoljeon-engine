@@ -49,7 +49,8 @@ enum OriginalTownPointer {
         var door:(cell:GridPoint,distance:CGFloat)?,floor:(cell:GridPoint,distance:CGFloat)?
         for y in 0..<height {
             for x in 0..<width where walk[y*width+x]&0x80 == 0 {
-                let c = center(GridPoint(x:x,y:y)),distance = hypot(point.x-c.x,(point.y-c.y)*2)
+                let c = center(GridPoint(x:x,y:y)),dx:CGFloat = point.x-c.x,dy:CGFloat = (point.y-c.y)*2
+                let distance:CGFloat = (dx*dx+dy*dy).squareRoot()
                 if walk[y*width+x] != 127 {
                     if distance <= 96,door == nil || distance < door!.distance { door = (GridPoint(x:x,y:y),distance) }
                 } else if distance <= 48,floor == nil || distance < floor!.distance { floor = (GridPoint(x:x,y:y),distance) }

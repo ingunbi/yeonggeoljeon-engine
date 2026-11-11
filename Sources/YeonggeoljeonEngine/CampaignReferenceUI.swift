@@ -49,12 +49,21 @@ extension CampaignManagementUI {
     func showObservedShops(query:String = "",selected:Int = 0,onClose:@escaping()->Void) {
         let sourceIdentity = try? host.currentShopSourceIdentity()
         let needle = query.trimmingCharacters(in:.whitespacesAndNewlines)
-        let records = host.extras.observedShops.visits.sorted {$0.sequence > $1.sequence}.flatMap {visit in visit.items.map {(visit,$0)}}.filter {visit,item in
-            needle.isEmpty || (visit.cityName+" "+item.name+" "+item.description).range(of:needle,options:[.caseInsensitive,.diacriticInsensitive]) != nil
+        // Plain loops and explicit types: older compilers time out on one long chain here.
+        var records:[(ObservedShopStock.Visit,ObservedShopStock.Item)] = []
+        for visit in host.extras.observedShops.visits.sorted(by:{ $0.sequence > $1.sequence }) {
+            for item in visit.items {
+                let text:String = visit.cityName+" "+item.name+" "+item.description
+                if needle.isEmpty || text.range(of:needle,options:[.caseInsensitive,.diacriticInsensitive]) != nil { records.append((visit,item)) }
+            }
         }
-        let values:[CanvasSheet.Row] = records.map {visit,item in
-            .init(label:item.name,value:visit.cityName+" · \(item.price)",detail:.init(heading:item.name,body:item.description,
-                list:["마지막 확인 정보이며 현재 재고·가격을 보장하지 않습니다.",visit.matchesSource(sourceIdentity) ? "현재 원본 자료와 일치합니다." : "자료가 다르거나 식별값이 없어 현재 도시로 연결하지 않습니다."],facts:[("도시",visit.cityName),("장",visit.chapter == 0 ? "서장" : "제\(visit.chapter)장"),("확인한 가격",String(item.price)),("관측 순서","\(visit.sequence+1)")]))
+        var values:[CanvasSheet.Row] = []
+        for (visit,item) in records {
+            let match:String = visit.matchesSource(sourceIdentity) ? "현재 원본 자료와 일치합니다." : "자료가 다르거나 식별값이 없어 현재 도시로 연결하지 않습니다."
+            let chapter:String = visit.chapter == 0 ? "서장" : "제\(visit.chapter)장"
+            let facts:[(label:String,value:String)] = [("도시",visit.cityName),("장",chapter),("확인한 가격",String(item.price)),("관측 순서","\(visit.sequence+1)")]
+            let detail = CanvasSheet.Detail(heading:item.name,body:item.description,list:["마지막 확인 정보이며 현재 재고·가격을 보장하지 않습니다.",match],facts:facts)
+            values.append(CanvasSheet.Row(label:item.name,value:visit.cityName+" · \(item.price)",detail:detail))
         }
         rows(title:"방문 상점 판매품 기록",line:records.isEmpty ? "실제로 확인한 판매품 기록이 없거나 검색 결과가 없습니다." : "방문해서 본 판매 목록만 표시합니다.",values:values,selected:selected,buttons:["검색","닫기"],onButton:{button in
             guard button == 0 else {onClose();return}
