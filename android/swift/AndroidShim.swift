@@ -67,9 +67,10 @@ final class CGContext {
     let height:Int
     private(set) var bytes:[UInt8]
     var interpolationQuality:CGInterpolationQuality = .default
-    private var alpha = 1.0
+    // Alpha belongs to the graphics state, so saveGState/restoreGState bracket it like the real CGContext.
+    private var alpha:Double {get {state.alpha} set {state.alpha = newValue}}
     func setAlpha(_ value:CGFloat) {alpha = Double(value)}
-    private struct State {var sx:Double = 1,sy:Double = 1,tx:Double = 0,ty:Double = 0,clip:(x0:Int,y0:Int,x1:Int,y1:Int)? = nil}
+    private struct State {var alpha:Double = 1,sx:Double = 1,sy:Double = 1,tx:Double = 0,ty:Double = 0,clip:(x0:Int,y0:Int,x1:Int,y1:Int)? = nil}
     private var state = State()
     private var stack:[State] = []
     private var fillColor = CGColor(gray:0,alpha:1)

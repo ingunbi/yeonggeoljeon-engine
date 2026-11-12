@@ -85,11 +85,14 @@ final class AndroidBattleRenderer {
                 context.saveGState();if unit.scriptFlags&0x80 != 0 {context.setAlpha(0.58)}
                 place(picture,box);context.restoreGState()
             }
-            let bar = CGRect(x:box.minX+3,y:box.maxY-5,width:box.width-6,height:4)
-            context.setFillColor(CGColor(gray:0,alpha:0.8));context.fill(bar)
-            context.setFillColor(unit.enemy ? CGColor(red:1,green:0.3,blue:0.3,alpha:1) : CGColor(red:0.3,green:0.9,blue:0.7,alpha:1))
+            // A slim bar under the unit, only once it is hurt or while it is selected, so full-strength units stay clean.
             let share = min(1,max(0,Double(person.rawTroops)/Double(max(1,maximum))))
-            context.fill(CGRect(x:bar.minX,y:bar.minY,width:bar.width*share,height:bar.height))
+            if share < 1 || unit.slot == selectedSlot {
+                let bar = CGRect(x:box.minX+box.width*0.2,y:box.maxY-4,width:box.width*0.6,height:3)
+                context.setFillColor(CGColor(gray:0,alpha:0.55));context.fill(bar.insetBy(dx:-1,dy:-1))
+                context.setFillColor(unit.enemy ? CGColor(red:1,green:0.3,blue:0.3,alpha:1) : CGColor(red:0.3,green:0.9,blue:0.7,alpha:1))
+                context.fill(CGRect(x:bar.minX,y:bar.minY,width:bar.width*share,height:bar.height))
+            }
             if unit.slot == selectedSlot {
                 context.setStrokeColor(CGColor(red:1,green:0.85,blue:0.1,alpha:1));context.setLineWidth(3);context.stroke(box.insetBy(dx:2,dy:2))
             }
