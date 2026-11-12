@@ -12,15 +12,16 @@ struct IPadBattleCanvas:UIViewRepresentable {
     let selectedSlot:Int?
     let highlighted:Set<GridPoint>
     let animation:OriginalBattleAnimator
+    var idlePhase:UInt8 = 0
     let onCellTap:(GridPoint)->Void
 
     func makeUIView(context:Context)->IPadBattleScrollView {
         let view = IPadBattleScrollView()
-        view.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,animation:animation,onCellTap:onCellTap)
+        view.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,animation:animation,idlePhase:idlePhase,onCellTap:onCellTap)
         return view
     }
     func updateUIView(_ view:IPadBattleScrollView,context:Context) {
-        view.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,animation:animation,onCellTap:onCellTap)
+        view.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,animation:animation,idlePhase:idlePhase,onCellTap:onCellTap)
     }
     static func dismantleUIView(_ view:IPadBattleScrollView,coordinator:()) {
         view.board.onCellTap = nil;view.delegate = nil
@@ -55,7 +56,7 @@ final class IPadBattleScrollView:UIScrollView,UIScrollViewDelegate,UIGestureReco
         isAccessibilityElement = false
     }
     required init?(coder:NSCoder) {fatalError("init(coder:) is not supported")}
-    func update(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,animation:OriginalBattleAnimator,onCellTap:@escaping(GridPoint)->Void) {
+    func update(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,animation:OriginalBattleAnimator,idlePhase:UInt8 = 0,onCellTap:@escaping(GridPoint)->Void) {
         let identity = ObjectIdentifier(session),changed = currentSession != identity
         if changed {
             currentSession = identity;setZoomScale(1,animated:false)
@@ -69,7 +70,7 @@ final class IPadBattleScrollView:UIScrollView,UIScrollViewDelegate,UIGestureReco
         } else if lastSelection != selectedSlot,let slot = selectedSlot,let unit = session.units[slot],unit.status == 2,
                   !unit.enemy || unit.scriptFlags&0x20 != 0 {pendingFocus = unit.position}
         lastSelection = selectedSlot
-        board.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,animation:animation,onCellTap:onCellTap)
+        board.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,animation:animation,idlePhase:idlePhase,onCellTap:onCellTap)
         issueLabel.text = board.presentationIssue;issueLabel.isHidden = board.presentationIssue == nil
         setNeedsLayout()
     }
@@ -181,7 +182,7 @@ final class IPadBattleDrawingView:UIView {
         do {renderer = try OriginalBattleSpriteRenderer(root:data.root)}
         catch {imageIssue = [imageIssue,String(describing:error)].compactMap {$0}.joined(separator:"\n")}
     }
-    fileprivate func update(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,animation:OriginalBattleAnimator,onCellTap:@escaping(GridPoint)->Void) {
+    fileprivate func update(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,animation:OriginalBattleAnimator,idlePhase:UInt8 = 0,onCellTap:@escaping(GridPoint)->Void) {
         if resourceKey != data.root.path+"/"+session.definition.id {prepareImages(session:session,data:data)}
         self.onCellTap = onCellTap;self.selectedSlot = selectedSlot;self.animation = animation
         self.highlighted = Set(highlighted.filter(geometry.contains))
@@ -197,7 +198,7 @@ final class IPadBattleDrawingView:UIView {
                   let maximum = try? OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:session.combat) else {return nil}
             let walker = animation.walker.flatMap {$0.slot == unit.slot ? $0 : nil}
             let picture = walker.flatMap {try? renderer?.image(unit:unit,classID:person.classID,direction:$0.direction,stepPixels:$0.stepPixels)}
-                ?? (try? renderer?.image(unit:unit,classID:person.classID))
+                ?? (try? renderer?.image(unit:unit,classID:person.classID,phase:idlePhase))
             return UnitPicture(slot:unit.slot,point:unit.position,name:person.name,level:person.level,troops:person.rawTroops,maximum:maximum,
                 enemy:unit.enemy,flags:unit.scriptFlags,image:picture,walking:walker.map {CGPoint(x:$0.x,y:$0.y)})
         }

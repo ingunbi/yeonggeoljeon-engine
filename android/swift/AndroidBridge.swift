@@ -90,7 +90,7 @@ private func pointer(_ text:UnsafePointer<CChar>?) -> String {text.map {String(c
         if let battle = game.session {
             // The map picture only changes by itself while an action plays or the source drives a phase.
             state["busy"] = !game.animator.isIdle || game.combatPlayer != nil || game.flow?.acceptsManualInput != true
-            state["mode"] = "battle";state["battle"] = ["cols":battle.width,"rows":battle.height] as [String:Any]
+            state["idle"] = Int(game.idlePhase);state["mode"] = "battle";state["battle"] = ["cols":battle.width,"rows":battle.height] as [String:Any]
         } else {state["mode"] = game.host?.hasStarted == true ? "field" : "title"}
         let data = (try? JSONSerialization.data(withJSONObject:state)) ?? Data("{}".utf8)
         return cString(String(decoding:data,as:UTF8.self))
@@ -124,7 +124,7 @@ private func copyPixels(_ image:CGImage,into slot:inout UnsafeMutablePointer<UIn
     onGameThread {
         guard let game = store,let session = game.session,let data = game.data else {return nil}
         if battleRenderer == nil {battleRenderer = AndroidBattleRenderer()}
-        guard let image = battleRenderer?.render(session:session,data:data,selectedSlot:game.selectedSlot,highlighted:game.highlighted,animation:game.animator) else {return nil}
+        guard let image = battleRenderer?.render(session:session,data:data,selectedSlot:game.selectedSlot,highlighted:game.highlighted,animation:game.animator,idlePhase:game.idlePhase) else {return nil}
         return copyPixels(image,into:&battleBuffer,width,height)
     }
 }

@@ -170,7 +170,7 @@ private struct IPadGameScreen:View {
             Color.black
             if let host = game.host,host.stage.palette == 3,let battle = host.battle,let data = game.data {
                 IPadBattleCanvas(session:battle,data:data,selectedSlot:game.selectedSlot,
-                    highlighted:game.highlighted,animation:game.animator,onCellTap:game.cellTapped)
+                    highlighted:game.highlighted,animation:game.animator,idlePhase:game.idlePhase,onCellTap:game.cellTapped)
                     .accessibilityHidden(game.prompt != nil)
                 if let banner = game.cueBanner {
                     VStack(spacing:0) {

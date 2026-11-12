@@ -43,7 +43,7 @@ final class AndroidBattleRenderer {
         sprites = try? OriginalBattleSpriteRenderer(root:data.root)
     }
 
-    func render(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,animation:OriginalBattleAnimator) -> CGImage? {
+    func render(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,animation:OriginalBattleAnimator,idlePhase:UInt8 = 0) -> CGImage? {
         if key != data.root.path+"/"+session.definition.id {prepare(session:session,data:data)}
         let width = session.width*cell,height = session.height*cell
         guard width > 0,height > 0,let context = CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,
@@ -76,7 +76,7 @@ final class AndroidBattleRenderer {
                   let person = try? session.people.person(unit.person),
                   let maximum = try? OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:session.combat) else {continue}
             var box = CGRect(x:unit.position.x*cell,y:unit.position.y*cell,width:cell,height:cell)
-            var picture = try? sprites?.image(unit:unit,classID:person.classID)
+            var picture = try? sprites?.image(unit:unit,classID:person.classID,phase:idlePhase)
             if let walker,walker.slot == unit.slot {
                 box = CGRect(x:Int(walker.x*Double(cell)),y:Int(walker.y*Double(cell)),width:cell,height:cell)
                 picture = (try? sprites?.image(unit:unit,classID:person.classID,direction:walker.direction,stepPixels:walker.stepPixels)) ?? picture

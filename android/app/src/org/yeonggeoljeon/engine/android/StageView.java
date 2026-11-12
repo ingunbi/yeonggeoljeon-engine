@@ -67,6 +67,12 @@ final class StageView extends View {
         invalidate();
     }
 
+    @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        // A resized view refits instead of keeping a stale offset, so the picture never jumps.
+        if (zoom == 1f) fitted = false;
+    }
+
     private float fitScale() {
         if (bitmap == null || getWidth() == 0 || getHeight() == 0) return 1f;
         return Math.min(getWidth() / (float) bitmap.getWidth(), getHeight() / (float) bitmap.getHeight());

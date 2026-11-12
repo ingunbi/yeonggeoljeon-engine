@@ -63,6 +63,7 @@ public class MainActivity extends Activity implements StageView.Listener {
     private HorizontalScrollView dockScroll;
     private FrameLayout overlay;
     private TextView hint;
+    private final Runnable hideHint = () -> hint.setVisibility(View.GONE);
     private View loading;
     private Dialog panelDialog;
     private String panelDialogKey = "";
@@ -367,8 +368,12 @@ public class MainActivity extends Activity implements StageView.Listener {
 
         hint = Ui.text(this, "두 손가락으로 확대 · 드래그로 지도 이동", 12, Ui.MUTED, false);
         hint.setGravity(Gravity.CENTER);
-        hint.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 4));
-        column.addView(hint);
+        hint.setPadding(Ui.dp(this, 12), Ui.dp(this, 4), Ui.dp(this, 12), Ui.dp(this, 4));
+        hint.setBackground(Ui.round(this, 0x99000000, 12, 0));
+        hint.setVisibility(View.GONE);
+        FrameLayout.LayoutParams hintParams = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        hintParams.bottomMargin = Ui.dp(this, 8);
+        stageHolder.addView(hint, hintParams);
 
         dockScroll = new HorizontalScrollView(this);
         dockScroll.setHorizontalScrollBarEnabled(false);
@@ -377,6 +382,8 @@ public class MainActivity extends Activity implements StageView.Listener {
         dock.setGravity(Gravity.CENTER);
         dock.setPadding(Ui.dp(this, 12), Ui.dp(this, 10), Ui.dp(this, 12), Ui.dp(this, 10));
         dockScroll.setFillViewport(true);
+        dockScroll.setMinimumHeight(Ui.dp(this, 90));
+        dockScroll.setVisibility(View.INVISIBLE);
         dockScroll.addView(dock, new FrameLayout.LayoutParams(-1, -2));
         column.addView(dockScroll);
 
@@ -403,8 +410,8 @@ public class MainActivity extends Activity implements StageView.Listener {
         String mode = s.optString("mode", "title");
         boolean battle = "battle".equals(mode);
         title.setText(s.optString("header", "영걸전"));
-        status.setText(s.optString("status", ""));
-        status.setVisibility(status.getText().length() == 0 ? View.GONE : View.VISIBLE);
+        String line = s.optString("status", "");
+        status.setText(line.length() == 0 ? " " : line);
         speedButton.setText(s.optInt("speed", 1) + "×");
         boolean fast = s.optInt("speed", 1) > 1;
         speedButton.setTextColor(fast ? Ui.ON_GOLD : Ui.GOLD);
@@ -416,25 +423,41 @@ public class MainActivity extends Activity implements StageView.Listener {
 
         if (battle) stage.show(frame.battle, true, !blocked, frame.newMap);
         else stage.show(frame.field, false, !blocked && s.optBoolean("fieldIsMap"), false);
-        hint.setVisibility(battle && prompt == null ? View.VISIBLE : View.GONE);
+        if (!battle) hint.setVisibility(View.GONE);
+        else if (frame.newMap) {
+            // The pinch/drag tip shows once per map, then gets out of the way.
+            hint.setVisibility(View.VISIBLE);
+            hint.removeCallbacks(hideHint);
+            hint.postDelayed(hideHint, 7000);
+        }
 
-        // Dock
+        // Dock: always keeps its height once the layout is built, so the picture never changes size.
         dock.removeAllViews();
         JSONArray actions = s.optJSONArray("actions");
-        dockScroll.setVisibility(started && actions != null && actions.length() > 0 ? View.VISIBLE : View.GONE);
-        if (started && actions != null) {
+        boolean showDock = started && actions != null && actions.length() > 0;
+        dockScroll.setVisibility(showDock ? View.VISIBLE : View.INVISIBLE);
+        if (showDock) {
             for (int i = 0; i < actions.length(); i++) {
                 JSONObject a = actions.optJSONObject(i);
-                TextView b = Ui.text(this, a.optString("title"), 15, Ui.GOLD, true);
-                b.setGravity(Gravity.CENTER);
-                b.setSingleLine();
-                b.setBackground(Ui.round(this, Ui.GLASS, 14, 0));
-                b.setAlpha(a.optBoolean("enabled", true) && !blocked ? 1f : 0.35f);
                 final String id = a.optString("id");
-                if (a.optBoolean("enabled", true) && !blocked) b.setOnClickListener(v -> perform(2, id));
+                boolean usable = a.optBoolean("enabled", true) && !blocked;
+                boolean primary = "turn".equals(id);
+                int tone = primary ? Ui.ON_GOLD : Ui.GOLD;
+                LinearLayout b = new LinearLayout(this);
+                b.setOrientation(LinearLayout.VERTICAL);
+                b.setGravity(Gravity.CENTER);
+                b.setBackground(Ui.round(this, primary ? Ui.GOLD : Ui.GLASS, 16, primary ? 0 : 0x33F5C96B));
+                b.setAlpha(usable ? 1f : 0.35f);
+                IconView icon = new IconView(this, id, tone);
+                b.addView(icon, Ui.lp(Ui.dp(this, 26), Ui.dp(this, 26)));
+                TextView label = Ui.text(this, a.optString("title"), 14, tone, true);
+                label.setGravity(Gravity.CENTER);
+                label.setSingleLine();
+                b.addView(label, Ui.lp(-2, -2));
+                if (usable) b.setOnClickListener(v -> perform(2, id));
                 boolean wide = actions.length() <= 3;
-                LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(wide ? Ui.dp(this, 150) : 0, Ui.dp(this, 60), wide ? 0f : 1f);
-                p.leftMargin = p.rightMargin = Ui.dp(this, 4);
+                LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(wide ? Ui.dp(this, 150) : 0, Ui.dp(this, 68), wide ? 0f : 1f);
+                p.leftMargin = p.rightMargin = Ui.dp(this, 5);
                 dock.addView(b, p);
             }
         }

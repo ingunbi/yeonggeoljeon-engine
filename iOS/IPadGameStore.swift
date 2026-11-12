@@ -106,6 +106,9 @@ struct IPadPanel {
     private var timer:Timer?
     private var active = true
     private var suspendedRequest = false
+    /// A suspend-save that keeps playing instead of returning to the title (a tablet's quick save).
+    private var suspendContinues = false
+    private var transientNoticeUntil:Double?
     private var queuedNotice:IPadPanel?
     private var pendingBattleStart:(snapshot:OriginalCampaignResume,title:String)?
     private var capturedBattle:ObjectIdentifier?
@@ -275,8 +278,16 @@ struct IPadPanel {
     }
     /// One fixed simulation quantum per callback. Background time is never
     /// accumulated or caught up after scene activation.
+    /// The original flips every waiting unit between two frames (research: battle idle phase).
+    private(set) var idlePhase:UInt8 = 0
+    private var idleClock = 0.0
     func tick() {
         guard active,error == nil,let host else {return}
+        if let until = transientNoticeUntil,ProcessInfo.processInfo.systemUptime >= until {transientNoticeUntil = nil;saveNotice = nil;refresh()}
+        if isBattle {
+            idleClock += 1.0/30
+            if idleClock >= 24*OriginalBattleAnimator.tick {idleClock = 0;idlePhase ^= 1;revision += 1}
+        }
         do {
             if try completeSuspendIfReady() {return}
             if menu == nil,paceDialogue() {return}
@@ -360,7 +371,7 @@ struct IPadPanel {
     private func refresh() {
         guard let host else {revision += 1;return}
         header = isBattle ? host.battle?.definition.name ?? "전투" : "영걸전"
-        if suspendedRequest {status = "중단 저장 대기 중 · 현재 명령을 마치면 저장하고 타이틀로 이동합니다."}
+        if suspendedRequest {status = suspendContinues ? "중단 저장 대기 중 · 현재 명령을 마치면 저장합니다." : "중단 저장 대기 중 · 현재 명령을 마치면 저장하고 타이틀로 이동합니다."}
         else if let battle = session {status = "\(battle.turns.roundIndex+1)턴 · "+(flow?.acceptsManualInput == true ? "부대를 선택하세요." : "부대의 행동을 진행하고 있습니다.")}
         else {status = host.playerStatus ?? host.notice ?? (host.explorationInputReady ? "목적지나 인물을 선택하세요." : "")}
         if let saveNotice {status += " · "+saveNotice}
@@ -720,10 +731,13 @@ struct IPadPanel {
     func showMenu() {
         guard let host else {return}
         if !host.hasStarted {menu = titlePanel();return}
-        var rows = [action("load","불러오기") {[weak self] in self?.showLoad()},action("save","일반 저장",enabled:host.fieldMenuReady || host.saveRequest != nil) {[weak self] in self?.showSave()},
+        let canSave = host.fieldMenuReady || host.saveRequest != nil
+        var rows = [action("load","불러오기") {[weak self] in self?.showLoad()},
+            action("save","일반 저장",canSave ? "슬롯 5칸 · 여러 번 불러올 수 있습니다" : session != nil ? "전투 중에는 아래 '중단 저장하고 계속'을 쓰세요" : "대사나 연출이 끝난 뒤 저장할 수 있습니다",enabled:canSave) {[weak self] in self?.showSave()},
+            action("quick-suspend","중단 저장하고 계속","별도 1칸 · 전투 중에도 가능 · 이어하기 성공 시 소모") {[weak self] in self?.askSuspend(continues:true)},
             action("suspend","중단 저장 후 타이틀로","별도 1칸 · 이어하기 성공 시 소모") {[weak self] in self?.askSuspend()},
             action("resume","중단 이어하기") {[weak self] in self?.askResume()}]
-        if suspendedRequest {rows.append(action("cancel-suspend","중단 저장 요청 취소") {[weak self] in self?.suspendedRequest = false;self?.closeMenu()})}
+        if suspendedRequest {rows.append(action("cancel-suspend","중단 저장 요청 취소") {[weak self] in self?.suspendedRequest = false;self?.suspendContinues = false;self?.closeMenu()})}
         if let battle = session {
             rows.append(action("objective","승리조건") {[weak self] in self?.menu = .init(title:"승리조건",body:host.vm.state.objectiveText ?? "현재 목표 정보가 없습니다.",actions:[self?.backAction()].compactMap {$0})})
             rows.append(action("records","전투 결과 기록","현재 전투 \(battle.resultLog.entries.count)건") {[weak self] in self?.showResults()})
@@ -926,21 +940,27 @@ struct IPadPanel {
             askLoad {snapshot}
         } catch {self.error = "일반 저장 파일을 불러오지 못했습니다. 현재 진행과 파일은 그대로입니다.\n\(error)"}
     }
-    private func askSuspend() {
+    private func askSuspend(continues:Bool = false) {
         run {
             let entry = try SuspendSaveStore(directory:saveRoot).entry()
-            confirm("중단 저장",(entry == nil ? "" : "기존 중단 저장 1칸을 덮어씁니다.\n")+"안전한 지점에서 현재 진행을 저장하고 타이틀로 이동합니다. 이어하기 성공 시 소모됩니다.") {[weak self] in
-                self?.suspendedRequest = true;self?.menu = nil;self?.run {_ = try self?.completeSuspendIfReady()}
+            let tail = continues ? "안전한 지점에서 현재 진행을 저장하고 계속 이어서 합니다. 이어하기 성공 시 소모됩니다." : "안전한 지점에서 현재 진행을 저장하고 타이틀로 이동합니다. 이어하기 성공 시 소모됩니다."
+            confirm("중단 저장",(entry == nil ? "" : "기존 중단 저장 1칸을 덮어씁니다.\n")+tail) {[weak self] in
+                self?.suspendedRequest = true;self?.suspendContinues = continues;self?.menu = nil;self?.run {_ = try self?.completeSuspendIfReady()}
             }
         }
     }
     @discardableResult private func completeSuspendIfReady() throws -> Bool {
         guard suspendedRequest,let host,let data,let snapshot = try host.suspendSnapshot(battleFlow:flow) else {return false}
+        if suspendContinues {
+            suspendedRequest = false;suspendContinues = false
+            try SuspendSaveStore(directory:saveRoot).write(snapshot,title:header)
+            saveNotice = "중단 저장 완료";transientNoticeUntil = ProcessInfo.processInfo.systemUptime+4;refresh();return false
+        }
         do {
             let next = try OriginalCampaignHost(data:data,rng:OriginalRNG(state:1))
             try SuspendSaveStore(directory:saveRoot).write(snapshot,title:header)
             install(next);suspendedRequest = false;menu = titlePanel();refresh();return true
-        } catch {suspendedRequest = false;throw error}
+        } catch {suspendedRequest = false;suspendContinues = false;throw error}
     }
     private func askResume() {
         run {
