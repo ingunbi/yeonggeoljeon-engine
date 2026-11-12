@@ -11,15 +11,16 @@ struct IPadBattleCanvas:UIViewRepresentable {
     let data:DataSet
     let selectedSlot:Int?
     let highlighted:Set<GridPoint>
+    let animation:OriginalBattleAnimator
     let onCellTap:(GridPoint)->Void
 
     func makeUIView(context:Context)->IPadBattleScrollView {
         let view = IPadBattleScrollView()
-        view.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,onCellTap:onCellTap)
+        view.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,animation:animation,onCellTap:onCellTap)
         return view
     }
     func updateUIView(_ view:IPadBattleScrollView,context:Context) {
-        view.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,onCellTap:onCellTap)
+        view.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,animation:animation,onCellTap:onCellTap)
     }
     static func dismantleUIView(_ view:IPadBattleScrollView,coordinator:()) {
         view.board.onCellTap = nil;view.delegate = nil
@@ -54,7 +55,7 @@ final class IPadBattleScrollView:UIScrollView,UIScrollViewDelegate,UIGestureReco
         isAccessibilityElement = false
     }
     required init?(coder:NSCoder) {fatalError("init(coder:) is not supported")}
-    func update(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,onCellTap:@escaping(GridPoint)->Void) {
+    func update(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,animation:OriginalBattleAnimator,onCellTap:@escaping(GridPoint)->Void) {
         let identity = ObjectIdentifier(session),changed = currentSession != identity
         if changed {
             currentSession = identity;setZoomScale(1,animated:false)
@@ -68,7 +69,7 @@ final class IPadBattleScrollView:UIScrollView,UIScrollViewDelegate,UIGestureReco
         } else if lastSelection != selectedSlot,let slot = selectedSlot,let unit = session.units[slot],unit.status == 2,
                   !unit.enemy || unit.scriptFlags&0x20 != 0 {pendingFocus = unit.position}
         lastSelection = selectedSlot
-        board.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,onCellTap:onCellTap)
+        board.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,animation:animation,onCellTap:onCellTap)
         issueLabel.text = board.presentationIssue;issueLabel.isHidden = board.presentationIssue == nil
         setNeedsLayout()
     }
@@ -120,7 +121,10 @@ final class IPadBattleDrawingView:UIView {
     private struct UnitPicture {
         var slot:Int;var point:GridPoint;var name:String;var level:Int;var troops:Int;var maximum:Int
         var enemy:Bool;var flags:UInt8;var image:CGImage?
+        /// Set while the unit walks: its place in cells, between the two cells it crosses.
+        var walking:CGPoint?
     }
+    private var animation = OriginalBattleAnimator()
     private var selectedSlot:Int?
     private var highlighted:Set<GridPoint> = []
     private var units:[UnitPicture] = []
@@ -177,9 +181,9 @@ final class IPadBattleDrawingView:UIView {
         do {renderer = try OriginalBattleSpriteRenderer(root:data.root)}
         catch {imageIssue = [imageIssue,String(describing:error)].compactMap {$0}.joined(separator:"\n")}
     }
-    fileprivate func update(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,onCellTap:@escaping(GridPoint)->Void) {
+    fileprivate func update(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,animation:OriginalBattleAnimator,onCellTap:@escaping(GridPoint)->Void) {
         if resourceKey != data.root.path+"/"+session.definition.id {prepareImages(session:session,data:data)}
-        self.onCellTap = onCellTap;self.selectedSlot = selectedSlot
+        self.onCellTap = onCellTap;self.selectedSlot = selectedSlot;self.animation = animation
         self.highlighted = Set(highlighted.filter(geometry.contains))
         pictures = session.pictureTiles ?? baseline
         changedTileIssue = nil
@@ -191,8 +195,11 @@ final class IPadBattleDrawingView:UIView {
             guard unit.status == 2,(!unit.enemy || unit.scriptFlags&0x20 != 0),geometry.contains(unit.position),
                   let person = try? session.people.person(unit.person),
                   let maximum = try? OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:session.combat) else {return nil}
+            let walker = animation.walker.flatMap {$0.slot == unit.slot ? $0 : nil}
+            let picture = walker.flatMap {try? renderer?.image(unit:unit,classID:person.classID,direction:$0.direction,stepPixels:$0.stepPixels)}
+                ?? (try? renderer?.image(unit:unit,classID:person.classID))
             return UnitPicture(slot:unit.slot,point:unit.position,name:person.name,level:person.level,troops:person.rawTroops,maximum:maximum,
-                enemy:unit.enemy,flags:unit.scriptFlags,image:try? renderer?.image(unit:unit,classID:person.classID))
+                enemy:unit.enemy,flags:unit.scriptFlags,image:picture,walking:walker.map {CGPoint(x:$0.x,y:$0.y)})
         }
         updateAccessibility();setNeedsDisplay()
     }
@@ -258,8 +265,10 @@ final class IPadBattleDrawingView:UIView {
             // The inset corner also makes reachable cells identifiable by shape.
             context.move(to:CGPoint(x:box.minX+4,y:box.minY+11));context.addLine(to:CGPoint(x:box.minX+4,y:box.minY+4));context.addLine(to:CGPoint(x:box.minX+11,y:box.minY+4));context.strokePath()
         }
+        let side = geometry.cellSide
         for unit in units {
-            let box = geometry.rect(unit.point)
+            var box = geometry.rect(unit.point)
+            if let place = unit.walking {box = CGRect(x:place.x*side,y:place.y*side,width:side,height:side)}
             guard rect.intersects(box) else {continue}
             if let image = unit.image {
                 context.saveGState();if unit.flags&0x80 != 0 {context.setAlpha(0.58)}
@@ -273,7 +282,24 @@ final class IPadBattleDrawingView:UIView {
                 context.setStrokeColor(UIColor.systemYellow.cgColor);context.setLineWidth(3);context.stroke(box.insetBy(dx:2,dy:2))
             }
         }
-
+        drawCues(context,side:side)
+    }
+    /// Strikes, shots and damage numbers of the action that is playing.
+    private func drawCues(_ context:CGContext,side:CGFloat) {
+        if let effect = animation.effect,let image = (try? renderer?.effectImage(effect.frame)) ?? nil {
+            Renderer.image(image,in:CGRect(x:CGFloat(effect.halfX)*side/2,y:CGFloat(effect.halfY)*side/2,width:side,height:side),context:context)
+        }
+        if let shot = animation.shot,let image = (try? renderer?.shotImage(shot.frame)) ?? nil {
+            let quarter = side/4
+            Renderer.image(image,in:CGRect(x:CGFloat(shot.x)*side+quarter,y:CGFloat(shot.y)*side+quarter,width:quarter*2,height:quarter*2),context:context)
+        }
+        if let number = animation.number,number.visible,let unit = units.first(where:{$0.slot == number.slot}) {
+            let box = geometry.rect(unit.point),badge = CGRect(x:box.midX-24,y:box.midY-11,width:48,height:22)
+            context.setFillColor(UIColor(red:0.06,green:0.07,blue:0.11,alpha:0.92).cgColor)
+            context.addPath(UIBezierPath(roundedRect:badge,cornerRadius:6).cgPath);context.fillPath()
+            let recovery = number.color == 15
+            drawText(String(number.value),in:badge.offsetBy(dx:0,dy:2),color:recovery ? UIColor.systemMint : UIColor(red:1,green:0.86,blue:0.44,alpha:1),size:15)
+        }
     }
     private func drawText(_ text:String,in rect:CGRect,color:UIColor,size:CGFloat) {
         let paragraph = NSMutableParagraphStyle();paragraph.alignment = .center;paragraph.lineBreakMode = .byWordWrapping

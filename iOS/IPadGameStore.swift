@@ -10,6 +10,22 @@ struct IPadAction:Identifiable {
     var enabled:Bool = true
     var perform:()->Void
 }
+/// What the battle screen shows about the unit being looked at.
+struct IPadUnitInfo {
+    var slot:Int
+    var name:String
+    var className:String
+    var level:Int
+    var troops:Int
+    var maxTroops:Int
+    var morale:Int
+    var mp:Int
+    var maxMP:Int
+    var terrain:String
+    var enemy:Bool
+    var confused:Bool
+    var portrait:CGImage?
+}
 struct IPadPanel {
     enum Style {case panel,dialogue}
     var title:String
@@ -42,6 +58,7 @@ struct IPadPanel {
     static func message(_ error:Error) -> String {
         var text = String(describing:error)
         for prefix in ["Illegal battle action: ","Invalid: "] where text.hasPrefix(prefix) {text = String(text.dropFirst(prefix.count))}
+        if text.contains("outside the manual friendly input gate") {return "이 부대는 지금 직접 조작할 수 없습니다."}
         if text.contains("world city selection is unavailable") {return "지금은 그곳을 고를 수 없습니다. 인물·목적지 목록에서 고르세요."}
         return text
     }
@@ -50,6 +67,9 @@ struct IPadPanel {
     @Published var skipping = false
     /// Simulation steps per timer callback: 1, 2 or 4. Only the pace changes, never a step's rules.
     @Published private(set) var speedFactor = 1
+    /// The map's action timeline: walks, shots, strikes and damage numbers play here.
+    private(set) var animator = OriginalBattleAnimator()
+    private var afterCues:(()->Void)?
     private var lineSeen:(text:String,since:TimeInterval)?
     private var skipPhase = 0
     private var renderer:Renderer?
@@ -73,7 +93,7 @@ struct IPadPanel {
     private enum TargetMode {case move,attack,strategy(Int),item(Int),give(Int)}
     var isBattle:Bool {host?.stage.palette == 3 && host?.battle != nil && host?.ending == nil}
     var session:OriginalBattleSession? {isBattle ? host?.battle : nil}
-    var canAct:Bool {active && error == nil && menu == nil && prompt == nil && host?.battleInputReady == true && flow?.acceptsManualInput == true && !suspendedRequest}
+    var canAct:Bool {active && animator.isIdle && afterCues == nil && error == nil && menu == nil && prompt == nil && host?.battleInputReady == true && flow?.acceptsManualInput == true && !suspendedRequest}
 
     /// Explicit roots and disabled timers let local verification inspect the
     /// real controller without touching a device's or a Mac user's saves.
@@ -85,6 +105,7 @@ struct IPadPanel {
             self.data = data;renderer = try Renderer(data)
             combatCatalog = try? OriginalCombatCatalog.load(from:root.appendingPathComponent("combat-view.json"))
             if enablesAudio,let music = try? OriginalMusicCatalog.load(from:root.appendingPathComponent("music.json")) {audio = OriginalAudio(catalog:music)}
+            audio?.volume = OriginalSettings.current.volume
             try prepareTitle()
         } catch {self.error = Self.message(error);status = "게임을 열지 못했습니다."}
         if startsTimer {
@@ -101,6 +122,31 @@ struct IPadPanel {
     func cycleSpeed() {speedFactor = speedFactor == 1 ? 2 : (speedFactor == 2 ? 4 : 1)}
     func toggleSkip() {skipping.toggle();if skipping {dialogueAuto = false}}
     func advanceDialogue() {prompt?.actions.first?.perform()}
+    /// A battle notice (level up, phase change, a failed strategy) over the map.
+    var cueBanner:(text:String,waits:Bool)? {
+        guard let notice = animator.notice else {return nil}
+        let text = noticeText(notice)
+        return text.isEmpty ? nil : (text,notice.waitsForInput)
+    }
+    func dismissCueNotice() {if animator.notice != nil {animator.dismissNotice()}}
+    private func play(_ cues:[OriginalBattleCue],then done:(()->Void)? = nil) {
+        guard !cues.isEmpty else {done?();return}
+        animator.play(cues,options:1);afterCues = done;revision += 1
+    }
+    /// Zoomed combat scenes are not drawn on the tablet; the result still shows as a number on the map.
+    private func mapCues(_ cues:[OriginalBattleCue]) -> [OriginalBattleCue] {
+        let policy = CombatPresentationPolicy(mode:.none,importantPersonIDs:[],showsDuels:false)
+        var result:[OriginalBattleCue] = []
+        for cue in cues {
+            if case .combat(let snapshot) = cue {result += policy.abbreviatedCues(for:snapshot)} else {result.append(cue)}
+        }
+        return result
+    }
+    private func playHeldCues(_ flow:OriginalBattleFlow) -> Bool {
+        let cues = mapCues(flow.takeCues())
+        guard !cues.isEmpty else {return false}
+        play(cues);return true
+    }
     /// Auto and skip only decide when the tap that closes a line is sent.
     private func paceDialogue() -> Bool {
         guard let current = prompt else {lineSeen = nil;return false}
@@ -164,6 +210,11 @@ struct IPadPanel {
             if try completeSuspendIfReady() {return}
             if menu == nil,paceDialogue() {return}
             guard menu == nil,prompt == nil else {return}
+            if !animator.isIdle {
+                for sound in animator.advance(Double(speedFactor)/30) {audio?.playEffect(sound)}
+                if animator.isIdle,let done = afterCues {afterCues = nil;done()}
+                revision += 1;return
+            }
             for step in 0..<speedFactor {
                 try host.advance(microseconds:33_333)
                 try synchronizeBattle()
@@ -189,10 +240,11 @@ struct IPadPanel {
             value.onAcceptedInput = {[weak self] in self?.accepted($0)}
             // Holding source continuations does not require a desktop view.
             // The map refreshes after committed results; dialogue still blocks.
-            value.presentsNativeActions = false;flow = value
+            value.presentsNativeActions = true;value.emitsCombatPresentationCues = true;flow = value
             selectedSlot = battle.pendingMovementSlots.first
         }
         guard let flow,host.battleInputReady else {return}
+        if !animator.isIdle || afterCues != nil {return}
         if battle.turns.stage == .unstarted {
             if capturedBattle != ObjectIdentifier(battle),var snapshot = try host.battleStartSnapshot() {
                 capturedBattle = ObjectIdentifier(battle)
@@ -205,7 +257,11 @@ struct IPadPanel {
                 saveBattleStart()
             }
             try flow.start()
-        } else if flow.suspended {try flow.resumeSourceFlow()}
+        } else if flow.suspended {
+            if playHeldCues(flow) {return}
+            try flow.resumeSourceFlow()
+            _ = playHeldCues(flow)
+        }
         if flow.canLeaveBattle {
             if host.extras.battleArchives.active != nil {
                 do {try archive?.finish(host:host,progress:&host.extras.battleArchives)}
@@ -314,6 +370,8 @@ struct IPadPanel {
         var result:[IPadAction] = []
         if isBattle {
             if let slot = selectedSlot,let unit = session?.units[slot],!unit.enemy {
+                // A unit the source plays itself (an ally AI unit, an acted unit) can only be looked at.
+                let canAct = self.canAct && (try? session?.requireManualUnit(slot)) != nil
                 result += [action("move","이동",enabled:canAct && unit.scriptFlags&0x40 == 0) {[weak self] in self?.beginMove(slot)},
                     action("attack","공격",enabled:canAct) {[weak self] in self?.beginAttack(slot)},
                     action("strategies","책략",enabled:canAct) {[weak self] in self?.showStrategies(slot)},
@@ -383,7 +441,7 @@ struct IPadPanel {
             }
             guard let target else {clearSelection();return}
             selectedSlot = target.slot;highlighted = []
-            if target.enemy || OriginalBattleCommand.denial(target) != nil {showUnit(target.slot);return}
+            if target.enemy || OriginalBattleCommand.denial(target) != nil {return}
             if target.scriptFlags&0x40 != 0 {targetMode = nil;return}
             highlighted = Set(try battle.reachable(target.slot));targetMode = .move
         }
@@ -417,7 +475,12 @@ struct IPadPanel {
         guard let battle = session else {return}
         let forecast = try? battle.attackForecast(slot,target:target)
         confirm("공격",personName(battle.units[target]?.person)+" 공격"+(forecast.map {" · 예상 피해 \($0.damage)"} ?? "")) {[weak self] in
-            self?.run {_ = try self?.flow?.manualAttack(slot,target:target);self?.clearSelection()}
+            self?.run {
+                guard let self,let flow = self.flow else {return}
+                let cues = try flow.beginManualAttack(slot,target:target)
+                self.clearSelection()
+                self.play(self.mapCues(cues)) {[weak self] in self?.run {_ = try self?.flow?.finishManualOperation()}}
+            }
         }
     }
     private func showStrategies(_ slot:Int) {
@@ -516,6 +579,23 @@ struct IPadPanel {
     private func itemName(_ id:Int)->String {host?.source.combat.items.first {$0.id == id}?.name ?? "도구 \(id)"}
     private func strategyName(_ id:Int)->String {let names = host?.story.screens?.battle.commands.strategyNames ?? [];return names.indices.contains(id) ? names[id] : "책략 \(id)"}
     private func noticeText(_ value:OriginalBattleNotice)->String {combatCatalog?.text(value,person:{self.personName($0)},strategy:{self.strategyName($0)}) ?? "전투 보상과 성장 결과가 반영되었습니다."}
+    /// The selected unit, or the enemy last tapped, as the info card reads it.
+    var unitInfo:IPadUnitInfo? {
+        guard let battle = session,let slot = selectedSlot,let unit = battle.units[slot],unit.status == 2,
+              !unit.enemy || unit.scriptFlags&0x20 != 0,let person = try? battle.people.person(unit.person) else {return nil}
+        let commands = host?.story.screens?.battle.commands
+        let classes = commands?.classNames ?? [],terrains = commands?.terrain.names ?? []
+        let maxTroops = (try? OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:battle.combat)) ?? person.rawTroops
+        var maxMP = Int(unit.mp)
+        if let stats = try? battle.people.stats(unit.person,morale:100),let value = try? OriginalCombat.maxMP(stats:stats) {maxMP = Int(value)}
+        let terrainID = Int(battle.terrain[unit.position.y*battle.width+unit.position.x])
+        let className = classes.indices.contains(person.classID) ? classes[person.classID] : "병과 \(person.classID)"
+        let terrain = terrains.indices.contains(terrainID) ? terrains[terrainID] : "지형 \(terrainID)"
+        return IPadUnitInfo(slot:slot,name:person.name,className:className,level:person.level,troops:person.rawTroops,maxTroops:max(1,maxTroops),
+            morale:unit.morale,mp:Int(unit.mp),maxMP:max(1,maxMP),terrain:terrain,enemy:unit.enemy,confused:unit.scriptFlags&2 != 0,
+            portrait:portraitImage(person:unit.person,palette:host?.stage.palette ?? 0))
+    }
+    func showSelectedUnit() {if let slot = selectedSlot {showUnit(slot)}}
     private func showUnit(_ slot:Int) {
         guard let battle = session,let unit = battle.units[slot],let person = try? battle.people.person(unit.person) else {return}
         menu = .init(title:person.name,body:"Lv.\(person.level) · 병력 \(person.rawTroops) · 사기 \(unit.morale) · MP \(unit.mp)",actions:[action("learning","책략 습득표") {[weak self] in self?.showLearning(slot)},backAction()])
@@ -565,8 +645,35 @@ struct IPadPanel {
             rows.append(action("records","전투 결과 기록","현재 전투 \(battle.resultLog.entries.count)건") {[weak self] in self?.showResults()})
             if let slot = selectedSlot {rows.append(action("officer","선택 장수 정보") {[weak self] in self?.showUnit(slot)})}
         }
+        rows.append(action("settings","설정","소리 · 대사 속도 · 진행 속도") {[weak self] in self?.showSettings()})
+        if let battle = session,flow?.acceptsManualInput == true,flow?.retreatAllowed == true,let texts = host.framework?.battleMenu {
+            _ = battle
+            rows.append(action("retreat","총퇴각","전투 시작 시점으로 돌아갑니다") {[weak self] in
+                self?.confirm("총퇴각",texts.retreat.confirm.text) {self?.run {try self?.flow?.requestRetreat();self?.clearSelection();self?.menu = nil}}
+            })
+        }
         rows.append(action("title","타이틀로") {[weak self] in self?.confirm("타이틀로","저장하지 않은 진행은 사라집니다.") {self?.run {try self?.prepareTitle()}}})
         rows.append(backAction());menu = .init(title:"게임 메뉴",body:"일반 저장 · 전투 시작 저장 · 중단 저장",actions:rows)
+    }
+    /// Options that take effect at once and stay on this device.
+    func showSettings() {
+        let pace = DialoguePace.shared
+        let volume = OriginalSettings.current.volume
+        let volumeLabel = "\(Int((volume*100).rounded()))%"
+        menu = .init(title:"설정",body:"고르면 바로 적용되고 이 기기에 저장됩니다.",actions:[
+            action("setting-music","배경음악",OriginalAudio.musicEnabled ? "켬" : "끔") {[weak self] in
+                OriginalAudio.musicEnabled.toggle();self?.audio?.select(self?.host?.vm.state.music);self?.showSettings()},
+            action("setting-effects","효과음",OriginalAudio.effectsEnabled ? "켬" : "끔") {[weak self] in
+                OriginalAudio.effectsEnabled.toggle();self?.showSettings()},
+            action("setting-volume","소리 크기",volumeLabel) {[weak self] in
+                let steps:[Float] = [0.25,0.5,0.75,1],next = steps.first {$0 > volume+0.01} ?? steps[0]
+                var settings = OriginalSettings.current;settings.volume = next;OriginalSettings.current = settings
+                self?.audio?.volume = next;self?.showSettings()},
+            action("setting-auto","대사 자동 넘김 속도",DialoguePace.speedLabels[min(max(0,pace.speed),2)]) {[weak self] in
+                pace.speed = (pace.speed+1)%3;self?.showSettings()},
+            action("setting-speed","진행 속도","\(speedFactor)× · 위쪽 버튼으로도 바꿉니다") {[weak self] in
+                self?.cycleSpeed();self?.showSettings()},
+            backAction()])
     }
     private func showResults() {
         guard let battle = session else {return}

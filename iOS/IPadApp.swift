@@ -170,8 +170,28 @@ private struct IPadGameScreen:View {
             Color.black
             if let host = game.host,host.stage.palette == 3,let battle = host.battle,let data = game.data {
                 IPadBattleCanvas(session:battle,data:data,selectedSlot:game.selectedSlot,
-                    highlighted:game.highlighted,onCellTap:game.cellTapped)
+                    highlighted:game.highlighted,animation:game.animator,onCellTap:game.cellTapped)
                     .accessibilityHidden(game.prompt != nil)
+                if let banner = game.cueBanner {
+                    VStack(spacing:0) {
+                        Spacer(minLength:0)
+                        Button {game.dismissCueNotice()} label: {
+                            VStack(spacing:4) {
+                                Text(banner.text).font(.headline).multilineTextAlignment(.center)
+                                if banner.waits {Text("눌러서 계속").font(.caption).foregroundStyle(.secondary)}
+                            }.padding(.horizontal,22).padding(.vertical,14)
+                                .background(IPadTheme.ink.opacity(0.94),in:RoundedRectangle(cornerRadius:16))
+                                .overlay(RoundedRectangle(cornerRadius:16).stroke(IPadTheme.gold.opacity(0.5),lineWidth:1))
+                        }.buttonStyle(.plain)
+                        Spacer(minLength:0)
+                    }.padding(24)
+                }
+                if game.prompt == nil,let info = game.unitInfo {
+                    VStack(spacing:0) {
+                        HStack(spacing:0) {IPadUnitCard(info:info,onDetail:game.showSelectedUnit);Spacer(minLength:0)}
+                        Spacer(minLength:0)
+                    }.padding(10)
+                }
             } else if let image = game.fieldImage {
                 IPadFieldView(image:image,touchable:game.fieldIsMap && game.prompt == nil && game.menu == nil,
                               onTap:game.fieldTapped,onScroll:game.scrollField)
@@ -221,6 +241,47 @@ private struct IPadGameScreen:View {
         .frame(maxWidth:.infinity)
         .padding(.horizontal,12).padding(.vertical,10)
         .background(IPadTheme.ink.ignoresSafeArea(edges:.bottom)).disabled(game.prompt != nil)
+    }
+}
+
+/// The unit being looked at: portrait, name, class and the three gauges.
+private struct IPadUnitCard:View {
+    let info:IPadUnitInfo
+    let onDetail:()->Void
+    var body:some View {
+        let accent:Color = info.enemy ? Color(red:1,green:0.55,blue:0.5) : IPadTheme.gold
+        return HStack(alignment:.top,spacing:10) {
+            if let portrait = info.portrait {
+                Image(decorative:portrait,scale:1).resizable().interpolation(.none).aspectRatio(contentMode:.fit)
+                    .frame(width:52,height:65).clipShape(RoundedRectangle(cornerRadius:6))
+            }
+            VStack(alignment:.leading,spacing:5) {
+                HStack(spacing:6) {
+                    Text(info.name).font(.headline).foregroundStyle(accent)
+                    Text("\(info.className) Lv.\(info.level)").font(.caption).foregroundStyle(.secondary)
+                }
+                gauge("병력",info.troops,info.maxTroops,Color(red:0.45,green:0.8,blue:0.5))
+                gauge("사기",info.morale,100,Color(red:0.95,green:0.75,blue:0.35))
+                gauge("MP",info.mp,info.maxMP,Color(red:0.45,green:0.65,blue:1))
+                HStack(spacing:8) {
+                    Text("지형 "+info.terrain+(info.confused ? " · 혼란" : "")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength:4)
+                    Button("상세",action:onDetail).font(.caption.weight(.semibold)).buttonStyle(.bordered).controlSize(.small)
+                }
+            }
+        }
+        .padding(10).frame(width:290)
+        .background(IPadTheme.ink.opacity(0.92),in:RoundedRectangle(cornerRadius:14))
+        .overlay(RoundedRectangle(cornerRadius:14).stroke(Color.white.opacity(0.2),lineWidth:1))
+        .accessibilityElement(children:.combine)
+        .accessibilityLabel("\(info.name), \(info.className) 레벨 \(info.level), 병력 \(info.troops) 중 \(info.maxTroops), 사기 \(info.morale), MP \(info.mp)")
+    }
+    private func gauge(_ title:String,_ value:Int,_ limit:Int,_ color:Color) -> some View {
+        HStack(spacing:6) {
+            Text(title).font(.caption2).foregroundStyle(.secondary).frame(width:28,alignment:.leading)
+            ProgressView(value:Double(min(max(0,value),limit)),total:Double(max(1,limit))).tint(color)
+            Text("\(value)").font(.caption2.monospacedDigit()).frame(width:40,alignment:.trailing)
+        }
     }
 }
 
