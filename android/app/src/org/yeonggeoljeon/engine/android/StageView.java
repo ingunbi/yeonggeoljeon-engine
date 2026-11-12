@@ -6,6 +6,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.RectF;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
@@ -58,6 +59,18 @@ final class StageView extends View {
 
     void setListener(Listener value) { listener = value; }
 
+    private Runnable transformListener;
+    /** Called after every draw so views pinned to a map cell can follow pan and zoom. */
+    void setOnTransform(Runnable value) { transformListener = value; }
+
+    /** Where a battle cell is on screen right now. */
+    RectF cellRect(int x, int y) {
+        layoutMatrix();
+        float[] p = {x * CELL, y * CELL, (x + 1) * CELL, (y + 1) * CELL};
+        matrix.mapPoints(p);
+        return new RectF(p[0], p[1], p[2], p[3]);
+    }
+
     /** `battleMode` keeps the zoom and pan across redraws of the same map. */
     void show(Bitmap image, boolean battleMode, boolean canTouch, boolean newMap) {
         bitmap = image;
@@ -103,6 +116,7 @@ final class StageView extends View {
         if (bitmap == null) return;
         layoutMatrix();
         canvas.drawBitmap(bitmap, matrix, paint);
+        if (battle && transformListener != null) transformListener.run();
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {

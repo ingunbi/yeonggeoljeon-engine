@@ -180,6 +180,8 @@ final class CGContext {
             }
         }
     }
+    /// Starts from a finished picture of the same size, so a frame only draws what moved.
+    func load(_ image:CGImage) {if image.width == width,image.height == height {bytes = image.pixels}}
     func makeImage() -> CGImage? {CGImage(width:width,height:height,pixels:bytes)}
 }
 

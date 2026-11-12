@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
 import android.graphics.Bitmap;
+import android.graphics.RectF;
 import android.graphics.drawable.BitmapDrawable;
 import android.media.AudioFormat;
 import android.media.AudioTrack;
@@ -63,6 +64,11 @@ public class MainActivity extends Activity implements StageView.Listener {
     private HorizontalScrollView dockScroll;
     private FrameLayout overlay;
     private TextView hint;
+    private FrameLayout stageHolder;
+    private LinearLayout unitMenu;
+    private int selectedX = -1, selectedY = -1;
+    private String lastUiKey = "";
+    private static final java.util.Set<String> UNIT_COMMANDS = new java.util.HashSet<>(java.util.Arrays.asList("move", "attack", "strategies", "items", "wait", "cancel"));
     private final Runnable hideHint = () -> hint.setVisibility(View.GONE);
     private View loading;
     private Dialog panelDialog;
@@ -305,7 +311,14 @@ public class MainActivity extends Activity implements StageView.Listener {
 
     private void call(Runnable r) { if (game != null && running) game.post(() -> { r.run(); lastRevision = -1; forceFrame = true; }); }
     private void command(int code) { call(() -> Native.command(code)); }
-    private void perform(int scope, String id) { call(() -> Native.perform(scope, id)); }
+    private void perform(int scope, String id) {
+        android.util.Log.d("yg-ui", "perform " + scope + " " + id);
+        call(() -> {
+            long t0 = System.nanoTime();
+            Native.perform(scope, id);
+            android.util.Log.d("yg-ui", "performed " + id + " in " + (System.nanoTime() - t0) / 1_000_000 + "ms");
+        });
+    }
     @Override public void onFieldTap(double x, double y) { call(() -> Native.fieldTap(x, y)); }
     @Override public void onFieldScroll(int dx, int dy) { call(() -> Native.fieldScroll(dx, dy)); }
     @Override public void onCellTap(int x, int y) { call(() -> Native.cellTap(x, y)); }
@@ -358,8 +371,9 @@ public class MainActivity extends Activity implements StageView.Listener {
 
         stage = new StageView(this);
         stage.setListener(this);
+        stage.setOnTransform(this::placeUnitMenu);
         // Cards, dialogue and banners sit over the picture only, never over the header or buttons.
-        FrameLayout stageHolder = new FrameLayout(this);
+        stageHolder = new FrameLayout(this);
         stageHolder.addView(stage, new FrameLayout.LayoutParams(-1, -1));
         overlay = new FrameLayout(this);
         overlay.setClickable(false);
@@ -431,10 +445,21 @@ public class MainActivity extends Activity implements StageView.Listener {
             hint.postDelayed(hideHint, 7000);
         }
 
+        // Only the picture changes while a unit walks or the idle frame flips; rebuilding the buttons then would eat taps.
+        s.remove("idle");
+        String uiKey = s.toString();
+        if (uiKey.equals(lastUiKey)) return;
+        lastUiKey = uiKey;
+
         // Dock: always keeps its height once the layout is built, so the picture never changes size.
         dock.removeAllViews();
-        JSONArray actions = s.optJSONArray("actions");
-        boolean showDock = started && actions != null && actions.length() > 0;
+        JSONArray all = s.optJSONArray("actions");
+        JSONArray actions = new JSONArray(), unitActions = new JSONArray();
+        for (int i = 0; all != null && i < all.length(); i++) {
+            JSONObject a = all.optJSONObject(i);
+            (battle && UNIT_COMMANDS.contains(a.optString("id")) ? unitActions : actions).put(a);
+        }
+        boolean showDock = started && actions.length() > 0;
         dockScroll.setVisibility(showDock ? View.VISIBLE : View.INVISIBLE);
         if (showDock) {
             for (int i = 0; i < actions.length(); i++) {
@@ -463,6 +488,54 @@ public class MainActivity extends Activity implements StageView.Listener {
         }
 
         renderOverlay(frame, s, started, prompt, menu, combat);
+        showUnitMenu(unitActions, s.optJSONObject("selected"), blocked || s.optBoolean("busy"));
+    }
+
+    /** The selected unit's commands float beside it instead of sitting in the bottom row. */
+    private void showUnitMenu(JSONArray commands, JSONObject at, boolean hidden) {
+        if (unitMenu != null) { stageHolder.removeView(unitMenu); unitMenu = null; }
+        if (at == null || commands.length() == 0 || hidden) { selectedX = -1; return; }
+        selectedX = at.optInt("x");
+        selectedY = at.optInt("y");
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setBackground(Ui.round(this, 0xF01B2133, 16, Ui.LINE));
+        box.setPadding(Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4));
+        for (int i = 0; i < commands.length(); i++) {
+            JSONObject a = commands.optJSONObject(i);
+            final String id = a.optString("id");
+            boolean usable = a.optBoolean("enabled", true);
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 14), 0);
+            row.setAlpha(usable ? 1f : 0.35f);
+            row.addView(new IconView(this, id, Ui.GOLD), Ui.lp(Ui.dp(this, 22), Ui.dp(this, 22)));
+            TextView label = Ui.text(this, a.optString("title"), 15, Ui.GOLD, true);
+            label.setPadding(Ui.dp(this, 10), 0, 0, 0);
+            label.setSingleLine();
+            row.addView(label, Ui.lp(-2, -2));
+            if (usable) row.setOnClickListener(v -> perform(2, id));
+            box.addView(row, Ui.lp(Ui.dp(this, 128), Ui.dp(this, 46)));
+        }
+        unitMenu = box;
+        stageHolder.addView(box, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START));
+        box.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, orr, ob) -> placeUnitMenu());
+        placeUnitMenu();
+    }
+
+    private void placeUnitMenu() {
+        if (unitMenu == null || selectedX < 0) return;
+        RectF cell = stage.cellRect(selectedX, selectedY);
+        float w = unitMenu.getWidth() > 0 ? unitMenu.getWidth() : Ui.dp(this, 136);
+        float h = unitMenu.getHeight() > 0 ? unitMenu.getHeight() : Ui.dp(this, 6 * 46 + 8);
+        float gap = Ui.dp(this, 8), W = stage.getWidth(), H = stage.getHeight();
+        float x = cell.right + gap;
+        if (x + w > W - gap) x = cell.left - gap - w;
+        x = Math.max(gap, Math.min(x, W - w - gap));
+        float y = Math.max(gap, Math.min(cell.centerY() - h / 2f, H - h - gap));
+        if (unitMenu.getTranslationX() != x) unitMenu.setTranslationX(x);
+        if (unitMenu.getTranslationY() != y) unitMenu.setTranslationY(y);
     }
 
     private void renderOverlay(Frame frame, JSONObject s, boolean started, JSONObject prompt, JSONObject menu, JSONObject combat) {
@@ -651,18 +724,17 @@ public class MainActivity extends Activity implements StageView.Listener {
         wrap.setOnClickListener(v -> command(Native.SKIP_COMBAT));
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setGravity(Gravity.CENTER_VERTICAL);
         col.setPadding(Ui.dp(this, 14), Ui.dp(this, 14), Ui.dp(this, 14), Ui.dp(this, 14));
         Bitmap picture = frame.images.get(c.optString("image"));
+        // The picture takes whatever height the cards leave, so nothing is pushed off the screen.
         FrameLayout shot = new FrameLayout(this);
         if (picture != null) {
             ImageView image = new ImageView(this);
             BitmapDrawable drawable = new BitmapDrawable(getResources(), picture);
             drawable.setFilterBitmap(false);
             image.setImageDrawable(drawable);
-            image.setAdjustViewBounds(true);
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            shot.addView(image, new FrameLayout.LayoutParams(-1, -2));
+            shot.addView(image, new FrameLayout.LayoutParams(-1, -1));
         }
         if (c.has("notice")) {
             TextView n = Ui.text(this, c.optString("notice"), 15, Ui.TEXT, true);
@@ -670,7 +742,7 @@ public class MainActivity extends Activity implements StageView.Listener {
             n.setBackground(Ui.round(this, 0xEB0E1320, 20, 0));
             shot.addView(n, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
         }
-        col.addView(shot, new LinearLayout.LayoutParams(-1, -2));
+        col.addView(shot, new LinearLayout.LayoutParams(-1, 0, 1f));
         LinearLayout sides = new LinearLayout(this);
         sides.setOrientation(LinearLayout.HORIZONTAL);
         sides.setPadding(0, Ui.dp(this, 10), 0, 0);
@@ -690,9 +762,10 @@ public class MainActivity extends Activity implements StageView.Listener {
                 JSONArray g = gauges.optJSONArray(i);
                 page.addView(gauge("", g.optInt(0), g.optInt(1), Ui.GOLD));
             }
-            LinearLayout.LayoutParams pp = Ui.lp(-1, -2);
-            pp.topMargin = Ui.dp(this, 10);
-            col.addView(page, pp);
+            // Over the lower part of the picture rather than below it.
+            FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+            pp.setMargins(Ui.dp(this, 8), 0, Ui.dp(this, 8), Ui.dp(this, 8));
+            shot.addView(page, pp);
         }
         wrap.addView(col, new FrameLayout.LayoutParams(-1, -1));
         TextView skip = Ui.text(this, "건너뛰기 ▸▸", 14, Ui.ON_GOLD, true);
@@ -738,11 +811,13 @@ public class MainActivity extends Activity implements StageView.Listener {
 
     private void showPanel(JSONObject panel, boolean isMenu) {
         if (panel == null) {
+            if (panelDialog != null) android.util.Log.d("yg-ui", "panel closed");
             if (panelDialog != null) { Dialog d = panelDialog; panelDialog = null; panelDialogKey = ""; d.setOnDismissListener(null); d.dismiss(); }
             return;
         }
         String key = (isMenu ? "m" : "p") + panel.toString();
         if (panelDialog != null && panelDialogKey.equals(key)) return;
+        android.util.Log.d("yg-ui", "panel " + panel.optString("title"));
         if (panelDialog != null) { Dialog d = panelDialog; d.setOnDismissListener(null); d.dismiss(); }
         final boolean menu = isMenu;
         Dialog dialog = new Dialog(this);

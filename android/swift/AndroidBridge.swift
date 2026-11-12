@@ -90,9 +90,12 @@ private func pointer(_ text:UnsafePointer<CChar>?) -> String {text.map {String(c
         if let battle = game.session {
             // The map picture only changes by itself while an action plays or the source drives a phase.
             state["busy"] = !game.animator.isIdle || game.combatPlayer != nil || game.flow?.acceptsManualInput != true
-            state["idle"] = Int(game.idlePhase);state["mode"] = "battle";state["battle"] = ["cols":battle.width,"rows":battle.height] as [String:Any]
+            state["idle"] = Int(game.idlePhase)
+            if let slot = game.selectedSlot,let at = battle.units[slot]?.position {state["selected"] = ["x":at.x,"y":at.y] as [String:Any]}
+            state["mode"] = "battle";state["battle"] = ["cols":battle.width,"rows":battle.height] as [String:Any]
         } else {state["mode"] = game.host?.hasStarted == true ? "field" : "title"}
-        let data = (try? JSONSerialization.data(withJSONObject:state)) ?? Data("{}".utf8)
+        // Sorted keys: Swift dictionaries iterate in a different order per instance, and the app compares these strings.
+        let data = (try? JSONSerialization.data(withJSONObject:state,options:[.sortedKeys])) ?? Data("{}".utf8)
         return cString(String(decoding:data,as:UTF8.self))
     }
 }

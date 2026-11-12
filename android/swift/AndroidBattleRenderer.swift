@@ -18,6 +18,8 @@ final class AndroidBattleRenderer {
     private var sprites:OriginalBattleSpriteRenderer?
     private var font:OriginalFont?
     private let cell = 32
+    private var base:CGImage?
+    private var basePictures:[UInt8] = []
 
     private func load(_ data:DataSet,_ path:String) throws -> CGImage {
         let bytes = try Data(contentsOf:data.containedFile(path))
@@ -44,26 +46,31 @@ final class AndroidBattleRenderer {
     }
 
     func render(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,animation:OriginalBattleAnimator,idlePhase:UInt8 = 0) -> CGImage? {
-        if key != data.root.path+"/"+session.definition.id {prepare(session:session,data:data)}
+        if key != data.root.path+"/"+session.definition.id {prepare(session:session,data:data);base = nil}
         let width = session.width*cell,height = session.height*cell
+        let pictures = session.pictureTiles ?? baseline,columns = session.width*2
         guard width > 0,height > 0,let context = CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,
                                                             space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue) else {return nil}
         // Top-left coordinates: flip once, then every picture is drawn upright.
         context.translateBy(x:0,y:CGFloat(height));context.scaleBy(x:1,y:-1)
-        context.setFillColor(CGColor(gray:0.06,alpha:1));context.fill(CGRect(x:0,y:0,width:width,height:height))
         func place(_ image:CGImage,_ rect:CGRect) {
             context.saveGState()
             context.translateBy(x:rect.minX,y:rect.maxY);context.scaleBy(x:1,y:-1)
             context.draw(image,in:CGRect(x:0,y:0,width:rect.width,height:rect.height))
             context.restoreGState()
         }
-        if let backdrop {place(backdrop,CGRect(x:0,y:0,width:width,height:height))}
-        let pictures = session.pictureTiles ?? baseline,columns = session.width*2
-        if pictures.count == session.width*session.height*4 {
-            for (index,id) in pictures.enumerated() where !baseline.indices.contains(index) || baseline[index] != id {
-                let box = CGRect(x:(index%columns)*16,y:(index/columns)*16,width:16,height:16)
-                if let tile = tiles[Int(id)] {place(tile,box)}
+        // The ground (backdrop and any terrain the story changed) is drawn once and reused until the terrain changes.
+        if let base,basePictures == pictures,base.width == width,base.height == height {context.load(base)}
+        else {
+            context.setFillColor(CGColor(gray:0.06,alpha:1));context.fill(CGRect(x:0,y:0,width:width,height:height))
+            if let backdrop {place(backdrop,CGRect(x:0,y:0,width:width,height:height))}
+            if pictures.count == session.width*session.height*4 {
+                for (index,id) in pictures.enumerated() where !baseline.indices.contains(index) || baseline[index] != id {
+                    let box = CGRect(x:(index%columns)*16,y:(index/columns)*16,width:16,height:16)
+                    if let tile = tiles[Int(id)] {place(tile,box)}
+                }
             }
+            base = context.makeImage();basePictures = pictures
         }
         for point in highlighted where point.x >= 0 && point.y >= 0 && point.x < session.width && point.y < session.height {
             let box = CGRect(x:point.x*cell,y:point.y*cell,width:cell,height:cell).insetBy(dx:1,dy:1)
@@ -93,8 +100,14 @@ final class AndroidBattleRenderer {
                 context.setFillColor(unit.enemy ? CGColor(red:1,green:0.3,blue:0.3,alpha:1) : CGColor(red:0.3,green:0.9,blue:0.7,alpha:1))
                 context.fill(CGRect(x:bar.minX,y:bar.minY,width:bar.width*share,height:bar.height))
             }
-            if unit.slot == selectedSlot {
-                context.setStrokeColor(CGColor(red:1,green:0.85,blue:0.1,alpha:1));context.setLineWidth(3);context.stroke(box.insetBy(dx:2,dy:2))
+            if unit.slot == selectedSlot,walker == nil || walker?.slot != unit.slot {
+                // Four small gold corners instead of a full frame, so the unit stays readable.
+                context.setFillColor(CGColor(red:1,green:0.85,blue:0.1,alpha:1))
+                let r = box.insetBy(dx:1,dy:1),n:CGFloat = 8,t:CGFloat = 2
+                for (x,y,dx,dy) in [(r.minX,r.minY,1.0,1.0),(r.maxX,r.minY,-1.0,1.0),(r.minX,r.maxY,1.0,-1.0),(r.maxX,r.maxY,-1.0,-1.0)] as [(CGFloat,CGFloat,CGFloat,CGFloat)] {
+                    context.fill(CGRect(x:dx > 0 ? x : x-n,y:dy > 0 ? y : y-t,width:n,height:t))
+                    context.fill(CGRect(x:dx > 0 ? x : x-t,y:dy > 0 ? y : y-n,width:t,height:n))
+                }
             }
         }
         if let effect = animation.effect,let image = (try? sprites?.effectImage(effect.frame)) ?? nil {

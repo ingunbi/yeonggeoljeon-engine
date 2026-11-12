@@ -283,8 +283,14 @@ final class IPadBattleDrawingView:UIView {
                 context.setFillColor((unit.enemy ? UIColor.systemRed : UIColor.systemMint).cgColor)
                 context.fill(CGRect(x:bar.minX,y:bar.minY,width:bar.width*share,height:bar.height))
             }
-            if unit.slot == selectedSlot {
-                context.setStrokeColor(UIColor.systemYellow.cgColor);context.setLineWidth(3);context.stroke(box.insetBy(dx:2,dy:2))
+            if unit.slot == selectedSlot,unit.walking == nil {
+                // Four small gold corners instead of a full frame, so the unit stays readable.
+                context.setFillColor(UIColor.systemYellow.cgColor)
+                let r = box.insetBy(dx:1,dy:1),n:CGFloat = 8,t:CGFloat = 2
+                for (x,y,dx,dy) in [(r.minX,r.minY,1.0,1.0),(r.maxX,r.minY,-1.0,1.0),(r.minX,r.maxY,1.0,-1.0),(r.maxX,r.maxY,-1.0,-1.0)] as [(CGFloat,CGFloat,CGFloat,CGFloat)] {
+                    context.fill(CGRect(x:dx > 0 ? x : x-n,y:dy > 0 ? y : y-t,width:n,height:t))
+                    context.fill(CGRect(x:dx > 0 ? x : x-t,y:dy > 0 ? y : y-n,width:t,height:n))
+                }
             }
         }
         drawCues(context,side:side)
