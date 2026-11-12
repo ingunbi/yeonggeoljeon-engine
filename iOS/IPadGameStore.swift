@@ -11,9 +11,13 @@ struct IPadAction:Identifiable {
     var perform:()->Void
 }
 struct IPadPanel {
+    enum Style {case panel,dialogue}
     var title:String
     var body:String
     var actions:[IPadAction]
+    var style:Style = .panel
+    /// A spoken line: the card sits over the picture and a tap anywhere advances it.
+    var portrait:CGImage? = nil
 }
 
 /// Touch input owns no alternative combat rules. Every accepted command goes
@@ -25,10 +29,22 @@ struct IPadPanel {
     @Published var selectedSlot:Int?
     @Published private(set) var highlighted:Set<GridPoint> = []
     @Published private(set) var fieldImage:CGImage?
+    /// True while the image is the cropped map window, so touches can act on it.
+    private(set) var fieldIsMap = false
+    private var portraits:[String:CGImage] = [:]
     @Published private(set) var header = "영걸전"
     @Published private(set) var status = ""
     @Published private(set) var revision = 0
     @Published var error:String?
+
+    /// An error as a player reads it: engine reasons are mostly Korean already, so drop the English
+    /// prefix; the few untranslated ones get a plain sentence.
+    static func message(_ error:Error) -> String {
+        var text = String(describing:error)
+        for prefix in ["Illegal battle action: ","Invalid: "] where text.hasPrefix(prefix) {text = String(text.dropFirst(prefix.count))}
+        if text.contains("world city selection is unavailable") {return "지금은 그곳을 고를 수 없습니다. 인물·목적지 목록에서 고르세요."}
+        return text
+    }
     @Published var menu:IPadPanel?
     private var renderer:Renderer?
     private var audio:OriginalAudio?
@@ -64,7 +80,7 @@ struct IPadPanel {
             combatCatalog = try? OriginalCombatCatalog.load(from:root.appendingPathComponent("combat-view.json"))
             if enablesAudio,let music = try? OriginalMusicCatalog.load(from:root.appendingPathComponent("music.json")) {audio = OriginalAudio(catalog:music)}
             try prepareTitle()
-        } catch {self.error = String(describing:error);status = "게임을 열지 못했습니다."}
+        } catch {self.error = Self.message(error);status = "게임을 열지 못했습니다."}
         if startsTimer {
             timer = Timer.scheduledTimer(withTimeInterval:1.0/30,repeats:true) { [weak self] _ in
                 Task { @MainActor [weak self] in self?.tick() }
@@ -80,7 +96,7 @@ struct IPadPanel {
     private func run(_ body:() throws -> Void) {
         guard active else {return}
         do {try body();try synchronizeBattle();refresh()}
-        catch {self.error = String(describing:error);refresh()}
+        catch {self.error = Self.message(error);refresh()}
     }
     private func install(_ next:OriginalCampaignHost) {
         host = next;next.announcesItems = true
@@ -128,7 +144,7 @@ struct IPadPanel {
             audio?.select(host.vm.state.music)
             for sound in host.takeSounds() {audio?.playEffect(sound)}
             refresh()
-        } catch {self.error = String(describing:error);refresh()}
+        } catch {self.error = Self.message(error);refresh()}
     }
     private func synchronizeBattle() throws {
         guard let host,isBattle,let battle = host.battle else {flow = nil;selectedSlot = nil;highlighted = [];return}
@@ -180,8 +196,16 @@ struct IPadPanel {
         else {status = host.playerStatus ?? host.notice ?? (host.explorationInputReady ? "목적지나 인물을 선택하세요." : "")}
         if let saveNotice {status += " · "+saveNotice}
         if !isBattle {
-            do {fieldImage = try host.ending.map {try renderer?.renderEnding($0).image} ?? renderer?.render(host.stage,screen:host.fieldScreenState(),dialogue:false).image}
-            catch {self.error = String(describing:error)}
+            do {
+                let frame = try host.ending.map {try renderer?.renderEnding($0).image} ?? renderer?.render(host.stage,screen:host.fieldScreenState(),dialogue:false).image
+                // The map window alone: touches map straight onto its pixels.
+                if host.hasStarted,host.ending == nil,host.fieldScreenState() != nil,let frame {
+                    let v = host.stage.viewport
+                    fieldImage = frame.cropping(to:CGRect(x:v[0],y:v[1],width:v[2],height:v[3])) ?? frame
+                    fieldIsMap = true
+                } else {fieldImage = frame;fieldIsMap = false}
+            }
+            catch {self.error = Self.message(error)}
         }
         if let selectedSlot,session?.units[selectedSlot]?.status != 2 {self.selectedSlot = nil;targetMode = nil;highlighted = []}
         revision += 1
@@ -241,7 +265,10 @@ struct IPadPanel {
             switch message {case .gained(let id):item = id;pattern = texts.giftGained;case .declined(let id):item = id;pattern = texts.giftDeclined;case .gaveUp(let id):item = id;pattern = texts.giftGaveUp;case .discarded(let id):item = id;pattern = texts.giftDiscarded}
             return .init(title:"소지품",body:originalFormat(pattern,[itemName(item)]),actions:[action("item-next","확인") {[weak self] in self?.run {try host.acknowledgeItemMessage()}}])
         }
-        if let dialogue = host.stage.dialogue {return .init(title:dialogue.speaker,body:dialogue.text,actions:[action("dialogue","다음") {[weak self] in self?.run {try host.acknowledge()}}])}
+        if let dialogue = host.stage.dialogue {
+            return .init(title:dialogue.speaker,body:dialogue.text,actions:[action("dialogue","다음") {[weak self] in self?.run {try host.acknowledge()}}],
+                         style:.dialogue,portrait:portraitImage(person:dialogue.person,palette:host.stage.palette))
+        }
         if let ending = host.ending,case .unsupported(let frontier) = ending.output {return .init(title:"엔딩 재생 경계",body:frontier.reason,actions:[action("title","타이틀로") {[weak self] in self?.run {try self?.prepareTitle()}}])}
         if host.interpreterReturn != nil {return .init(title:"캠페인 반환",body:host.status,actions:[action("menu","메뉴") {[weak self] in self?.showMenu()}])}
         return nil
@@ -249,7 +276,8 @@ struct IPadPanel {
     var actions:[IPadAction] {
         guard let host else {return []}
         if !host.hasStarted {return [action("title","타이틀 메뉴") {[weak self] in self?.menu = self?.titlePanel()}]}
-        var result = [action("menu","메뉴") {[weak self] in self?.showMenu()}]
+        // The header holds the menu; this row carries only what the scene can do now.
+        var result:[IPadAction] = []
         if isBattle {
             if let slot = selectedSlot,let unit = session?.units[slot],!unit.enemy {
                 result += [action("move","이동",enabled:canAct && unit.scriptFlags&0x40 == 0) {[weak self] in self?.beginMove(slot)},
@@ -264,6 +292,44 @@ struct IPadPanel {
             result.append(action("turn","턴 종료",enabled:canAct) {[weak self] in self?.confirmEndTurn()})
         } else if host.explorationInputReady {result.append(action("destinations","인물·목적지") {[weak self] in self?.showDestinations()})}
         return result
+    }
+    func portraitImage(person:Int?,palette:Int) -> CGImage? {
+        guard let person,let data,let value = data.resources.portraits?[String(person)],let path = Renderer.portraitPath(value,palette:palette) else {return nil}
+        if let cached = portraits[path] {return cached}
+        guard let url = try? data.containedFile(path),let image = UIImage(contentsOfFile:url.path)?.cgImage else {return nil}
+        portraits[path] = image;return image
+    }
+    /// A touch on the town, palace or world map, as a point in the map window
+    /// (0...1 in both axes). It does what a click does on the desktop: talk
+    /// to a person, walk to a cell or door, or march to a city.
+    func fieldTapped(_ unit:CGPoint) {
+        guard let host,fieldIsMap,prompt == nil,menu == nil,host.explorationInputReady else {return}
+        let v = host.stage.viewport,camera = host.stage.camera
+        let screen = CGPoint(x:CGFloat(v[0])+unit.x*CGFloat(v[2]),y:CGFloat(v[1])+unit.y*CGFloat(v[3]))
+        run {
+            if host.vm.state.packedMap>>12 == 1 {
+                let chapter = host.vm.state.chapter
+                if let city = host.exploration.cities.first(where:{ city in
+                    guard city.chapter == chapter,city.worldPositionKnown,let cx = city.worldX,let cy = city.worldY else {return false}
+                    // A finger is wider than a 32-pixel icon: the touch target is 48 pixels.
+                    return CGRect(x:CGFloat(v[0]+cx*32-camera[0])-8,y:CGFloat(v[1]+cy*32-camera[1])-8,width:48,height:48).contains(screen)
+                }) {try host.travel(toCity:city.id)}
+                return
+            }
+            let actor = host.stage.actors.values.sorted{$0.registration > $1.registration}.first {actor in
+                actor.person != 0 && CGRect(x:CGFloat(v[0]+16*actor.position.x-camera[0])-6,y:CGFloat(v[1]+16*actor.position.y+8*(actor.position.x&1)-24-camera[1])-6,width:44,height:52).contains(screen)
+            }
+            if let actor {try host.talk(to:actor.person);return}
+            guard let map = host.stage.currentMap,let width = map.walkWidth,let height = map.walkHeight,let walk = map.walkBytes else {return}
+            let local = CGPoint(x:screen.x-CGFloat(v[0])+CGFloat(camera[0]),y:screen.y-CGFloat(v[1])+CGFloat(camera[1]))
+            if let cell = OriginalTownPointer.target(at:local,walk:walk,width:width,height:height) {try host.walk(to:cell)}
+        }
+    }
+    /// Dragging the world map moves its view a tile at a time (the desktop
+    /// scroll steps), so a larger map can be explored by touch.
+    func scrollField(tilesX:Int,tilesY:Int) {
+        guard let host,fieldIsMap,prompt == nil,menu == nil,host.explorationInputReady,host.vm.state.packedMap>>12 == 1 else {return}
+        if host.scrollWorld(dx:tilesX,dy:tilesY,step:1) {refresh()}
     }
     func cellTapped(_ point:GridPoint) {
         guard canAct,let battle = session else {return}
