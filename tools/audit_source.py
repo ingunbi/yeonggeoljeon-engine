@@ -12,9 +12,9 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ALLOWED_SUFFIXES = {".swift", ".py", ".md", ".toml", ".yml", ".yaml"}
+ALLOWED_SUFFIXES = {".swift", ".py", ".md", ".toml", ".yml", ".yaml", ".java", ".c"}
 ALLOWED_NAMES = {".gitignore", ".gitattributes", "LICENSE"}
-ALLOWED_MANIFESTS = {"iOS/SharedSources.json"}
+ALLOWED_MANIFESTS = {"iOS/SharedSources.json", "android/app/AndroidManifest.xml"}
 EXCLUDED_ROOTS = {".git", "build", ".local", ".build", ".swiftpm", "__pycache__"}
 
 

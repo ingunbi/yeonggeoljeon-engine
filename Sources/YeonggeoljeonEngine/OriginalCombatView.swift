@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#if !os(Android)
 import CoreGraphics
+#else
+import Foundation
+#endif
 import Foundation
 
 /// The enlarged combat view (MAIN32318..3350B). It draws no random numbers and

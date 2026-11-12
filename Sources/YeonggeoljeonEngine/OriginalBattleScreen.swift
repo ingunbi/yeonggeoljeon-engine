@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
+#if !os(Android)
 import CoreGraphics
+#else
+import Foundation
+#endif
 #if canImport(AppKit)
 import AppKit
 #endif

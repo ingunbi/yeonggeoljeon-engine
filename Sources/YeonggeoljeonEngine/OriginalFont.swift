@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#if !os(Android)
 import CoreGraphics
+#else
+import Foundation
+#endif
 import Foundation
 
 /// MAIN's own text (research/original-main-font.md). CF5:0D44 reads one glyph
@@ -25,8 +29,12 @@ struct OriginalFont {
     }
     /// The CP949 bytes MAIN keeps for a decoded string.
     static func bytes(_ text:String) -> [UInt8] {
+        #if os(Android)
+        return CP949.encode(text)
+        #else
         let encoding = String.Encoding(rawValue:CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosKorean.rawValue)))
         return Array(text.data(using:encoding,allowLossyConversion:true) ?? Data())
+        #endif
     }
     /// CF5:0A2E for printable text: leads A1..C8 take a trail A1..FE; any other
     /// byte is a one-byte code. Control bytes draw nothing and do not advance.

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#if !os(Android)
 import SwiftUI
-import Foundation
 import CoreGraphics
+#endif
+import Foundation
 
 struct IPadAction:Identifiable {
     var id:String
@@ -228,8 +230,13 @@ struct IPadPanel {
         }
         return true
     }
+    #if os(Android)
+    /// The Android host pulls mono samples on its own audio thread.
+    func pullAudio(_ out:UnsafeMutablePointer<Float>,count:Int) {audio?.pull(out,count:count)}
+    #endif
     func setActive(_ value:Bool) {active = value;audio?.setPaused(!value);revision += 1}
-    func closeMenu() {menu = nil;refresh()}
+    /// Before a game has started the title buttons are the menu's floor, so a closed panel returns to them.
+    func closeMenu() {menu = host?.hasStarted == false ? titlePanel() : nil;refresh()}
     private func action(_ id:String,_ title:String,_ subtitle:String = "",enabled:Bool = true,_ body:@escaping()->Void)->IPadAction {
         .init(id:id,title:title,subtitle:subtitle,enabled:enabled,perform:body)
     }
@@ -460,7 +467,11 @@ struct IPadPanel {
     func portraitImage(person:Int?,palette:Int) -> CGImage? {
         guard let person,let data,let value = data.resources.portraits?[String(person)],let path = Renderer.portraitPath(value,palette:palette) else {return nil}
         if let cached = portraits[path] {return cached}
+        #if !os(Android)
         guard let url = try? data.containedFile(path),let image = UIImage(contentsOfFile:url.path)?.cgImage else {return nil}
+        #else
+        guard let url = try? data.containedFile(path),let bytes = try? Data(contentsOf:url),let image = PNGReader.decode(bytes) else {return nil}
+        #endif
         portraits[path] = image;return image
     }
     /// A touch on the town, palace or world map, as a point in the map window

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
+#if !os(Android)
 import CryptoKit
+#else
+import Foundation
+#endif
 
 /// Canonical source-bound identity for a read-only reference. It is never a
 /// replacement for original file hashes or a claim of original runtime parity.

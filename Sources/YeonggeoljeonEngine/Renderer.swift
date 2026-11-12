@@ -1,14 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #if canImport(AppKit)
 import AppKit
-#else
+#elseif !os(Android)
 import UIKit
 private typealias NSFont = UIFont
 private typealias NSColor = UIColor
 #endif
+#if !os(Android)
 import CoreGraphics
+#else
+import Foundation
+#endif
+#if !os(Android)
 import ImageIO
+#else
+import Foundation
+#endif
+#if !os(Android)
 import UniformTypeIdentifiers
+#else
+import Foundation
+#endif
 
 struct ActorRenderProof: Codable {
     var person: Int; var frame: Int; var flip: Bool

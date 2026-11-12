@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
+#if !os(Android)
 import CryptoKit
+#else
+import Foundation
+#endif
 
 /// References belong to the current save; archive payloads live in their own local directory.
 /// Loading an older save therefore cannot unlock later victories.

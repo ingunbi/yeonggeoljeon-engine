@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Android)
+import Android
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// Engine-only, single-use continuation. It lives beside `slots`, never in
 /// the original game directory or one of the ordinary native save slots.

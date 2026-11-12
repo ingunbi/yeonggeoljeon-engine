@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Android)
+import Android
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// Replace operations are injectable for synthetic failure and lock tests.
 /// Reads always use the actual bounded file reader; callers cannot bypass

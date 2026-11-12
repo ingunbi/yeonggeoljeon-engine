@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
+#if !os(Android)
 import CoreGraphics
+#else
+import Foundation
+#endif
+#if !os(Android)
 import ImageIO
+#else
+import Foundation
+#endif
 
 /// Source frame selection belongs to the sprite catalog. This adapter only
 /// owns contained PNG loading and AppKit bitmap validation/cache lifetime.

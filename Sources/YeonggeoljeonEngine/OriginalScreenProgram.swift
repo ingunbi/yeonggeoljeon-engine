@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#if !os(Android)
 import CoreGraphics
+#else
+import Foundation
+#endif
 import Foundation
 
 /// The opening and ending programs as flat display operations. `tools/

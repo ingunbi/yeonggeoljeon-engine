@@ -27,11 +27,30 @@ final class OPL2Chip {
     private var channels = [Channel](repeating:Channel(),count:9)
     private var waveforms = false,noteSelect = 0,deepTremolo = false,deepVibrato = false
     private var counter:UInt32 = 0
-    private static let levels:[Float] = (0...1023).map { pow(10,-Float($0)*0.1875/20) }
+    private static let levels:[Float] = {
+        var table = [Float]()
+        table.reserveCapacity(1024)
+        for index in 0...1023 {
+            let exponent:Float = -Float(index)*0.1875/20
+            table.append(powf(10,exponent))
+        }
+        return table
+    }()
     private static let waves:[[Float]] = {
-        let sine = (0..<1024).map { sin((Float($0)+0.5)*2*Float.pi/1024) }
-        return [sine,sine.enumerated().map { $0.offset < 512 ? $0.element : 0 },sine.map(abs),
-                sine.enumerated().map { $0.offset&256 == 0 ? abs($0.element) : 0 }]
+        var sine = [Float]()
+        sine.reserveCapacity(1024)
+        for index in 0..<1024 {
+            let phase:Float = (Float(index)+0.5)*2*Float.pi/1024
+            sine.append(sinf(phase))
+        }
+        var half = [Float](),rectified = [Float](),quarter = [Float]()
+        for index in 0..<1024 {
+            let value = sine[index]
+            half.append(index < 512 ? value : 0)
+            rectified.append(abs(value))
+            quarter.append(index&256 == 0 ? abs(value) : 0)
+        }
+        return [sine,half,rectified,quarter]
     }()
     /// Increments per 8-step cycle, by rate row.
     private static let increments:[[Int32]] = [

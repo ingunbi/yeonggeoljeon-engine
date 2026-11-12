@@ -3,7 +3,11 @@ import Foundation
 #if canImport(AppKit)
 import AppKit
 #endif
+#if !os(Android)
 import CryptoKit
+#else
+import Foundation
+#endif
 
 /// Only explicit player operations are accepted. Original route/person values
 /// belong to a caller-owned local input file, never to the public driver.

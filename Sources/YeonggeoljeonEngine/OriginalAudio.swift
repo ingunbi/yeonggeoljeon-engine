@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#if !os(Android)
 import AVFoundation
+#else
+import Foundation
+#endif
 
 /// Plays the source's music selection through the native OPL2 chip. The
 /// engine starts with the first song, so tests and replays never open audio.
@@ -15,7 +19,9 @@ final class OriginalAudio {
         set { UserDefaults.standard.set(!newValue,forKey:effectsKey) }
     }
     private let catalog:OriginalMusicCatalog
+    #if !os(Android)
     private let engine = AVAudioEngine()
+    #endif
     private let lock = NSLock()
     private let chip = OPL2Chip()
     private let driver:OriginalMusicDriver
@@ -26,7 +32,16 @@ final class OriginalAudio {
     private var untilInterrupt = 0.0
     /// Frames the output has asked for, for checks on the live path.
     private(set) var renderedFrames = 0
+    #if !os(Android)
     var volume:Float = 1 { didSet { engine.mainMixerNode.outputVolume = volume } }
+    #else
+    var volume:Float = 1
+    /// The Android host pulls mono samples on its own audio thread.
+    func pull(_ samples:UnsafeMutablePointer<Float>,count:Int) {
+        lock.lock();fill(samples,count:count);renderedFrames += count;lock.unlock()
+        if volume != 1 {for i in 0..<count {samples[i] *= volume}}
+    }
+    #endif
     /// A song chosen in the music room plays over the source's selection.
     var audition:Int?
     private static let samplesPerInterrupt = OPL2Chip.sampleRate/OriginalMusicDriver.interruptRate
@@ -77,7 +92,12 @@ final class OriginalAudio {
         driver.fade(8)
         return song
     }
+    #if !os(Android)
     func shutDown() { select(nil);if running { engine.stop();running = false } }
+    #else
+    func shutDown() { select(nil);running = false }
+    #endif
+    #if !os(Android)
     private func start() {
         guard !running,let format = AVAudioFormat(standardFormatWithSampleRate:OPL2Chip.sampleRate,channels:1) else { return }
         let node = AVAudioSourceNode(format:format) { [unowned self] _,_,frames,list in
@@ -90,6 +110,9 @@ final class OriginalAudio {
         engine.connect(node,to:engine.mainMixerNode,format:format)
         running = (try? engine.start()) != nil
     }
+    #else
+    private func start() { running = true }
+    #endif
     private func fill(_ samples:UnsafeMutablePointer<Float>,count:Int) {
         if paused { samples.update(repeating:0,count:count);return }
         var done = 0

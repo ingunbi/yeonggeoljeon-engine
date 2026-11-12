@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
+#if !os(Android)
 import CoreGraphics
+#else
+import Foundation
+#endif
 
 enum BattleMapViewMode:String,Codable,CaseIterable {
     case standard,large,overview
