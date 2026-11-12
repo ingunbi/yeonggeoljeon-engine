@@ -202,6 +202,9 @@ private struct IPadGameScreen:View {
                     Text("삼국지 영걸전").font(.largeTitle.bold())
                 }
             }
+            if let combat = game.combatState {
+                IPadCombatView(state:combat,onTap:game.skipCombatHold,onEnd:game.endCombat)
+            }
             if let panel = game.prompt {
                 if panel.style == .dialogue {
                     // A tap anywhere closes the line; the card never hides the picture.
@@ -241,6 +244,76 @@ private struct IPadGameScreen:View {
         .frame(maxWidth:.infinity)
         .padding(.horizontal,12).padding(.vertical,10)
         .background(IPadTheme.ink.ignoresSafeArea(edges:.bottom)).disabled(game.prompt != nil)
+    }
+}
+
+/// The enlarged combat scene: the picture, both sides' numbers and the result window.
+private struct IPadCombatView:View {
+    let state:IPadCombatState
+    let onTap:()->Void
+    let onEnd:()->Void
+    var body:some View {
+        ZStack(alignment:.topTrailing) {
+            Color.black
+            VStack(spacing:0) {
+                Spacer(minLength:0)
+                VStack(spacing:10) {
+                    if let image = state.image {
+                        Image(decorative:image,scale:1).resizable().interpolation(.none).aspectRatio(contentMode:.fit)
+                            .frame(maxWidth:.infinity).overlay(alignment:.center) {
+                                if let notice = state.notice {
+                                    Text(notice).font(.subheadline.weight(.semibold)).padding(.horizontal,14).padding(.vertical,8)
+                                        .background(IPadTheme.ink.opacity(0.92),in:Capsule())
+                                }
+                            }
+                    } else {Color.black.aspectRatio(2,contentMode:.fit)}
+                    HStack(alignment:.top,spacing:10) {side(state.left);side(state.right)}
+                    if !state.lines.isEmpty || !state.gauges.isEmpty {
+                        VStack(alignment:.leading,spacing:8) {
+                            ForEach(Array(state.lines.enumerated()),id:\.offset) {_,line in Text(line).font(.title3)}
+                            ForEach(Array(state.gauges.enumerated()),id:\.offset) {_,gauge in
+                                HStack {
+                                    ProgressView(value:Double(max(0,min(gauge.value,gauge.maximum))),total:Double(max(1,gauge.maximum))).tint(IPadTheme.gold)
+                                    Text("\(gauge.value)").font(.body.monospacedDigit()).frame(width:56,alignment:.trailing)
+                                }
+                            }
+                        }
+                        .frame(maxWidth:.infinity,alignment:.leading).padding(14)
+                        .background(IPadTheme.ink.opacity(0.92),in:RoundedRectangle(cornerRadius:14))
+                        .overlay(RoundedRectangle(cornerRadius:14).stroke(Color.white.opacity(0.2),lineWidth:1))
+                    }
+                }.padding(14)
+                Spacer(minLength:0)
+            }
+            Button(action:onEnd) {
+                Label("건너뛰기",systemImage:"forward.fill").font(.subheadline.weight(.semibold)).foregroundStyle(IPadTheme.onGold)
+                    .padding(.horizontal,14).frame(minHeight:40).background(Capsule().fill(IPadTheme.gold))
+            }.padding(12)
+        }
+        .contentShape(Rectangle()).onTapGesture(perform:onTap)
+        .accessibilityElement(children:.contain)
+    }
+    private func side(_ info:IPadCombatSide) -> some View {
+        HStack(alignment:.top,spacing:8) {
+            if let portrait = info.portrait {
+                Image(decorative:portrait,scale:1).resizable().interpolation(.none).aspectRatio(contentMode:.fit)
+                    .frame(width:48,height:60).clipShape(RoundedRectangle(cornerRadius:6))
+            }
+            VStack(alignment:.leading,spacing:3) {
+                Text(info.name).font(.headline).foregroundStyle(IPadTheme.gold)
+                Text(info.classLevel).font(.caption).foregroundStyle(.secondary)
+                row(info.valueLabel,"\(info.value)")
+                row("병력","\(info.troops)/\(info.maximum)")
+                row("사기","\(info.morale)")
+                if !info.extraLabel.isEmpty {row(info.extraLabel,info.extraText)}
+            }
+        }
+        .padding(10).frame(maxWidth:.infinity,alignment:.leading)
+        .background(IPadTheme.ink.opacity(0.92),in:RoundedRectangle(cornerRadius:14))
+        .overlay(RoundedRectangle(cornerRadius:14).stroke(Color.white.opacity(0.2),lineWidth:1))
+    }
+    private func row(_ label:String,_ value:String) -> some View {
+        HStack {Text(label).font(.caption2).foregroundStyle(.secondary);Spacer(minLength:4);Text(value).font(.caption.monospacedDigit())}
     }
 }
 

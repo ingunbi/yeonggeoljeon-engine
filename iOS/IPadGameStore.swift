@@ -26,6 +26,27 @@ struct IPadUnitInfo {
     var confused:Bool
     var portrait:CGImage?
 }
+/// One side of the enlarged combat view: who fights and the numbers before the blow.
+struct IPadCombatSide {
+    var name:String
+    var classLevel:String
+    var valueLabel:String
+    var value:Int
+    var troops:Int
+    var maximum:Int
+    var morale:Int
+    var extraLabel:String
+    var extraText:String
+    var portrait:CGImage?
+}
+struct IPadCombatState {
+    var image:CGImage?
+    var left:IPadCombatSide
+    var right:IPadCombatSide
+    var lines:[String]
+    var gauges:[(value:Int,maximum:Int)]
+    var notice:String?
+}
 struct IPadPanel {
     enum Style {case panel,dialogue}
     var title:String
@@ -70,6 +91,12 @@ struct IPadPanel {
     /// The map's action timeline: walks, shots, strikes and damage numbers play here.
     private(set) var animator = OriginalBattleAnimator()
     private var afterCues:(()->Void)?
+    private var combatArt:OriginalCombatArt?
+    /// The enlarged scene that holds the battle while it plays.
+    @Published private(set) var combatPlayer:OriginalCombatPlayer?
+    private var combatRest:[OriginalBattleCue] = []
+    private var combatImage:(key:Int,image:CGImage)?
+    private var hasPresentedCombat = false
     private var lineSeen:(text:String,since:TimeInterval)?
     private var skipPhase = 0
     private var renderer:Renderer?
@@ -93,7 +120,7 @@ struct IPadPanel {
     private enum TargetMode {case move,attack,strategy(Int),item(Int),give(Int)}
     var isBattle:Bool {host?.stage.palette == 3 && host?.battle != nil && host?.ending == nil}
     var session:OriginalBattleSession? {isBattle ? host?.battle : nil}
-    var canAct:Bool {active && animator.isIdle && afterCues == nil && error == nil && menu == nil && prompt == nil && host?.battleInputReady == true && flow?.acceptsManualInput == true && !suspendedRequest}
+    var canAct:Bool {active && animator.isIdle && afterCues == nil && combatPlayer == nil && error == nil && menu == nil && prompt == nil && host?.battleInputReady == true && flow?.acceptsManualInput == true && !suspendedRequest}
 
     /// Explicit roots and disabled timers let local verification inspect the
     /// real controller without touching a device's or a Mac user's saves.
@@ -104,6 +131,7 @@ struct IPadPanel {
             let data = try DataSet(root:root)
             self.data = data;renderer = try Renderer(data)
             combatCatalog = try? OriginalCombatCatalog.load(from:root.appendingPathComponent("combat-view.json"))
+            combatArt = combatCatalog.flatMap {try? OriginalCombatArt(catalog:$0)}
             if enablesAudio,let music = try? OriginalMusicCatalog.load(from:root.appendingPathComponent("music.json")) {audio = OriginalAudio(catalog:music)}
             audio?.volume = OriginalSettings.current.volume
             try prepareTitle()
@@ -133,19 +161,55 @@ struct IPadPanel {
         guard !cues.isEmpty else {done?();return}
         animator.play(cues,options:1);afterCues = done;revision += 1
     }
-    /// Zoomed combat scenes are not drawn on the tablet; the result still shows as a number on the map.
-    private func mapCues(_ cues:[OriginalBattleCue]) -> [OriginalBattleCue] {
-        let policy = CombatPresentationPolicy(mode:.none,importantPersonIDs:[],showsDuels:false)
-        var result:[OriginalBattleCue] = []
-        for cue in cues {
-            if case .combat(let snapshot) = cue {result += policy.abbreviatedCues(for:snapshot)} else {result.append(cue)}
-        }
-        return result
-    }
     private func playHeldCues(_ flow:OriginalBattleFlow) -> Bool {
-        let cues = mapCues(flow.takeCues())
+        let cues = flow.takeCues()
         guard !cues.isEmpty else {return false}
-        play(cues);return true
+        startCues(cues);return true
+    }
+    /// Walks, shots and numbers play on the map; a combat cue opens the enlarged scene
+    /// (or shrinks to a number, by the player's setting) and the cues after it wait.
+    private func startCues(_ cues:[OriginalBattleCue]) {
+        var found:(index:Int,snapshot:OriginalCombatSnapshot)?
+        for (index,cue) in cues.enumerated() {if case .combat(let snapshot) = cue {found = (index,snapshot);break}}
+        guard let found else {play(cues);return}
+        let before = Array(cues[..<found.index]),rest = Array(cues[(found.index+1)...])
+        let begin:()->Void = {[weak self] in self?.beginCombat(found.snapshot,rest:rest)}
+        if before.isEmpty {begin()} else {play(before,then:begin)}
+    }
+    private func beginCombat(_ snapshot:OriginalCombatSnapshot,rest:[OriginalBattleCue]) {
+        let policy = CombatPresentationPolicy(mode:OriginalSettings.current.combatPresentationMode,importantPersonIDs:[],showsDuels:false)
+        if policy.showsCombat(snapshot,hasPresentedCombat:hasPresentedCombat),let art = combatArt,
+           var scene = try? OriginalCombatScene(catalog:art.catalog,snapshot:snapshot) {
+            scene.addResults(attackerName:personName(snapshot.attackerPerson),targetName:personName(snapshot.targetPerson))
+            combatPlayer = OriginalCombatPlayer(scene:scene);combatRest = rest;hasPresentedCombat = true;combatImage = nil;revision += 1
+        } else {startCues(policy.abbreviatedCues(for:snapshot)+rest)}
+    }
+    func skipCombatHold() {combatPlayer?.skip()}
+    func endCombat() {combatPlayer?.finish()}
+    /// The enlarged scene as the screen reads it: picture, both sides, the result window.
+    var combatState:IPadCombatState? {
+        guard let player = combatPlayer,let art = combatArt else {return nil}
+        if let shown = player.picture {
+            let key = shown.layers.hashValue^shown.scroll
+            if combatImage?.key != key,let image = art.picture(shown,scene:player.scene) {combatImage = (key,image)}
+        }
+        let snapshot = player.scene.snapshot,texts = art.catalog.texts,friendly = snapshot.attackerSlot < 15
+        let palette = host?.stage.palette ?? 0
+        func side(_ person:Int,_ classID:Int,_ level:Int,_ label:String,_ value:Int,_ troops:Int,_ maximum:Int,_ morale:Int,_ extra:(String,String)) -> IPadCombatSide {
+            let className = art.catalog.classNames.indices.contains(classID) ? art.catalog.classNames[classID] : ""
+            return IPadCombatSide(name:personName(person),classLevel:originalFormat(texts.level,[String(level),className]),valueLabel:label,value:value,
+                troops:troops,maximum:maximum,morale:morale,extraLabel:extra.0,extraText:extra.1,portrait:portraitImage(person:person,palette:palette))
+        }
+        let terrain = (texts.terrain,"\(snapshot.terrainPercent)%")
+        let attacker = side(snapshot.attackerPerson,snapshot.attackerClass,snapshot.attackerLevel,texts.attack,snapshot.attackValue,
+                            snapshot.attackerTroops,snapshot.attackerMaxTroops,snapshot.attackerMorale,friendly ? (texts.exp,String(snapshot.experience)) : ("",""))
+        let target = side(snapshot.targetPerson,snapshot.targetClass,snapshot.targetLevel,texts.defense,snapshot.defenseValue,
+                          snapshot.targetTroops,snapshot.targetMaxTroops,snapshot.targetMorale,terrain)
+        var left = friendly ? attacker : target,right = friendly ? target : attacker
+        if friendly {left.extraLabel = texts.exp;left.extraText = String(snapshot.experience)} else {right.extraLabel = "";right.extraText = ""}
+        let frame = player.frame
+        return IPadCombatState(image:combatImage?.image,left:left,right:right,lines:frame?.page?.lines.map(\.text) ?? [],
+                               gauges:frame?.page?.gauges.map {($0.value,$0.maximum)} ?? [],notice:frame?.notice)
     }
     /// Auto and skip only decide when the tap that closes a line is sent.
     private func paceDialogue() -> Bool {
@@ -210,6 +274,14 @@ struct IPadPanel {
             if try completeSuspendIfReady() {return}
             if menu == nil,paceDialogue() {return}
             guard menu == nil,prompt == nil else {return}
+            if var player = combatPlayer {
+                for action in player.advance(Double(speedFactor)/30,soundBusy:false) {if case .sound(let id) = action {audio?.playEffect(id)}}
+                if player.finished {
+                    combatPlayer = nil;combatImage = nil
+                    let rest = combatRest;combatRest = [];startCues(rest)
+                } else {combatPlayer = player}
+                revision += 1;return
+            }
             if !animator.isIdle {
                 for sound in animator.advance(Double(speedFactor)/30) {audio?.playEffect(sound)}
                 if animator.isIdle,let done = afterCues {afterCues = nil;done()}
@@ -244,7 +316,7 @@ struct IPadPanel {
             selectedSlot = battle.pendingMovementSlots.first
         }
         guard let flow,host.battleInputReady else {return}
-        if !animator.isIdle || afterCues != nil {return}
+        if !animator.isIdle || afterCues != nil || combatPlayer != nil {return}
         if battle.turns.stage == .unstarted {
             if capturedBattle != ObjectIdentifier(battle),var snapshot = try host.battleStartSnapshot() {
                 capturedBattle = ObjectIdentifier(battle)
@@ -431,7 +503,8 @@ struct IPadPanel {
                 switch mode {
                 case .move:
                     guard highlighted.contains(point) else {return}
-                    _ = try battle.move(slot,to:point);accepted(.init(kind:.battleMove,slot:slot,x:point.x,y:point.y));targetMode = nil;highlighted = []
+                    let path = try battle.move(slot,to:point);accepted(.init(kind:.battleMove,slot:slot,x:point.x,y:point.y));targetMode = nil;highlighted = []
+                    play([.walk(slot:slot,path:path,sound:try? battle.walkSound(slot))])
                 case .attack:if let target,highlighted.contains(point) {confirmAttack(slot,target.slot)}
                 case .strategy(let ability):if let target,highlighted.contains(point) {confirmStrategy(slot,ability,target.slot)}
                 case .item(let item):if let target,highlighted.contains(point) {confirmItem(slot,item,target.slot)}
@@ -479,7 +552,7 @@ struct IPadPanel {
                 guard let self,let flow = self.flow else {return}
                 let cues = try flow.beginManualAttack(slot,target:target)
                 self.clearSelection()
-                self.play(self.mapCues(cues)) {[weak self] in self?.run {_ = try self?.flow?.finishManualOperation()}}
+                self.play(cues) {[weak self] in self?.run {_ = try self?.flow?.finishManualOperation()}}
             }
         }
     }
@@ -645,6 +718,7 @@ struct IPadPanel {
             rows.append(action("records","전투 결과 기록","현재 전투 \(battle.resultLog.entries.count)건") {[weak self] in self?.showResults()})
             if let slot = selectedSlot {rows.append(action("officer","선택 장수 정보") {[weak self] in self?.showUnit(slot)})}
         }
+        rows.append(action("manage","장수·물품","장수 정보 · 소지품 · 전달 · 보호") {[weak self] in self?.showManagement()})
         rows.append(action("settings","설정","소리 · 대사 속도 · 진행 속도") {[weak self] in self?.showSettings()})
         if let battle = session,flow?.acceptsManualInput == true,flow?.retreatAllowed == true,let texts = host.framework?.battleMenu {
             _ = battle
@@ -655,12 +729,118 @@ struct IPadPanel {
         rows.append(action("title","타이틀로") {[weak self] in self?.confirm("타이틀로","저장하지 않은 진행은 사라집니다.") {self?.run {try self?.prepareTitle()}}})
         rows.append(backAction());menu = .init(title:"게임 메뉴",body:"일반 저장 · 전투 시작 저장 · 중단 저장",actions:rows)
     }
+    // MARK: Officers and belongings (the desktop's management screens, as menus)
+    private func navAction(_ title:String = "돌아가기",_ to:@escaping()->Void) -> IPadAction {action("back",title) {to()}}
+    func showManagement() {
+        menu = .init(title:"장수·물품",body:"함께하는 장수의 능력과 소지품을 보고, 물품을 전달하거나 보호합니다.",actions:[
+            action("officers","장수 정보","능력 · 소지품 · 책략") {[weak self] in self?.showOfficers()},
+            action("inventory","소지품 모아 보기","장수별 물품 · 전달 · 보호") {[weak self] in self?.showInventory()},
+            navAction {[weak self] in self?.showMenu()}])
+    }
+    private func showOfficers() {
+        run {
+            guard let host else {return}
+            let rows = try host.people.companions().map {id -> IPadAction in
+                let person = try host.people.person(id)
+                return action("officer-\(id)",person.name,"Lv.\(person.level) · 병력 \(person.rawTroops) · 소지품 \(person.itemIDs.filter {$0 != 255}.count)/8") {[weak self] in self?.showOfficer(id)}
+            }
+            menu = .init(title:"장수 정보",body:"현재 함께하는 장수 \(rows.count)명",actions:rows+[navAction {[weak self] in self?.showManagement()}])
+        }
+    }
+    private func showOfficer(_ id:Int) {
+        run {
+            guard let host else {return}
+            let person = try host.people.person(id)
+            let snapshot = try OfficerComparison.snapshot(person:person,combat:host.source.combat,movement:host.source.movement)
+            let classes = host.story.screens?.battle.commands.classNames ?? []
+            let className = classes.indices.contains(person.classID) ? classes[person.classID] : "병과 \(person.classID)"
+            let body = "\(className) Lv.\(person.level) · 병력 \(person.rawTroops)/\(snapshot.maximumTroops)\n공격력 \(snapshot.attack) · 방어력 \(snapshot.defense) · 이동력 \(snapshot.movement) · 최대 책략치 \(snapshot.maximumMP)\n현재 장비와 사기 100 기준입니다."
+            var rows:[IPadAction] = person.itemIDs.filter {$0 != 255}.map {item in
+                action("item-\(id)-\(item)",itemName(item),"눌러서 전달·보호") {[weak self] in self?.showItemOptions(giver:id,item:item,back:{self?.showOfficer(id)})}
+            }
+            if let levels = host.source.movement.strategyLevelRequirements,let costs = host.source.movement.strategyMPCosts {
+                let names = classes.isEmpty ? [] : (host.story.screens?.battle.commands.strategyNames ?? [])
+                let guide = try StrategyLearningGuide.entries(classID:person.classID,level:person.level,levels:levels,costs:costs,names:names)
+                if !guide.isEmpty {
+                    rows.append(action("learning","책략 습득표","\(guide.filter(\.learned).count)/\(guide.count) 습득") {[weak self] in
+                        guard let self else {return}
+                        let learn:[IPadAction] = guide.map {row in
+                            self.action("learn-\(row.abilityID)",row.name,"Lv.\(row.requiredLevel) · MP \(row.mpCost)"+(row.learned ? " · 습득" : " · 예정")) {[weak self] in self?.showStrategyDetail(row.abilityID)}
+                        }
+                        self.menu = .init(title:person.name+" · 책략 습득표",body:"현재 병과 기준 · Lv.\(person.level)",actions:learn+[self.navAction {[weak self] in self?.showOfficer(id)}])
+                    })
+                }
+            }
+            menu = .init(title:person.name,body:body,actions:rows+[navAction {[weak self] in self?.showOfficers()}])
+        }
+    }
+    private func showInventory() {
+        run {
+            guard let host else {return}
+            let people = try host.people.companions().map {try host.people.person($0)}
+            let entries = try InventoryOverview.entries(people:people,combat:host.source.combat,extras:host.extras)
+            let rows = entries.map {entry in
+                action("stock-\(entry.personID)-\(entry.itemID)",entry.itemName,"\(entry.personName) · \(entry.count)개"+(entry.protected ? " · 보호" : "")) {[weak self] in
+                    self?.showItemOptions(giver:entry.personID,item:entry.itemID,back:{self?.showInventory()})
+                }
+            }
+            menu = .init(title:"소지품 모아 보기",body:entries.isEmpty ? "소지품이 없습니다." : "장수별 소지품입니다. 고르면 전달이나 보호를 정할 수 있습니다.",actions:rows+[navAction {[weak self] in self?.showManagement()}])
+        }
+    }
+    private func showItemOptions(giver:Int,item:Int,back:@escaping()->Void) {
+        guard let host else {return}
+        let sellLocked = host.extras.protects(personID:giver,itemID:item,operation:.sell)
+        let useLocked = host.extras.protects(personID:giver,itemID:item,operation:.use)
+        let description = host.source.combat.items.first {$0.id == item}?.description ?? ""
+        func toggle(sell:Bool) {
+            run {
+                try host.extras.setItemProtection(personID:giver,itemID:item,enabled:sell ? !sellLocked : true,protectUse:sell ? useLocked : !useLocked)
+                showItemOptions(giver:giver,item:item,back:back)
+            }
+        }
+        menu = .init(title:itemName(item),body:personName(giver)+"의 물품"+(description.isEmpty ? "" : "\n"+description),actions:[
+            action("give","다른 장수에게 전달",host.fieldMenuReady ? "" : "필드에서만 전달할 수 있습니다",enabled:host.fieldMenuReady) {[weak self] in self?.showReceivers(giver:giver,item:item,back:back)},
+            action("protect-sell",sellLocked ? "매각·버리기 보호 해제" : "매각·버리기 보호 설정",sellLocked ? "지금 보호 중" : "같은 물품 전체에 적용") {toggle(sell:true)},
+            action("protect-use",useLocked ? "사용 보호 해제" : "사용도 보호",useLocked ? "지금 보호 중" : "보호를 켠 뒤에만 설정할 수 있습니다",enabled:sellLocked || useLocked) {toggle(sell:false)},
+            navAction {back()}])
+    }
+    private func showReceivers(giver:Int,item:Int,back:@escaping()->Void) {
+        run {
+            guard let host else {return}
+            let rows = try host.people.companions().filter {$0 != giver}.map {id -> IPadAction in
+                let person = try host.people.person(id),held = person.itemIDs.filter {$0 != 255}.count
+                return action("to-\(id)",person.name,"\(held)/8칸"+(held == 8 ? " · 가득 참" : ""),enabled:held < 8) {[weak self] in self?.showTransferPreview(giver:giver,receiver:id,item:item,back:back)}
+            }
+            menu = .init(title:"물품 받을 장수",body:personName(giver)+" → "+itemName(item),actions:rows+[navAction {[weak self] in self?.showItemOptions(giver:giver,item:item,back:back)}])
+        }
+    }
+    private func showTransferPreview(giver:Int,receiver:Int,item:Int,back:@escaping()->Void) {
+        run {
+            guard let host else {return}
+            let value = try EquipmentComparison.transfer(giver:host.people.person(giver),receiver:host.people.person(receiver),item:item,combat:host.source.combat,movement:host.source.movement)
+            func line(_ role:String,_ change:EquipmentComparison.Change) -> String {
+                let a = change.before,b = change.after
+                return "\(role) \(a.name): 공격력 \(a.attack)→\(b.attack) · 방어력 \(a.defense)→\(b.defense) · 이동력 \(a.movement)→\(b.movement) · 소지품 \(a.itemIDs.filter {$0 != 255}.count)→\(b.itemIDs.filter {$0 != 255}.count)"
+            }
+            let body = [value.giver.map {line("주는 장수",$0)},line("받는 장수",value.receiver)].compactMap {$0}.joined(separator:"\n")
+            menu = .init(title:itemName(item)+" 전달",body:body+"\n같은 종류의 장비 보너스는 최댓값만 적용됩니다.",actions:[
+                action("confirm","전달") {[weak self] in
+                    self?.run {
+                        let fresh = try EquipmentComparison.transfer(giver:host.people.person(giver),receiver:host.people.person(receiver),item:item,combat:host.source.combat,movement:host.source.movement)
+                        guard fresh == value else {self?.showTransferPreview(giver:giver,receiver:receiver,item:item,back:back);return}
+                        guard try host.exchangeItem(from:giver,to:receiver,item:item) else {throw BattleError.illegalAction("받는 장수의 소지품이 가득 찼습니다.")}
+                        back()
+                    }
+                },
+                navAction("취소") {[weak self] in self?.showReceivers(giver:giver,item:item,back:back)}])
+        }
+    }
     /// Options that take effect at once and stay on this device.
     func showSettings() {
         let pace = DialoguePace.shared
         let volume = OriginalSettings.current.volume
         let volumeLabel = "\(Int((volume*100).rounded()))%"
-        menu = .init(title:"설정",body:"고르면 바로 적용되고 이 기기에 저장됩니다.",actions:[
+        menu = .init(title:"설정",body:"고르면 바로 적용되고 이 기기에 저장됩니다. 확대 전투 연출은 전부·중요 교전·입장 후 첫 교전·생략 중에서 고릅니다.",actions:[
             action("setting-music","배경음악",OriginalAudio.musicEnabled ? "켬" : "끔") {[weak self] in
                 OriginalAudio.musicEnabled.toggle();self?.audio?.select(self?.host?.vm.state.music);self?.showSettings()},
             action("setting-effects","효과음",OriginalAudio.effectsEnabled ? "켬" : "끔") {[weak self] in
@@ -671,6 +851,11 @@ struct IPadPanel {
                 self?.audio?.volume = next;self?.showSettings()},
             action("setting-auto","대사 자동 넘김 속도",DialoguePace.speedLabels[min(max(0,pace.speed),2)]) {[weak self] in
                 pace.speed = (pace.speed+1)%3;self?.showSettings()},
+            action("setting-combat","확대 전투 연출",OriginalSettings.current.combatPresentationMode.label) {[weak self] in
+                let modes = CombatPresentationPolicy.Mode.allCases
+                var settings = OriginalSettings.current
+                let next = ((modes.firstIndex(of:settings.combatPresentationMode) ?? 0)+1)%modes.count
+                settings.combatPresentationMode = modes[next];OriginalSettings.current = settings;self?.showSettings()},
             action("setting-speed","진행 속도","\(speedFactor)× · 위쪽 버튼으로도 바꿉니다") {[weak self] in
                 self?.cycleSpeed();self?.showSettings()},
             backAction()])
