@@ -25,6 +25,24 @@ def quoted(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def write_icon_catalog(output: Path) -> bool:
+    """Draw the app icon with tools/make_ipad_icon.swift; False when no Swift tool is available."""
+    catalog = output / "Assets.xcassets"
+    icons = catalog / "AppIcon.appiconset"
+    icons.mkdir(parents=True, exist_ok=True)
+    png = icons / "icon-1024.png"
+    try:
+        subprocess.run(["xcrun", "swift", str(ROOT / "tools/make_ipad_icon.swift"), str(png)], check=True, capture_output=True)
+    except (OSError, subprocess.CalledProcessError):
+        shutil.rmtree(catalog, ignore_errors=True)
+        return False
+    (catalog / "Contents.json").write_text(json.dumps({"info": {"author": "xcode", "version": 1}}))
+    (icons / "Contents.json").write_text(json.dumps({
+        "images": [{"filename": "icon-1024.png", "idiom": "universal", "platform": "ios", "size": "1024x1024"}],
+        "info": {"author": "xcode", "version": 1}}, indent=2))
+    return True
+
+
 def generate(data: Path, output: Path) -> Path:
     data = data.resolve(); output = output.resolve()
     assets = output / "GameData"
@@ -53,6 +71,7 @@ def generate(data: Path, output: Path) -> Path:
         "UIApplicationSceneManifest": {"UIApplicationSupportsMultipleScenes": False},
     }
     (output / "Info.plist").write_bytes(plistlib.dumps(info))
+    has_icon = write_icon_catalog(output)
     objects: list[str] = []
     def obj(key: str, fields: str) -> str:
         identifier = uid(key);objects.append(f"{identifier} = {{ {fields} }};");return identifier
@@ -63,14 +82,19 @@ def generate(data: Path, output: Path) -> Path:
         source_builds.append(obj("compile:"+str(path),f"isa = PBXBuildFile; fileRef = {ref};"))
     resource = obj("resource", "isa = PBXFileReference; lastKnownFileType = folder; path = GameData; sourceTree = \"<group>\";")
     resource_build = obj("resource-build",f"isa = PBXBuildFile; fileRef = {resource};")
+    catalog_build = ""
+    if has_icon:
+        catalog = obj("catalog", "isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = \"<group>\";")
+        catalog_build = obj("catalog-build",f"isa = PBXBuildFile; fileRef = {catalog};")
+        refs.append(catalog)
     product = obj("product", "isa = PBXFileReference; explicitFileType = wrapper.application; path = Yeonggeoljeon.app; sourceTree = BUILT_PRODUCTS_DIR;")
     products = obj("products",f"isa = PBXGroup; children = ({product},); name = Products; sourceTree = \"<group>\";")
     main_group = obj("group",f"isa = PBXGroup; children = ({','.join(refs+[resource,products])},); sourceTree = \"<group>\";")
     sources = obj("sources", f"isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ({','.join(source_builds)},); runOnlyForDeploymentPostprocessing = 0;")
-    resources = obj("resources",f"isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ({resource_build},); runOnlyForDeploymentPostprocessing = 0;")
+    resources = obj("resources",f"isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ({resource_build},{catalog_build}); runOnlyForDeploymentPostprocessing = 0;")
     frameworks = obj("frameworks","isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;")
     settings = 'SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 16.0; SWIFT_VERSION = 5.0; CLANG_ENABLE_MODULES = YES;'
-    app_settings = settings+' PRODUCT_NAME = Yeonggeoljeon; PRODUCT_BUNDLE_IDENTIFIER = org.yeonggeoljeon.engine.ipad; INFOPLIST_FILE = Info.plist; TARGETED_DEVICE_FAMILY = 2; CODE_SIGN_STYLE = Automatic; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = NO;'
+    app_settings = settings+' PRODUCT_NAME = Yeonggeoljeon; PRODUCT_BUNDLE_IDENTIFIER = org.yeonggeoljeon.engine.ipad; INFOPLIST_FILE = Info.plist; TARGETED_DEVICE_FAMILY = 2; CODE_SIGN_STYLE = Automatic; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = NO;'+(' ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;' if has_icon else '')
     def configs(kind: str, value: str) -> str:
         ids = []
         for name in ["Debug", "Release"]:
