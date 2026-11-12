@@ -67,7 +67,7 @@ private func pointer(_ text:UnsafePointer<CChar>?) -> String {text.map {String(c
 @_cdecl("yg_state") public func yg_state() -> UnsafeMutablePointer<CChar>? {
     onGameThread {
         guard let game = store else {return cString("{}")}
-        var state:[String:Any] = ["revision":game.revision,"header":game.header,"status":game.status,"speed":game.speedFactor,
+        var state:[String:Any] = ["header":game.header,"status":game.status,"speed":game.speedFactor,
                                   "skipping":game.skipping,"auto":game.dialogueAuto,"started":game.host?.hasStarted == true,
                                   "fieldIsMap":game.fieldIsMap,"actions":game.actions.map(actionJSON)]
         if let message = game.error {state["error"] = message}
@@ -88,6 +88,8 @@ private func pointer(_ text:UnsafePointer<CChar>?) -> String {text.map {String(c
             state["combat"] = value
         }
         if let battle = game.session {
+            // The map picture only changes by itself while an action plays or the source drives a phase.
+            state["busy"] = !game.animator.isIdle || game.combatPlayer != nil || game.flow?.acceptsManualInput != true
             state["mode"] = "battle";state["battle"] = ["cols":battle.width,"rows":battle.height] as [String:Any]
         } else {state["mode"] = game.host?.hasStarted == true ? "field" : "title"}
         let data = (try? JSONSerialization.data(withJSONObject:state)) ?? Data("{}".utf8)

@@ -142,6 +142,28 @@ final class CGContext {
         guard rect.width > 0,rect.height > 0,state.sx != 0,state.sy != 0 else {return}
         let box = bounds(device(rect))
         guard box.y0 < box.y1,box.x0 < box.x1 else {return}
+        // Most pictures land one to one: copy by whole pixels instead of resampling each one.
+        let whole = device(rect)
+        if abs(state.sx) == 1,abs(state.sy) == 1,whole.x1-whole.x0 == image.width,whole.y1-whole.y0 == image.height {
+            let flipX = state.sx < 0,flipY = state.sy < 0
+            for dy in box.y0..<box.y1 {
+                let sy = flipY ? image.height-1-(dy-whole.y0) : dy-whole.y0
+                for dx in box.x0..<box.x1 {
+                    let sx = flipX ? image.width-1-(dx-whole.x0) : dx-whole.x0
+                    let s = (sy*image.width+sx)*4,d = (dy*width+dx)*4
+                    let a = image.pixels[s+3]
+                    if a == 0 {continue}
+                    if a == 255 && alpha == 1 {
+                        bytes[d] = image.pixels[s];bytes[d+1] = image.pixels[s+1];bytes[d+2] = image.pixels[s+2];bytes[d+3] = 255
+                    } else {
+                        let k = Double(a)/255*alpha,inv = 1-k
+                        for c in 0..<3 {bytes[d+c] = UInt8(max(0,min(255,Double(image.pixels[s+c])*alpha+Double(bytes[d+c])*inv)))}
+                        bytes[d+3] = UInt8(max(0,min(255,k*255+Double(bytes[d+3])*inv)))
+                    }
+                }
+            }
+            return
+        }
         for dy in box.y0..<box.y1 {
             for dx in box.x0..<box.x1 {
                 let ux = ((Double(dx)+0.5-state.tx)/state.sx-Double(rect.minX))/Double(rect.width)

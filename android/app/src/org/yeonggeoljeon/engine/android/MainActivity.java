@@ -51,6 +51,8 @@ public class MainActivity extends Activity implements StageView.Listener {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private volatile boolean running;
     private int lastRevision = -1;
+    private String lastStateJson = "";
+    private volatile boolean forceFrame = true;
     private String lastMapKey = "";
     private Thread audioThread;
 
@@ -110,31 +112,73 @@ public class MainActivity extends Activity implements StageView.Listener {
         game.post(loop);
     }
 
+    private static final long STEP_NANOS = 33_333_000L;
+    private long clock;
+    private long accumulated;
+    private long statsStart, statsTicks, statsCaptureNanos, statsFrames, statsLate;
+    private final java.util.concurrent.atomic.AtomicBoolean framePending = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * The game advances one fixed step per 1/30 s of real time, however long drawing takes: slow
+     * frames are caught up with extra steps (a few at most) and drawing is skipped while the screen
+     * still holds the last frame, so the pace never depends on how busy a frame was.
+     */
     private final Runnable loop = new Runnable() {
         @Override public void run() {
             if (!running) return;
-            long begin = System.nanoTime();
-            Native.tick();
-            int revision = Native.revision();
-            if (revision != lastRevision) {
-                lastRevision = revision;
-                final Frame frame = capture();
-                ui.post(() -> render(frame));
+            long now = System.nanoTime();
+            if (clock == 0) clock = now;
+            accumulated += now - clock;
+            clock = now;
+            accumulated = Math.min(accumulated, 4 * STEP_NANOS);
+            int steps = 0;
+            while (accumulated >= STEP_NANOS) {
+                Native.tick();
+                accumulated -= STEP_NANOS;
+                steps++;
             }
-            long spent = (System.nanoTime() - begin) / 1_000_000L;
-            game.postDelayed(this, Math.max(1L, 33L - spent));
+            statsTicks += steps;
+            if (steps > 1) statsLate++;
+            if (steps > 0 && !framePending.get()) {
+                int revision = Native.revision();
+                if (revision != lastRevision) {
+                    lastRevision = revision;
+                    long t0 = System.nanoTime();
+                    final Frame frame = capture();
+                    if (frame != null) {
+                        statsCaptureNanos += System.nanoTime() - t0;
+                        statsFrames++;
+                        framePending.set(true);
+                        ui.post(() -> { render(frame); framePending.set(false); });
+                    }
+                }
+            }
+            if (statsStart == 0) statsStart = now;
+            if (now - statsStart >= 2_000_000_000L) {
+                double seconds = (now - statsStart) / 1e9;
+                android.util.Log.d("yg-pace", String.format(java.util.Locale.US, "ticks/s=%.1f frames/s=%.1f capture=%.1fms catchup=%d",
+                    statsTicks / seconds, statsFrames / seconds, statsFrames == 0 ? 0.0 : statsCaptureNanos / 1e6 / statsFrames, statsLate));
+                statsStart = now; statsTicks = 0; statsCaptureNanos = 0; statsFrames = 0; statsLate = 0;
+            }
+            long next = STEP_NANOS - (System.nanoTime() - clock) - accumulated;
+            game.postDelayed(this, Math.max(1L, next / 1_000_000L));
         }
     };
 
+    /** Null when nothing on screen can have changed since the last frame. */
     private Frame capture() {
         Frame frame = new Frame();
+        String json = Native.state();
         try {
-            frame.state = new JSONObject(Native.state());
+            frame.state = new JSONObject(json);
         } catch (Exception e) {
             frame.state = new JSONObject();
         }
         int[] size = new int[2];
         String mode = frame.state.optString("mode", "title");
+        if ("battle".equals(mode) && !frame.state.optBoolean("busy") && !forceFrame && json.equals(lastStateJson)) return null;
+        forceFrame = false;
+        lastStateJson = json;
         if ("battle".equals(mode)) {
             frame.battle = bitmapOf(Native.battleImage(size), size);
             JSONObject battle = frame.state.optJSONObject("battle");
@@ -258,7 +302,7 @@ public class MainActivity extends Activity implements StageView.Listener {
 
     // ---- Input (UI thread -> game thread) ----
 
-    private void call(Runnable r) { if (game != null && running) game.post(() -> { r.run(); lastRevision = -1; }); }
+    private void call(Runnable r) { if (game != null && running) game.post(() -> { r.run(); lastRevision = -1; forceFrame = true; }); }
     private void command(int code) { call(() -> Native.command(code)); }
     private void perform(int scope, String id) { call(() -> Native.perform(scope, id)); }
     @Override public void onFieldTap(double x, double y) { call(() -> Native.fieldTap(x, y)); }
@@ -313,7 +357,13 @@ public class MainActivity extends Activity implements StageView.Listener {
 
         stage = new StageView(this);
         stage.setListener(this);
-        column.addView(stage, new LinearLayout.LayoutParams(-1, 0, 1f));
+        // Cards, dialogue and banners sit over the picture only, never over the header or buttons.
+        FrameLayout stageHolder = new FrameLayout(this);
+        stageHolder.addView(stage, new FrameLayout.LayoutParams(-1, -1));
+        overlay = new FrameLayout(this);
+        overlay.setClickable(false);
+        stageHolder.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        column.addView(stageHolder, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         hint = Ui.text(this, "두 손가락으로 확대 · 드래그로 지도 이동", 12, Ui.MUTED, false);
         hint.setGravity(Gravity.CENTER);
@@ -329,10 +379,6 @@ public class MainActivity extends Activity implements StageView.Listener {
         dockScroll.setFillViewport(true);
         dockScroll.addView(dock, new FrameLayout.LayoutParams(-1, -2));
         column.addView(dockScroll);
-
-        overlay = new FrameLayout(this);
-        overlay.setClickable(false);
-        root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
 
         FrameLayout wait = new FrameLayout(this);
         wait.setBackgroundColor(Ui.INK);
