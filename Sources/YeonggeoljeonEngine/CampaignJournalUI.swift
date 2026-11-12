@@ -37,13 +37,20 @@ extension CampaignManagementUI {
     private func battleSummaryDetail(_ record:BattleSummary)->CanvasSheet.Detail {
         let t = record.totals
         var list = [t.complete ? "전체 확정 행동 집계" : "이전 저장의 일부 행동은 미집계",
-            "전투 밖에서 지급한 보상과 출처를 연결하지 못한 변화는 미집계입니다."]
+            "출처를 연결하지 못한 금·물품 변화(상점 거래 등)는 집계하지 않습니다."]
         if let reason = record.endingReason {list.insert(reason,at:0)}
         if let rewards = t.sourceRewards {
             list.append("전투 중 확정 금 변화: \(rewards.moneyChange >= 0 ? "+" : "")\(rewards.moneyChange)")
             list += rewards.grantedItems.keys.sorted().map {"지급: \(itemName($0)) ×\(rewards.grantedItems[$0]!)"}
             list += rewards.replacedItems.keys.sorted().map {"지급을 위해 교체: \(itemName($0)) ×\(rewards.replacedItems[$0]!)"}
-        } else {list.append("금·물품 지급 기록 없음 또는 이전 저장에서 미집계")}
+        } else {list.append("전투 중 금·물품 지급 기록 없음 또는 이전 저장에서 미집계")}
+        // Story events after the battle (gold, items) are listed apart from the battle's own.
+        if let after = t.afterBattleRewards {
+            list.append("전투 뒤 사건 보상(다음 전투 전까지 확인)")
+            if after.moneyChange != 0 { list.append("금 변화: \(after.moneyChange >= 0 ? "+" : "")\(after.moneyChange)") }
+            list += after.grantedItems.keys.sorted().map {"지급: \(itemName($0)) ×\(after.grantedItems[$0]!)"}
+            list += after.replacedItems.keys.sorted().map {"지급을 위해 교체: \(itemName($0)) ×\(after.replacedItems[$0]!)"}
+        }
         return .init(heading:record.name,body:record.label,list:list,
             facts:[("소요 턴","\(record.turns)"),("아군이 준 피해","\(t.damageByPlayer)"),("적군이 준 피해","\(t.damageByEnemy)"),
                 ("아군 회복량","\(t.recoveredByPlayer)"),("행동 경험치","\(t.actionExperience.values.reduce(0,+))"),

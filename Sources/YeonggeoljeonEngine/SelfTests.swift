@@ -146,6 +146,16 @@ func selfTests() throws {
               "auto advance is off by default and 보통 reads a line for 0.8 to 2.5 seconds")
     try check(abs(DialoguePace.readingSeconds(twenty,speed:0)-1.6) < 0.001 && abs(DialoguePace.readingSeconds(twenty,speed:2)-0.4) < 0.001 &&
               DialoguePace.readingSeconds(long,speed:2) == 1.5,"느리게 and 빠르게 bracket 보통")
+    // A story reward after a battle joins that battle's summary, not a later one.
+    var journal = CampaignJournal()
+    let first = UUID(),second = UUID()
+    journal.summaries = [BattleSummary(attemptID:first,battleID:"synthetic:1",name:"first",result:2,turns:3,totals:BattleTotals()),
+                         BattleSummary(attemptID:second,battleID:"synthetic:2",name:"second",result:2,turns:4,totals:BattleTotals())]
+    journal.attachAfterBattle(attempt:first,money:300)
+    journal.attachAfterBattle(attempt:first,money:-100)
+    journal.attachAfterBattle(attempt:UUID(),money:999)
+    try check(journal.summaries[0].totals.afterBattleRewards?.moneyChange == 200 && journal.summaries[1].totals.afterBattleRewards == nil &&
+              (try? journal.validate()) != nil,"post-battle gold adds to its own battle and unknown attempts are ignored")
     // Town clicks read the 32×16 diamond lattice and turn a click on a
     // building or beside the path into its door or the path.
     let centre = OriginalTownPointer.center(GridPoint(x:3,y:2))

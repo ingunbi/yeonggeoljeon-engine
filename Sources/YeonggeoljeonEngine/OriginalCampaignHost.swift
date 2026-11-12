@@ -162,6 +162,9 @@ final class OriginalCampaignHost {
     // new-game BAK actor loader does not deserialize player/save money.
     private(set) var money:Int? = 0
     private(set) var battle:OriginalBattleSession?
+    /// The battle whose summary story rewards belong to, from its end until
+    /// the next battle starts. Not saved: a load closes the attribution.
+    private var rewardAttempt:UUID?
     private(set) var checkpoint:OriginalCampaignCheckpoint?
     private var retryHost:OriginalRetryHostState?
     private(set) var waiting:CampaignVMWaiting?
@@ -977,11 +980,11 @@ final class OriginalCampaignHost {
         let selections = [pendingBattleMap,battleReturnSelection].compactMap{$0}
         switch OriginalBattleExit.decide(result:battle.turns.result,contextMap:vm.state.packedMap,selectionMaps:selections.map(\.packedMap)) {
         case .restoreCheckpoint:
-            extras.journal.finish(battle)
+            extras.journal.finish(battle);rewardAttempt = nil
             do { try restartBattleFromCheckpoint(battle) }
             catch { failure = CampaignVMFailure(recordID:nil,opcode:nil,sourceOffset:nil,reason:"\(error)") }
         case .framework(let mask):
-            extras.journal.finish(battle)
+            extras.journal.finish(battle);rewardAttempt = nil
             frameworkReturn = OriginalFrameworkReturn(mask:mask,producer:"battle-result-\(battle.turns.result)",recordID:nil,sourceOffset:nil)
             pendingBattleMap = nil;battleReturnSelection = nil;waiting = nil
         case .unsupported(let reason):
@@ -991,7 +994,7 @@ final class OriginalCampaignHost {
                 carryover = try battle.finishBattleForCarryover()
                 closingNotices += battle.closingNotices
             }
-            extras.journal.finish(battle)
+            extras.journal.finish(battle);rewardAttempt = battle.turns.result == 2 ? battle.resultLog.attemptID : nil
             guard completeSelectedMap(selections[index]) else { return }
             pendingBattleMap = nil;battleReturnSelection = nil;controllerIdle = false;waiting = vm.waitingState()
             // The next battle of a chain runs its opening records like a source09 entry.
@@ -1191,6 +1194,8 @@ final class OriginalCampaignHost {
                 if stage.palette == 3,let battle = battle {
                     var rewards = battle.resultLog.totals.sourceRewards ?? ConfirmedBattleRewards()
                     rewards.moneyChange += (money ?? current)-current;battle.resultLog.totals.sourceRewards = rewards
+                } else if let attempt = rewardAttempt {
+                    extras.journal.attachAfterBattle(attempt:attempt,money:(money ?? current)-current)
                 }
             }
             else if args[0] == 4,let battle = battle { battle.scriptValue24 = UInt8(truncatingIfNeeded:args[1]) }
@@ -1206,6 +1211,7 @@ final class OriginalCampaignHost {
             record:vm.activeRecord?.id,sourceOffset:sourceOffset,dialogueID:dialogue?.id)
     }
     private func recordBattleGrant(_ receipt:OriginalScriptInventoryGrant) {
+        if stage.palette != 3,let attempt = rewardAttempt,!receipt.cancelled { extras.journal.attachAfterBattle(attempt:attempt,grant:receipt);return }
         guard stage.palette == 3,let battle = battle,!receipt.cancelled else { return }
         var rewards = battle.resultLog.totals.sourceRewards ?? ConfirmedBattleRewards()
         rewards.grant(receipt);battle.resultLog.totals.sourceRewards = rewards

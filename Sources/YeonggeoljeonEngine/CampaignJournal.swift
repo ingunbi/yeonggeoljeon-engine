@@ -24,6 +24,10 @@ struct BattleTotals:Codable,Equatable {
     var retiredPeople:[Int] = []
     var complete = true
     var sourceRewards:ConfirmedBattleRewards? = nil
+    /// Gold and items the story events give after the battle ended and before
+    /// the next one began, kept apart from the battle's own rewards. Nil in
+    /// summaries saved before this field existed.
+    var afterBattleRewards:ConfirmedBattleRewards? = nil
     mutating func receive(_ entry:BattleResultLog.Entry) {
         if entry.actorEnemy { damageByEnemy += entry.result.damage ?? 0 }
         else { damageByPlayer += entry.result.damage ?? 0;recoveredByPlayer += max(0,entry.result.troopsRecovered ?? 0) }
@@ -34,7 +38,7 @@ struct BattleTotals:Codable,Equatable {
         if victory { victoryExperience[person,default:0] += gain } else { actionExperience[person,default:0] += gain }
     }
     func validate() throws {
-        try sourceRewards?.validate()
+        try sourceRewards?.validate();try afterBattleRewards?.validate()
         guard [damageByPlayer,damageByEnemy,recoveredByPlayer].allSatisfy({(0...1_000_000_000).contains($0)}),
               [actionExperience,victoryExperience].allSatisfy({$0.count <= 384 && $0.allSatisfy{(0..<384).contains($0.key) && (0...1_000_000_000).contains($0.value)}}),
               retiredPeople.count <= 384,Set(retiredPeople).count == retiredPeople.count,retiredPeople.allSatisfy({(0..<384).contains($0)}) else { throw EngineError.invalid("Battle totals are invalid") }
@@ -106,6 +110,15 @@ struct CampaignJournal:Codable,Equatable {
         nextSequence += 1
         if journey.count > 1000 { journey.removeFirst();omittedJourney += 1 }
     }
+    /// A story event after the battle gave gold or an item: attach it to the
+    /// battle it follows (the latest finished one), never to a later battle.
+    mutating func attachAfterBattle(attempt:UUID,money:Int = 0,grant:OriginalScriptInventoryGrant? = nil) {
+        guard let index = summaries.lastIndex(where:{ $0.attemptID == attempt }) else { return }
+        var rewards = summaries[index].totals.afterBattleRewards ?? ConfirmedBattleRewards()
+        rewards.moneyChange += money
+        if let grant = grant { rewards.grant(grant) }
+        summaries[index].totals.afterBattleRewards = rewards
+    }
     mutating func restoreJourney(_ checkpoint:CampaignJourneyCheckpoint) {
         journey = checkpoint.journey;nextSequence = checkpoint.nextSequence;omittedJourney = checkpoint.omittedJourney
     }
@@ -129,7 +142,7 @@ enum CampaignJournalSheet {
         let rows = journal.summaries.reversed().map { record -> CanvasSheet.Row in
             let totals = record.totals
             return .init(label:record.name,value:record.label,detail:.init(heading:record.name,body:record.label,
-                list:[totals.complete ? "전체 확정 행동 집계" : "이전 저장의 기록이 없어 일부 행동은 미집계","금·물품 및 스크립트 직접 보상: 미집계"],
+                list:[totals.complete ? "전체 확정 행동 집계" : "이전 저장의 기록이 없어 일부 행동은 미집계","금·물품은 상세 화면에서 확인"],
                 facts:[("소요 턴","\(record.turns)"),("아군 피해량","\(totals.damageByPlayer)"),("적군 피해량","\(totals.damageByEnemy)"),
                 ("아군 회복량","\(totals.recoveredByPlayer)"),("행동 경험치","\(totals.actionExperience.values.reduce(0,+))"),("승리 경험치","\(totals.victoryExperience.values.reduce(0,+))"),("퇴각 인원","\(totals.retiredPeople.count)")]))
         }
