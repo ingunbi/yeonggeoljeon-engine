@@ -475,11 +475,20 @@ final class OriginalBattleView:NSView {
         selectReadyUnit(ready[index])
     }
     private var isChoosingMove:Bool { if case .moving = phase { return true };return false }
+    /// Engine view aid: a unit picked by click whose move range would run off
+    /// the map window is centred, so the whole range can be read.
+    private func keepMoveRangeInView(_ unit:OriginalLiveUnit) {
+        guard unit.scriptFlags&0x20 != 0,unit.scriptFlags&0x40 == 0,let cells = try? session.reachable(unit.slot) else { return }
+        let area = layoutFacts.viewportRect.insetBy(dx:2,dy:2),size = layoutFacts.cell
+        let hidden = cells.contains { !area.contains(camera.rect(of:$0,in:layoutFacts.viewportRect,size:size)) }
+        if hidden { camera.center(on:unit.position) }
+    }
     private func selectReadyUnit(_ slot:Int,center:Bool = true) {
         guard canInput,let unit = session.units[slot],OriginalBattleCommand.denial(unit) == nil,
               (try? session.requireManualUnit(slot)) != nil else { return }
         resetCommand();inspected = nil
         if center { camera.center(on:unit.position) }
+        else if presentation == .modern { keepMoveRangeInView(unit) }
         selected = unit.slot
         if unit.scriptFlags&0x20 == 0 || unit.scriptFlags&0x40 != 0 { openCommand(unit.slot) } else { phase = .moving(unit.slot) }
         needsDisplay = true;queueTutorial()
@@ -2162,7 +2171,7 @@ final class OriginalBattleView:NSView {
             case .menu:label = "메뉴";enabled = idle;primary = functionOpen
             case .conditions:label = "승리조건";enabled = idle && objective != nil && style.commands != nil;primary = false
             case .threat:label = showsThreat ? "위협 켜짐" : (largeText ? "위협" : "위협 "+key(.threat));enabled = combatPlayer == nil && duelPlayer == nil && !overlay.active;primary = showsThreat
-            case .pace:label = "재생 \(paceText)";enabled = settingsTexts != nil && combatPlayer == nil && duelPlayer == nil && !overlay.active;primary = pace > 0
+            case .pace:label = "속도 \(paceText)";enabled = settingsTexts != nil && combatPlayer == nil && duelPlayer == nil && !overlay.active;primary = pace > 0
             case .nextUnit:label = largeText ? "다음" : "다음 "+key(.nextUnit);enabled = canInput && !overlay.active && strategySelection == nil && (phase == .idle || isChoosingMove) && available > 0;primary = false
             case .endTurn:label = available > 0 ? (largeText ? "종료 · \(available)남음" : "턴 종료 · \(available)부대 남음") : "턴 종료";enabled = idle;primary = available == 0
             default:label = "";enabled = false;primary = false
