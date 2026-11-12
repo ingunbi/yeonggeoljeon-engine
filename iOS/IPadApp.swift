@@ -153,6 +153,12 @@ private struct IPadGameScreen:View {
             Spacer(minLength:8)
             IPadIconButton(symbol:"folder",label:"저장 파일 가져오기") {game.setActive(false);importing = true}
             if game.host?.hasStarted == true {
+                Button {game.cycleSpeed()} label: {
+                    Text("\(game.speedFactor)×").font(.headline.monospacedDigit())
+                        .foregroundStyle(game.speedFactor > 1 ? IPadTheme.onGold : IPadTheme.gold)
+                        .frame(minWidth:48,minHeight:48).padding(.horizontal,6)
+                        .background(Capsule().fill(game.speedFactor > 1 ? IPadTheme.gold : Color.white.opacity(0.09)))
+                }.accessibilityLabel("진행 속도 \(game.speedFactor)배. 누르면 바뀝니다.")
                 IPadIconButton(symbol:"line.3.horizontal",label:"메뉴") {game.showMenu()}
             }
         }
@@ -179,10 +185,12 @@ private struct IPadGameScreen:View {
             if let panel = game.prompt {
                 if panel.style == .dialogue {
                     // A tap anywhere closes the line; the card never hides the picture.
-                    Color.clear.contentShape(Rectangle()).onTapGesture {panel.actions.first?.perform()}
+                    Color.clear.contentShape(Rectangle()).onTapGesture {game.advanceDialogue()}
                     VStack(spacing:0) {
                         Spacer(minLength:0)
-                        IPadDialogueCard(panel:panel).padding(.horizontal,12).padding(.bottom,12)
+                        IPadDialogueCard(panel:panel,auto:game.dialogueAuto,skipping:game.skipping,onNext:game.advanceDialogue,
+                            onAuto:{game.dialogueAuto.toggle();if game.dialogueAuto {game.skipping = false}},onSkip:game.toggleSkip)
+                            .padding(.horizontal,12).padding(.bottom,12)
                     }
                 } else {
                     Color.black.opacity(0.55)
@@ -338,6 +346,11 @@ private struct IPadPanelView:View {
 /// A spoken line over the picture: portrait, speaker, text and a hint to tap.
 private struct IPadDialogueCard:View {
     let panel:IPadPanel
+    let auto:Bool
+    let skipping:Bool
+    let onNext:()->Void
+    let onAuto:()->Void
+    let onSkip:()->Void
     var body:some View {
         HStack(alignment:.top,spacing:14) {
             if let portrait = panel.portrait {
@@ -350,14 +363,30 @@ private struct IPadDialogueCard:View {
                     Text(panel.title).font(.headline).foregroundStyle(IPadTheme.gold)
                 }
                 Text(panel.body).font(.title3).lineSpacing(5).fixedSize(horizontal:false,vertical:true)
-                HStack {Spacer();Label("눌러서 다음",systemImage:"chevron.down.circle.fill").font(.caption).foregroundStyle(.secondary)}
+                HStack(spacing:8) {
+                    toggle("자동",systemImage:"play.circle",on:auto,action:onAuto)
+                    toggle("건너뛰기",systemImage:"forward.fill",on:skipping,action:onSkip)
+                    Spacer()
+                    Label("눌러서 다음",systemImage:"chevron.down.circle.fill").font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
         .frame(maxWidth:.infinity,alignment:.leading).padding(16)
         .background(IPadTheme.ink.opacity(0.94),in:RoundedRectangle(cornerRadius:18))
         .overlay(RoundedRectangle(cornerRadius:18).stroke(Color.white.opacity(0.22),lineWidth:1))
-        .accessibilityElement(children:.combine).accessibilityAddTraits(.isButton)
-        .accessibilityLabel((panel.title.isEmpty ? "" : panel.title+", ")+panel.body).accessibilityHint("두 번 눌러 다음 대사")
+        .contentShape(RoundedRectangle(cornerRadius:18)).onTapGesture(perform:onNext)
+        .accessibilityElement(children:.contain)
+        .accessibilityLabel((panel.title.isEmpty ? "" : panel.title+", ")+panel.body)
+        .accessibilityAction(named:"다음 대사",onNext)
+    }
+
+    private func toggle(_ title:String,systemImage:String,on:Bool,action:@escaping()->Void) -> some View {
+        Button(action:action) {
+            Label(title,systemImage:systemImage).font(.subheadline.weight(.semibold))
+                .foregroundStyle(on ? IPadTheme.onGold : IPadTheme.gold)
+                .padding(.horizontal,12).frame(minHeight:40)
+                .background(Capsule().fill(on ? IPadTheme.gold : Color.white.opacity(0.1)))
+        }.buttonStyle(.plain).accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 

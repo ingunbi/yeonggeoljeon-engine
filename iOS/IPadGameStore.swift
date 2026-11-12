@@ -46,6 +46,12 @@ struct IPadPanel {
         return text
     }
     @Published var menu:IPadPanel?
+    /// Lines close on their own while skipping; it stops at the first choice or other decision.
+    @Published var skipping = false
+    /// Simulation steps per timer callback: 1, 2 or 4. Only the pace changes, never a step's rules.
+    @Published private(set) var speedFactor = 1
+    private var lineSeen:(text:String,since:TimeInterval)?
+    private var skipPhase = 0
     private var renderer:Renderer?
     private var audio:OriginalAudio?
     private var timer:Timer?
@@ -88,6 +94,30 @@ struct IPadPanel {
         }
     }
     deinit {timer?.invalidate()}
+    var dialogueAuto:Bool {
+        get {DialoguePace.shared.auto}
+        set {DialoguePace.shared.auto = newValue;revision += 1}
+    }
+    func cycleSpeed() {speedFactor = speedFactor == 1 ? 2 : (speedFactor == 2 ? 4 : 1)}
+    func toggleSkip() {skipping.toggle();if skipping {dialogueAuto = false}}
+    func advanceDialogue() {prompt?.actions.first?.perform()}
+    /// Auto and skip only decide when the tap that closes a line is sent.
+    private func paceDialogue() -> Bool {
+        guard let current = prompt else {lineSeen = nil;return false}
+        guard current.style == .dialogue else {skipping = false;lineSeen = nil;return false}
+        if skipping {
+            skipPhase = (skipPhase+1)%3
+            if skipPhase == 0 {current.actions.first?.perform()}
+            return true
+        }
+        guard DialoguePace.shared.auto else {lineSeen = nil;return true}
+        let now = ProcessInfo.processInfo.systemUptime,key = current.title+current.body
+        if lineSeen?.text != key {lineSeen = (key,now);return true}
+        if let seen = lineSeen,now-seen.since >= DialoguePace.readingSeconds(current.body,speed:DialoguePace.shared.speed) {
+            lineSeen = nil;current.actions.first?.perform()
+        }
+        return true
+    }
     func setActive(_ value:Bool) {active = value;audio?.setPaused(!value);revision += 1}
     func closeMenu() {menu = nil;refresh()}
     private func action(_ id:String,_ title:String,_ subtitle:String = "",enabled:Bool = true,_ body:@escaping()->Void)->IPadAction {
@@ -132,9 +162,13 @@ struct IPadPanel {
         guard active,error == nil,let host else {return}
         do {
             if try completeSuspendIfReady() {return}
+            if menu == nil,paceDialogue() {return}
             guard menu == nil,prompt == nil else {return}
-            try host.advance(microseconds:33_333)
-            try synchronizeBattle()
+            for step in 0..<speedFactor {
+                try host.advance(microseconds:33_333)
+                try synchronizeBattle()
+                if step+1 < speedFactor,prompt != nil {break}
+            }
             if pendingBattleStart != nil {saveBattleStart()}
             if let notice = host.takeClosingNotice() {
                 queuedNotice = .init(title:"전투 결과",body:noticeText(notice),actions:[action("next","확인") {[weak self] in self?.queuedNotice = nil;self?.refresh()}])
