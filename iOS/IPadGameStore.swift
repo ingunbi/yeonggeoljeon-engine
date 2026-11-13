@@ -1442,13 +1442,23 @@ struct IPadPanel {
         menu = .init(title:"전투 결과 기록",body:lines.isEmpty ? "기록된 행동이 없습니다." : lines.joined(separator:"\n"),actions:[backAction()])
     }
     private func slots()->OriginalSaveSlots {OriginalSaveSlots(directory:saveRoot)}
+    /// "2026-11-14 03:55": the saved date from the save's own entry, in the device's time zone.
+    private func savedAt(_ date:Date) -> String {
+        let c = Calendar.current.dateComponents(in:TimeZone.current,from:date)
+        func two(_ n:Int?) -> String {String(format:"%02d",n ?? 0)}
+        return "\(c.year ?? 0)-\(two(c.month))-\(two(c.day)) \(two(c.hour)):\(two(c.minute))"
+    }
+    private func slotLine(_ entry:OriginalSaveSlots.Entry?,fallback:String) -> String {
+        guard let entry else {return fallback}
+        return entry.title+" · "+savedAt(entry.date)
+    }
     private func showSave() {
         run {
             guard let host else {return}
             let snapshot = try host.resumeSnapshot()
             let inspections = try slots().inspections()
             menu = .init(title:"일반 저장",body:"슬롯을 선택하세요. 기존 저장은 마지막 정상 백업으로 보관됩니다.",actions:inspections.enumerated().map {index,entry in
-                action("slot-\(index)","슬롯 \(index+1)",entry.entry?.title ?? "비어 있음") {[weak self] in
+                action("slot-\(index)","슬롯 \(index+1)",slotLine(entry.entry,fallback:"비어 있음")) {[weak self] in
                     guard let self else {return}
                     let write:()->Void = { [weak self] in self?.run {
                         guard let self else {return};try self.slots().write(snapshot,title:self.header,slot:index)
@@ -1465,12 +1475,12 @@ struct IPadPanel {
             let store = slots();var rows:[IPadAction] = []
             for index in 0..<OriginalSaveSlots.count {
                 let entry = try store.inspect(.numbered(index))
-                rows.append(action("load-\(index)","슬롯 \(index+1)",entry.entry?.title ?? entry.message,enabled:entry.canLoad) {[weak self] in self?.askLoad {try store.read(slot:index)}})
-                if entry.canRestoreBackup {rows.append(action("recover-\(index)","슬롯 \(index+1) 마지막 정상 백업 복구",entry.backupEntry?.title ?? "") {[weak self] in self?.confirm("백업 복구","현재 파일을 보존한 뒤 마지막 정상 저장으로 복구합니다.") {self?.run {_ = try store.restoreBackup(.numbered(index));self?.showLoad()}}})}
+                rows.append(action("load-\(index)","슬롯 \(index+1)",slotLine(entry.entry,fallback:entry.message),enabled:entry.canLoad) {[weak self] in self?.askLoad {try store.read(slot:index)}})
+                if entry.canRestoreBackup {rows.append(action("recover-\(index)","슬롯 \(index+1) 마지막 정상 백업 복구",slotLine(entry.backupEntry,fallback:"")) {[weak self] in self?.confirm("백업 복구","현재 파일을 보존한 뒤 마지막 정상 저장으로 복구합니다.") {self?.run {_ = try store.restoreBackup(.numbered(index));self?.showLoad()}}})}
             }
             for name in [OriginalSaveSlots.Named.auto,.battleStart,.quick] {
                 let entry = try store.inspect(.named(name)),label = name == .auto ? "자동 저장" : name == .battleStart ? "전투 시작" : "이전 빠른 저장"
-                if entry.status != .empty {rows.append(action("named-\(name.rawValue)",label,entry.entry?.title ?? entry.message,enabled:entry.canLoad) {[weak self] in self?.askLoad {try store.read(name)}})}
+                if entry.status != .empty {rows.append(action("named-\(name.rawValue)",label,slotLine(entry.entry,fallback:entry.message),enabled:entry.canLoad) {[weak self] in self?.askLoad {try store.read(name)}})}
             }
             rows.append(action("suspend-load","중단 이어하기") {[weak self] in self?.askResume()});rows.append(backAction())
             menu = .init(title:"불러오기",body:"일반 저장과 전투 시작 저장은 반복해서 불러올 수 있습니다. 중단 저장은 1회만 이어합니다.",actions:rows)
@@ -1491,7 +1501,7 @@ struct IPadPanel {
         run {
             let entry = try SuspendSaveStore(directory:saveRoot).entry()
             let tail = continues ? "안전한 지점에서 현재 진행을 저장하고 계속 이어서 합니다. 이어하기 성공 시 소모됩니다." : "안전한 지점에서 현재 진행을 저장하고 타이틀로 이동합니다. 이어하기 성공 시 소모됩니다."
-            confirm("중단 저장",(entry == nil ? "" : "기존 중단 저장 1칸을 덮어씁니다.\n")+tail) {[weak self] in
+            confirm("중단 저장",(entry.map {"기존 중단 저장 1칸을 덮어씁니다. (\($0.title) · \(savedAt($0.date)))\n"} ?? "")+tail) {[weak self] in
                 self?.suspendedRequest = true;self?.suspendContinues = continues;self?.menu = nil;self?.run {_ = try self?.completeSuspendIfReady()}
             }
         }
@@ -1513,7 +1523,7 @@ struct IPadPanel {
         run {
             let store = SuspendSaveStore(directory:saveRoot)
             guard let entry = try store.entry() else {throw EngineError.invalid("이어할 중단 저장이 없습니다.")}
-            confirm("중단 이어하기",entry.title+"\n이어하기에 성공하면 이 중단 저장은 소모됩니다. 현재 진행을 대신합니다.") {[weak self] in self?.run {
+            confirm("중단 이어하기",entry.title+" · "+savedAt(entry.date)+"\n이어하기에 성공하면 이 중단 저장은 소모됩니다. 현재 진행을 대신합니다.") {[weak self] in self?.run {
                 guard let self,let data = self.data else {return}
                 let next = try store.resume(as:OriginalCampaignResume.self,expectedID:entry.id) {snapshot in
                     guard snapshot.kind == "native-engine-resume",snapshot.suspension != nil else {throw EngineError.invalid("지원하지 않는 중단 저장입니다.")}
