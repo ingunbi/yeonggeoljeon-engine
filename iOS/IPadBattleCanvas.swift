@@ -10,6 +10,7 @@ struct IPadBattleCanvas:UIViewRepresentable {
     let session:OriginalBattleSession
     let data:DataSet
     let selectedSlot:Int?
+    var onAnchor:(CGRect?)->Void = {_ in}
     let highlighted:Set<GridPoint>
     let animation:OriginalBattleAnimator
     var idlePhase:UInt8 = 0
@@ -17,10 +18,12 @@ struct IPadBattleCanvas:UIViewRepresentable {
 
     func makeUIView(context:Context)->IPadBattleScrollView {
         let view = IPadBattleScrollView()
+        view.onAnchor = onAnchor
         view.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,animation:animation,idlePhase:idlePhase,onCellTap:onCellTap)
         return view
     }
     func updateUIView(_ view:IPadBattleScrollView,context:Context) {
+        view.onAnchor = onAnchor
         view.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,animation:animation,idlePhase:idlePhase,onCellTap:onCellTap)
     }
     static func dismantleUIView(_ view:IPadBattleScrollView,coordinator:()) {
@@ -34,6 +37,9 @@ final class IPadBattleScrollView:UIScrollView,UIScrollViewDelegate,UIGestureReco
     private var lastSelection:Int?
     private var pendingFocus:GridPoint?
     private var tapGate = IPadBattleTapGate()
+    var onAnchor:(CGRect?)->Void = {_ in}
+    private var anchorCell:GridPoint?
+    private var lastAnchor:CGRect?
     private let issueLabel = UILabel()
     override init(frame:CGRect) {
         super.init(frame:frame)
@@ -70,6 +76,7 @@ final class IPadBattleScrollView:UIScrollView,UIScrollViewDelegate,UIGestureReco
         } else if lastSelection != selectedSlot,let slot = selectedSlot,let unit = session.units[slot],unit.status == 2,
                   !unit.enemy || unit.scriptFlags&0x20 != 0 {pendingFocus = unit.position}
         lastSelection = selectedSlot
+        anchorCell = selectedSlot.flatMap {session.units[$0]}.flatMap {$0.status == 2 && !$0.enemy ? $0.position : nil}
         board.update(session:session,data:data,selectedSlot:selectedSlot,highlighted:highlighted,animation:animation,idlePhase:idlePhase,onCellTap:onCellTap)
         issueLabel.text = board.presentationIssue;issueLabel.isHidden = board.presentationIssue == nil
         setNeedsLayout()
@@ -81,6 +88,7 @@ final class IPadBattleScrollView:UIScrollView,UIScrollViewDelegate,UIGestureReco
         let horizontal = max(0,(bounds.width-contentSize.width)/2),vertical = max(0,(bounds.height-contentSize.height)/2)
         let next = UIEdgeInsets(top:vertical,left:horizontal,bottom:vertical,right:horizontal)
         if contentInset != next {contentInset = next}
+        reportAnchor()
         issueLabel.frame = CGRect(x:bounds.minX+8,y:bounds.minY+8,width:max(1,min(500,bounds.width-16)),height:80)
         if let focus = pendingFocus,bounds.width > 0,bounds.height > 0 {
             pendingFocus = nil
@@ -88,6 +96,19 @@ final class IPadBattleScrollView:UIScrollView,UIScrollViewDelegate,UIGestureReco
             setContentOffset(CGPoint(x:contentSize.width <= bounds.width ? -horizontal : offset.x,
                                      y:contentSize.height <= bounds.height ? -vertical : offset.y),animated:false)
         }
+    }
+    /// The selected unit's cell in this view's own frame (scroll and zoom
+    /// applied), so a command popup can sit beside the unit.
+    private func reportAnchor() {
+        var next:CGRect? = nil
+        if let cell = anchorCell,bounds.width > 0 {
+            let box = board.convert(board.geometry.rect(cell),to:self)
+            next = box.offsetBy(dx:-bounds.minX,dy:-bounds.minY)
+        }
+        guard next != lastAnchor else {return}
+        lastAnchor = next
+        let report = onAnchor
+        DispatchQueue.main.async {report(next)}
     }
     func viewForZooming(in scrollView:UIScrollView)->UIView? {board}
     func scrollViewDidZoom(_ scrollView:UIScrollView) {setNeedsLayout()}

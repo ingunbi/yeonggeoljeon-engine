@@ -98,6 +98,7 @@ private struct IPadGameScreen:View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var importing = false
     @State private var sheetHeight:CGFloat = 420
+    @State private var unitAnchor:CGRect?
 
     var body:some View {
         GeometryReader {geometry in
@@ -109,7 +110,7 @@ private struct IPadGameScreen:View {
                         .font(.caption).foregroundStyle(.secondary).padding(.vertical,6)
                         .frame(maxWidth:.infinity).background(IPadTheme.ink)
                 }
-                if !game.actions.isEmpty,game.host?.hasStarted == true {dock}
+                if !dockActions.isEmpty,game.host?.hasStarted == true {dock}
             }
             .background(IPadTheme.ink.ignoresSafeArea()).preferredColorScheme(.dark).tint(IPadTheme.gold)
             .sheet(isPresented:Binding(get:{game.menu != nil && game.host?.hasStarted == true},set:{if !$0 {game.closeMenu()}})) {
@@ -170,6 +171,7 @@ private struct IPadGameScreen:View {
             Color.black
             if let host = game.host,host.stage.palette == 3,let battle = host.battle,let data = game.data {
                 IPadBattleCanvas(session:battle,data:data,selectedSlot:game.selectedSlot,
+                    onAnchor:{unitAnchor = $0},
                     highlighted:game.highlighted,animation:game.animator,idlePhase:game.idlePhase,onCellTap:game.cellTapped)
                     .accessibilityHidden(game.prompt != nil)
                 if let banner = game.cueBanner {
@@ -185,6 +187,9 @@ private struct IPadGameScreen:View {
                         }.buttonStyle(.plain)
                         Spacer(minLength:0)
                     }.padding(24)
+                }
+                if game.prompt == nil,game.menu == nil,let anchor = unitAnchor,!unitCommands.isEmpty {
+                    IPadUnitMenu(actions:unitCommands,anchor:anchor)
                 }
                 if game.prompt == nil,let info = game.unitInfo {
                     VStack(spacing:0) {
@@ -237,13 +242,53 @@ private struct IPadGameScreen:View {
         }.clipped()
     }
 
+    private static let unitCommandIDs:Set<String> = ["move","attack","strategies","items","wait","cancel"]
+    /// The commands for the selected unit float beside it; the dock keeps the rest.
+    private var unitCommands:[IPadAction] {game.isBattle ? game.actions.filter {Self.unitCommandIDs.contains($0.id)} : []}
+    private var dockActions:[IPadAction] {game.isBattle ? game.actions.filter {!Self.unitCommandIDs.contains($0.id)} : game.actions}
+
     private var dock:some View {
         HStack(spacing:8) {
-            ForEach(game.actions) {action in IPadDockButton(action:action)}
+            ForEach(dockActions) {action in IPadDockButton(action:action)}
         }
         .frame(maxWidth:.infinity)
         .padding(.horizontal,12).padding(.vertical,10)
         .background(IPadTheme.ink.ignoresSafeArea(edges:.bottom)).disabled(game.prompt != nil)
+    }
+}
+
+/// The selected unit's commands, floating beside its cell: right of it when
+/// there is room, left otherwise, kept inside the stage.
+private struct IPadUnitMenu:View {
+    let actions:[IPadAction]
+    let anchor:CGRect
+    private let width:CGFloat = 132,row:CGFloat = 44,gap:CGFloat = 8
+    var body:some View {
+        GeometryReader {proxy in menu(in:proxy.size)}
+    }
+    @ViewBuilder private func menu(in stage:CGSize) -> some View {
+        let height = row*CGFloat(actions.count)+12
+        let fitsRight = anchor.maxX+gap+width <= stage.width-6
+        let x = fitsRight ? anchor.maxX+gap : max(6,anchor.minX-gap-width)
+        let y = max(6,min(stage.height-height-6,anchor.midY-height/2))
+        VStack(spacing:0) {
+            ForEach(actions) {action in
+                Button(action:action.perform) {
+                    HStack(spacing:8) {
+                        if let symbol = IPadTheme.symbol(for:action.title) {Image(systemName:symbol).frame(width:22)}
+                        Text(action.title).font(.callout.weight(.semibold))
+                        Spacer(minLength:0)
+                    }
+                    .padding(.horizontal,12).frame(height:row)
+                    .foregroundStyle(action.id == "cancel" ? Color.secondary : IPadTheme.gold)
+                    .contentShape(Rectangle())
+                }.buttonStyle(.plain).disabled(!action.enabled).opacity(action.enabled ? 1 : 0.4)
+            }
+        }
+        .padding(.vertical,6).frame(width:width)
+        .background(IPadTheme.ink.opacity(0.94),in:RoundedRectangle(cornerRadius:14))
+        .overlay(RoundedRectangle(cornerRadius:14).stroke(IPadTheme.gold.opacity(0.45),lineWidth:1))
+        .position(x:x+width/2,y:y+height/2)
     }
 }
 
