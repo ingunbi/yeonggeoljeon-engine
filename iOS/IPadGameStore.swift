@@ -626,7 +626,7 @@ struct IPadPanel {
             let person = try battle.people.person(unit.person)
             let rain = battle.combat.strategyEnvironmentLookup[Int(battle.turns.weatherIndex)] == 2
             let rows = OriginalBattleCommand.strategyRows(classID:person.classID,level:person.level,mp:unit.mp,rain:rain,levels:levels,costs:costs)
-            menu = .init(title:person.name+" · 책략",body:"MP \(unit.mp) · 책략을 선택한 뒤 지도에서 대상을 선택하세요.",actions:rows.map {row in action("strategy-\(row.ability)",strategyName(row.ability),"MP \(row.cost)",enabled:row.enabled) {[weak self] in self?.selectStrategy(slot,row.ability)}}+[action("learn","책략 습득표") {[weak self] in self?.showLearning(slot)},backAction()])
+            menu = .init(title:person.name+" · 책략",body:rows.isEmpty ? "MP \(unit.mp) · 아직 쓸 수 있는 책략이 없습니다. 습득표에서 배우는 레벨을 확인하세요." : "MP \(unit.mp) · 책략을 선택한 뒤 지도에서 대상을 선택하세요.",actions:rows.map {row in action("strategy-\(row.ability)",strategyName(row.ability),"MP \(row.cost)",enabled:row.enabled) {[weak self] in self?.selectStrategy(slot,row.ability)}}+[action("learn","책략 습득표") {[weak self] in self?.showLearning(slot)},backAction()])
         }
     }
     private func selectStrategy(_ slot:Int,_ ability:Int) {
@@ -652,7 +652,7 @@ struct IPadPanel {
         run {
             guard let battle = session,let unit = battle.units[slot] else {return}
             let items = try battle.people.person(unit.person).itemIDs.filter {$0 != 255}
-            menu = .init(title:"소지품",body:"사용할 물품을 선택하세요.",actions:items.enumerated().map {offset,item in
+            menu = .init(title:"소지품",body:items.isEmpty ? "가지고 있는 물품이 없습니다." : "사용할 물품을 선택하세요.",actions:items.enumerated().map {offset,item in
                 action("item-\(offset)",itemName(item),host?.source.combat.items.first {$0.id == item}?.description ?? "") {[weak self] in self?.showItemActions(slot,item)}
             }+[backAction()])
         }
