@@ -969,6 +969,37 @@ struct IPadPanel {
         }
         menu = .init(title:"메모 목록",body:entries.isEmpty ? "남긴 메모가 없습니다." : "눌러서 지웁니다.",actions:rows+[navAction {[weak self] in self?.showAnnotations()}])
     }
+    // MARK: Victory conditions with progress
+    private func objectiveSubtitle(_ battle:OriginalBattleSession) -> String {
+        let limit = battle.header.turnLimit
+        let turn = battle.turns.roundIndex+1
+        return limit > 0 ? "\(turn)/\(limit)턴" : "\(turn)턴"
+    }
+    /// The public objective, the turn limit and, where reviewed source data links it, whether its completion event has happened.
+    func showObjective() {
+        guard let host,let battle = session else {return}
+        let text = host.vm.state.objectiveText ?? ""
+        let limit = battle.header.turnLimit,turn = battle.turns.roundIndex+1
+        var lines = [text.isEmpty ? "현재 목표 정보가 없습니다." : text]
+        if limit > 0 {lines.append("제한 턴 \(limit) · 지금 \(turn)턴 · 남은 턴 \(max(0,limit-turn))")}
+        let foes = battle.units.values.filter {$0.enemy && $0.status == 2 && $0.scriptFlags&0x20 != 0}.count
+        lines.append("보이는 적 부대 \(foes)")
+        let conditions = host.reviewedObjectiveProgress(publicText:text)
+        let entries = BattleObjectiveTracker.entries(session:battle,publicText:text,conditions:conditions)
+        var rows:[IPadAction] = []
+        for entry in entries {
+            let state = entry.state.rawValue
+            if let target = entry.target {
+                rows.append(action("objective-target","목표 위치 표시",state+" · (\(target.x),\(target.y))") {[weak self] in
+                    self?.menu = nil;self?.previewCells = [target]
+                    self?.saveNotice = "주황 칸이 목표 대상의 위치입니다.";self?.transientNoticeUntil = ProcessInfo.processInfo.systemUptime+8
+                    self?.revision += 1;self?.refresh()
+                })
+            }
+            lines.append("진행: "+state+(entry.sourceReference.isEmpty || entry.state != .unavailable ? "" : "\n"+entry.sourceReference))
+        }
+        menu = .init(title:"승리조건",body:lines.joined(separator:"\n"),actions:rows+[backAction()])
+    }
     // MARK: Dialogue record and unit list
     private var rosterOptions = BattleRosterOptions()
     private var bookmarksOnly = false
@@ -1162,7 +1193,7 @@ struct IPadPanel {
             action("resume","중단 이어하기") {[weak self] in self?.askResume()}]
         if suspendedRequest {rows.append(action("cancel-suspend","중단 저장 요청 취소") {[weak self] in self?.suspendedRequest = false;self?.suspendContinues = false;self?.closeMenu()})}
         if let battle = session {
-            rows.append(action("objective","승리조건") {[weak self] in self?.menu = .init(title:"승리조건",body:host.vm.state.objectiveText ?? "현재 목표 정보가 없습니다.",actions:[self?.backAction()].compactMap {$0})})
+            rows.append(action("objective","승리조건",objectiveSubtitle(battle)) {[weak self] in self?.showObjective()})
             rows.append(action("records","전투 결과 기록","현재 전투 \(battle.resultLog.entries.count)건") {[weak self] in self?.showResults()})
             rows.append(action("memo","작전 메모","핀 · 방어선 · 화살표 · 짧은 메모") {[weak self] in self?.showAnnotations()})
             rows.append(action("roster","부대 목록","병력·상태 한눈에 · 눌러서 선택") {[weak self] in self?.showRoster()})
