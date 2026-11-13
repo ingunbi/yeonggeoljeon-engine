@@ -846,6 +846,58 @@ struct IPadPanel {
         if !totals.complete {lines.append("이전 저장의 기록이 없어 일부 행동은 집계되지 않았습니다.")}
         menu = .init(title:summary.name,body:lines.joined(separator:"\n"),actions:[navAction {[weak self] in self?.showHistory()}])
     }
+    // MARK: Dialogue record and unit list
+    private var rosterOptions = BattleRosterOptions()
+    private var bookmarksOnly = false
+    /// Lines already shown, newest first; a long press on a row's detail can bookmark one.
+    func showDialogueRecord() {
+        guard let host else {return}
+        let entries = Array(host.extras.dialogueHistory.search(bookmarksOnly:bookmarksOnly).suffix(40).reversed())
+        var rows:[IPadAction] = [action("bookmark-filter",bookmarksOnly ? "북마크만 보는 중" : "전체 보는 중",bookmarksOnly ? "눌러서 전체 보기" : "눌러서 북마크만 보기") {[weak self] in self?.bookmarksOnly.toggle();self?.showDialogueRecord()}]
+        rows += entries.enumerated().map {index,entry in
+            action("line-\(index)",(entry.bookmarked ? "★ " : "")+entry.speaker,String(entry.text.replacingOccurrences(of:"\n",with:" ").prefix(60))) {[weak self] in self?.showDialogueLine(entry)}
+        }
+        menu = .init(title:"대사 기록",body:entries.isEmpty ? (bookmarksOnly ? "북마크한 대사가 없습니다." : "아직 본 대사가 없습니다.") : "이미 본 대사입니다. 최근 \(entries.count)건.",
+                     actions:rows+[navAction {[weak self] in self?.showMenu()}])
+    }
+    private func showDialogueLine(_ entry:DialogueHistory.Entry) {
+        guard let host else {return}
+        let marked = host.extras.dialogueHistory.entries.first {$0.id == entry.id}?.bookmarked ?? entry.bookmarked
+        menu = .init(title:entry.speaker,body:entry.text,actions:[
+            action("bookmark",marked ? "북마크 해제" : "북마크") {[weak self] in
+                self?.run {
+                    guard let self,let host = self.host else {return}
+                    try host.extras.dialogueHistory.setBookmark(entry.id,enabled:!marked)
+                    if let updated = host.extras.dialogueHistory.entries.first(where:{$0.id == entry.id}) {self.showDialogueLine(updated)}
+                }
+            },
+            navAction {[weak self] in self?.showDialogueRecord()}])
+    }
+    /// Our units at a glance, with the desktop's filters; a tap selects the unit on the map.
+    func showRoster() {
+        guard let battle = session else {return}
+        run {
+            let slots = battle.units.values.filter {!$0.enemy && $0.status == 2}.map(\.slot).sorted()
+            let ordered = try BattleAssistance.rosterRows(in:battle,slots:slots,options:rosterOptions)
+            let filters = BattleRosterOptions.Filter.allCases
+            var rows:[IPadAction] = [action("roster-filter","보기: "+rosterOptions.summary,"눌러서 다음 조건으로") {[weak self] in
+                guard let self else {return}
+                let current = filters.first {self.rosterOptions.filters.contains($0)}
+                let next = current.flatMap {filters.firstIndex(of:$0)}.map {$0+1} ?? 0
+                self.rosterOptions.filters = next < filters.count ? [filters[next]] : []
+                self.showRoster()
+            }]
+            for slot in ordered {
+                guard let unit = battle.units[slot],let person = try? battle.people.person(unit.person) else {continue}
+                let maximum = (try? OriginalCombat.maxTroops(classID:person.classID,level:person.level,tables:battle.combat)) ?? person.rawTroops
+                let state = unit.scriptFlags&0x80 != 0 ? " · 행동 완료" : unit.scriptFlags&2 != 0 ? " · 혼란" : ""
+                rows.append(action("roster-\(slot)",person.name,"Lv.\(person.level) · 병력 \(person.rawTroops)/\(maximum) · 사기 \(unit.morale)"+state) {[weak self] in
+                    self?.menu = nil;self?.run {try self?.selectUnit(unit,battle)}
+                })
+            }
+            menu = .init(title:"부대 목록",body:ordered.isEmpty ? "조건에 맞는 부대가 없습니다." : "아군 \(ordered.count)부대. 누르면 그 부대를 선택합니다.",actions:rows+[navAction {[weak self] in self?.showMenu()}])
+        }
+    }
     private func showJourney() {
         guard let host else {return}
         let entries = Array(host.extras.journal.journey.suffix(40).reversed())
@@ -989,9 +1041,11 @@ struct IPadPanel {
         if let battle = session {
             rows.append(action("objective","승리조건") {[weak self] in self?.menu = .init(title:"승리조건",body:host.vm.state.objectiveText ?? "현재 목표 정보가 없습니다.",actions:[self?.backAction()].compactMap {$0})})
             rows.append(action("records","전투 결과 기록","현재 전투 \(battle.resultLog.entries.count)건") {[weak self] in self?.showResults()})
+            rows.append(action("roster","부대 목록","병력·상태 한눈에 · 눌러서 선택") {[weak self] in self?.showRoster()})
             if !enemyTurnChanges.isEmpty {rows.append(action("enemy-turn","적 턴 요약","지난 적 턴의 변화 \(enemyTurnChanges.count)건") {[weak self] in self?.showEnemyTurn()})}
             if let slot = selectedSlot {rows.append(action("officer","선택 장수 정보") {[weak self] in self?.showUnit(slot)})}
         }
+        rows.append(action("dialogue","대사 기록","이미 본 대사 · 북마크") {[weak self] in self?.showDialogueRecord()})
         rows.append(action("history","누적 전적","끝낸 전투의 결과·경험치·퇴각") {[weak self] in self?.showHistory()})
         rows.append(action("journey","여정","방문한 곳과 확정한 선택") {[weak self] in self?.showJourney()})
         rows.append(action("manage","장수·물품","장수 정보 · 소지품 · 전달 · 보호") {[weak self] in self?.showManagement()})
