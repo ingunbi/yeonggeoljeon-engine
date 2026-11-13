@@ -213,6 +213,19 @@ struct IPadPanel {
         var left = friendly ? attacker : target,right = friendly ? target : attacker
         if friendly {left.extraLabel = texts.exp;left.extraText = String(snapshot.experience)} else {right.extraLabel = "";right.extraText = ""}
         let frame = player.frame
+        // The cards show the numbers the result window is on: the snapshot holds the figures from before the exchange.
+        if let page = frame?.page {
+            func apply(_ target:inout IPadCombatSide,_ attacker:inout IPadCombatSide) {
+                if page.experience {
+                    target.troops = max(0,snapshot.targetTroops-snapshot.damage);target.morale = max(0,snapshot.targetMorale-snapshot.moraleLoss)
+                    if friendly,let value = page.gauges.first?.value {attacker.extraText = String(value)}
+                } else if let value = page.gauges.first?.value {
+                    target.troops = value
+                    if page.gauges.count > 1 {target.morale = page.gauges[1].value}
+                }
+            }
+            if friendly {apply(&right,&left)} else {apply(&left,&right)}
+        }
         return IPadCombatState(image:combatImage?.image,left:left,right:right,lines:frame?.page?.lines.map(\.text) ?? [],
                                gauges:frame?.page?.gauges.map {($0.value,$0.maximum)} ?? [],notice:frame?.notice)
     }

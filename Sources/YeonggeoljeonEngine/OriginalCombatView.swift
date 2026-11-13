@@ -97,6 +97,8 @@ struct OriginalCombatPage:Equatable {
     struct Gauge:Equatable { var y:Int;var value:Int;var maximum:Int }
     var lines:[Line]
     var gauges:[Gauge]
+    /// True for the experience pages; the others report the target's troops and morale.
+    var experience = false
 }
 
 /// Printf subset of the source's result strings: %s, %u with a width, %%.
@@ -365,9 +367,9 @@ struct OriginalCombatScene {
             render(ticks:1)
         }
     }
-    private mutating func page(_ lines:[OriginalCombatPage.Line],_ gauges:[OriginalCombatPage.Gauge]) {
+    private mutating func page(_ lines:[OriginalCombatPage.Line],_ gauges:[OriginalCombatPage.Gauge],experience:Bool = false) {
         frames.append(OriginalCombatFrame(layers:layers,scroll:scroll,ticks:60,sounds:pendingSounds,skippable:true,
-            page:OriginalCombatPage(lines:lines,gauges:gauges)))
+            page:OriginalCombatPage(lines:lines,gauges:gauges,experience:experience)))
         pendingSounds = []
     }
     /// MAIN31A06: names and numbers come from the view's owner through `names`.
@@ -393,8 +395,8 @@ struct OriginalCombatScene {
             return
         }
         let gained = OriginalCombatPage.Line(y:128,text:originalFormat(texts.experience,[attackerName,String(s.experienceGain)]))
-        page([gained],[.init(y:164,value:s.experience,maximum:100)])
-        page([gained],[.init(y:164,value:s.experience+s.experienceGain,maximum:100)])
+        page([gained],[.init(y:164,value:s.experience,maximum:100)],experience:true)
+        page([gained],[.init(y:164,value:s.experience+s.experienceGain,maximum:100)],experience:true)
     }
 }
 
