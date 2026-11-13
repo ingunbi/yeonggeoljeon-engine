@@ -30,6 +30,8 @@ final class StageView extends View {
     private Listener listener;
     private float zoom = 1f, panX = 0f, panY = 0f;
     private boolean fitted;
+    /** A tall, narrow view (a phone held upright) starts zoomed in so the map is not a thin strip between black bars. */
+    private boolean fillOnFit;
     private float carriedX, carriedY;
     private final GestureDetector gestures;
     private final ScaleGestureDetector scaler;
@@ -76,7 +78,7 @@ final class StageView extends View {
         bitmap = image;
         battle = battleMode;
         touchable = canTouch;
-        if (newMap || !battleMode) { zoom = 1f; panX = 0f; panY = 0f; fitted = false; }
+        if (newMap || !battleMode) { zoom = 1f; panX = 0f; panY = 0f; fitted = false; fillOnFit = battleMode; }
         invalidate();
     }
 
@@ -84,6 +86,16 @@ final class StageView extends View {
         super.onSizeChanged(w, h, oldw, oldh);
         // A resized view refits instead of keeping a stale offset, so the picture never jumps.
         if (zoom == 1f) fitted = false;
+    }
+
+    /** Scrolls the map just enough to bring a cell (with a one-cell margin) into view. */
+    void reveal(int x, int y) {
+        if (bitmap == null || !battle || getWidth() == 0) return;
+        RectF r = cellRect(x, y);
+        float m = r.width() * 1.5f, dx = 0f, dy = 0f;
+        if (r.left < m) dx = m - r.left; else if (r.right > getWidth() - m) dx = getWidth() - m - r.right;
+        if (r.top < m) dy = m - r.top; else if (r.bottom > getHeight() - m) dy = getHeight() - m - r.bottom;
+        if (dx != 0f || dy != 0f) { panX += dx; panY += dy; invalidate(); }
     }
 
     private float fitScale() {
@@ -99,7 +111,18 @@ final class StageView extends View {
         float shownW = bitmap.getWidth() * scale, shownH = bitmap.getHeight() * scale;
         float baseX = (getWidth() - bitmap.getWidth() * fit) / 2f, baseY = (getHeight() - bitmap.getHeight() * fit) / 2f;
         if (battle) {
-            if (!fitted) { panX = baseX; panY = baseY; fitted = true; }
+            if (!fitted) {
+                if (fillOnFit) {
+                    zoom = Math.max(1f, Math.min(2.2f, getHeight() / (bitmap.getHeight() * fit)));
+                    fillOnFit = false;
+                    scale = fit * zoom;
+                    shownW = bitmap.getWidth() * scale;
+                    shownH = bitmap.getHeight() * scale;
+                }
+                panX = (getWidth() - shownW) / 2f;
+                panY = (getHeight() - shownH) / 2f;
+                fitted = true;
+            }
             // Keep the map from leaving the view completely.
             panX = shownW <= getWidth() ? (getWidth() - shownW) / 2f : Math.max(getWidth() - shownW, Math.min(0f, panX));
             panY = shownH <= getHeight() ? (getHeight() - shownH) / 2f : Math.max(getHeight() - shownH, Math.min(0f, panY));

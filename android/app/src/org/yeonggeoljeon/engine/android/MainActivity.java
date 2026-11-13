@@ -59,6 +59,9 @@ public class MainActivity extends Activity implements StageView.Listener {
 
     private FrameLayout root;
     private TextView title, status, speedButton, menuButton;
+    /** The selected unit's card lives in the header (a row under it on a phone), never over the map. */
+    private LinearLayout infoBar;
+    private boolean inBattle;
     private StageView stage;
     private LinearLayout dock;
     private HorizontalScrollView dockScroll;
@@ -68,6 +71,7 @@ public class MainActivity extends Activity implements StageView.Listener {
     private LinearLayout unitMenu;
     private int selectedX = -1, selectedY = -1;
     private String lastUiKey = "";
+    private String lastPicked = "";
     private String lastAround = "";
     private int[][] aroundUnits = new int[0][], aroundReach = new int[0][];
     private static final java.util.Set<String> UNIT_COMMANDS = new java.util.HashSet<>(java.util.Arrays.asList("move", "attack", "strategies", "items", "wait", "cancel"));
@@ -352,7 +356,16 @@ public class MainActivity extends Activity implements StageView.Listener {
         status.setSingleLine();
         names.addView(title);
         names.addView(status);
-        header.addView(names, new LinearLayout.LayoutParams(0, -2, 1f));
+        infoBar = new LinearLayout(this);
+        infoBar.setOrientation(LinearLayout.HORIZONTAL);
+        infoBar.setGravity(Gravity.CENTER_VERTICAL);
+        infoBar.setVisibility(View.GONE);
+        if (isPhone()) {
+            header.addView(names, new LinearLayout.LayoutParams(0, -2, 1f));
+        } else {
+            header.addView(names, new LinearLayout.LayoutParams(0, -2, 1f));
+            header.addView(infoBar, new LinearLayout.LayoutParams(0, -2, 2f));
+        }
         speedButton = Ui.text(this, "1×", 17, Ui.GOLD, true);
         speedButton.setGravity(Gravity.CENTER);
         speedButton.setMinWidth(Ui.dp(this, 52));
@@ -370,6 +383,10 @@ public class MainActivity extends Activity implements StageView.Listener {
         menuParams.leftMargin = Ui.dp(this, 8);
         header.addView(menu, menuParams);
         column.addView(header);
+        if (isPhone()) {
+            infoBar.setPadding(Ui.dp(this, 12), Ui.dp(this, 3), Ui.dp(this, 12), Ui.dp(this, 5));
+            column.addView(infoBar, new LinearLayout.LayoutParams(-1, Ui.dp(this, 56)));
+        }
 
         stage = new StageView(this);
         stage.setListener(this);
@@ -425,6 +442,7 @@ public class MainActivity extends Activity implements StageView.Listener {
         boolean started = s.optBoolean("started");
         String mode = s.optString("mode", "title");
         boolean battle = "battle".equals(mode);
+        inBattle = battle;
         title.setText(s.optString("header", "영걸전"));
         String line = s.optString("status", "");
         status.setText(line.length() == 0 ? " " : line);
@@ -458,6 +476,12 @@ public class MainActivity extends Activity implements StageView.Listener {
             aroundUnits = cells(around == null ? null : around.optJSONArray("units"));
             aroundReach = cells(around == null ? null : around.optJSONArray("reach"));
             placeUnitMenu();
+        }
+        JSONObject picked = s.optJSONObject("selected");
+        String pickedKey = picked == null ? "" : picked.optInt("x") + "," + picked.optInt("y");
+        if (!pickedKey.equals(lastPicked)) {
+            lastPicked = pickedKey;
+            if (picked != null) stage.reveal(picked.optInt("x"), picked.optInt("y"));
         }
         String uiKey = s.toString();
         if (uiKey.equals(lastUiKey)) return;
@@ -586,7 +610,7 @@ public class MainActivity extends Activity implements StageView.Listener {
         JSONObject unit = s.optJSONObject("unit");
         JSONObject banner = s.optJSONObject("banner");
 
-        if (unit != null && prompt == null && combat == null) overlay.addView(unitCard(frame, unit), cardParams(Gravity.TOP | Gravity.START, 10));
+        fillInfoBar(frame, unit != null && prompt == null && combat == null ? unit : null, inBattle);
         if (banner != null && prompt == null && combat == null) {
             TextView b = Ui.text(this, banner.optString("text") + (banner.optBoolean("waits") ? "\n눌러서 계속" : ""), 17, Ui.TEXT, true);
             b.setGravity(Gravity.CENTER);
@@ -611,8 +635,9 @@ public class MainActivity extends Activity implements StageView.Listener {
         // Prompt and menu panels live in dialogs.
         JSONObject panel = null;
         boolean isMenu = false;
-        if (prompt != null && !dialogue) panel = prompt;
-        else if (menu != null && !titleCard && prompt == null) { panel = menu; isMenu = true; }
+        // A menu opened from a prompt's button (the save slots from "저장할까요?") sits above that prompt, as on the iPad.
+        if (menu != null && !titleCard) { panel = menu; isMenu = true; }
+        else if (prompt != null && !dialogue) panel = prompt;
         showPanel(panel, isMenu);
 
         if (s.has("error") && errorDialog == null) {
@@ -644,40 +669,45 @@ public class MainActivity extends Activity implements StageView.Listener {
         return image;
     }
 
-    private View unitCard(Frame frame, JSONObject u) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.HORIZONTAL);
-        card.setPadding(Ui.dp(this, 8), Ui.dp(this, 7), Ui.dp(this, 8), Ui.dp(this, 7));
-        card.setBackground(Ui.round(this, 0xB80E1320, 14, Ui.LINE));
+    private boolean isPhone() { return getResources().getConfiguration().screenWidthDp < 480; }
+
+    /** Shows the selected unit in the header bar. `u` is null when nothing is selected; outside a battle the bar goes away. */
+    private void fillInfoBar(Frame frame, JSONObject u, boolean battle) {
+        infoBar.removeAllViews();
+        if (!battle) { infoBar.setVisibility(View.GONE); return; }
+        // A phone keeps the row's height while empty so selecting a unit never resizes the map.
+        infoBar.setVisibility(u == null ? (isPhone() ? View.INVISIBLE : View.GONE) : View.VISIBLE);
+        if (u == null) return;
+        boolean phone = isPhone();
         Bitmap portrait = frame.images.get(u.optString("portrait"));
         if (portrait != null) {
-            ImageView image = portraitView(portrait, 40, 50);
-            ((LinearLayout.LayoutParams) image.getLayoutParams()).rightMargin = Ui.dp(this, 8);
-            card.addView(image);
+            ImageView image = portraitView(portrait, phone ? 32 : 36, phone ? 40 : 45);
+            ((LinearLayout.LayoutParams) image.getLayoutParams()).rightMargin = Ui.dp(this, 10);
+            infoBar.addView(image);
         }
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         LinearLayout top = new LinearLayout(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        top.addView(Ui.text(this, u.optString("name"), 15, u.optBoolean("enemy") ? 0xFFFF8C80 : Ui.GOLD, true));
+        TextView name = Ui.text(this, u.optString("name"), 16, u.optBoolean("enemy") ? 0xFFFF8C80 : Ui.GOLD, true);
+        name.setSingleLine();
+        top.addView(name);
         TextView cls = Ui.text(this, "  " + u.optString("className") + " Lv." + u.optInt("level"), 12, Ui.MUTED, false);
+        cls.setSingleLine();
         top.addView(cls);
         col.addView(top);
-        col.addView(gauge("병력", u.optInt("troops"), u.optInt("maxTroops"), 0xFF73CC80));
-        col.addView(gauge("사기", u.optInt("morale"), 100, 0xFFF2BF59));
-        col.addView(gauge("MP", u.optInt("mp"), u.optInt("maxMP"), 0xFF73A6FF));
-        LinearLayout foot = new LinearLayout(this);
-        foot.setGravity(Gravity.CENTER_VERTICAL);
-        TextView terrain = Ui.text(this, "지형 " + u.optString("terrain") + (u.optBoolean("confused") ? " · 혼란" : ""), 12, Ui.MUTED, false);
-        foot.addView(terrain, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView stats = Ui.text(this, "병력 " + u.optInt("troops") + "/" + u.optInt("maxTroops") + "  사기 " + u.optInt("morale")
+            + "  MP " + u.optInt("mp") + "  " + u.optString("terrain") + (u.optBoolean("confused") ? " · 혼란" : ""), 12, Ui.TEXT, false);
+        stats.setSingleLine();
+        col.addView(stats);
+        infoBar.addView(col, new LinearLayout.LayoutParams(0, -2, 1f));
         TextView more = Ui.text(this, "상세", 13, Ui.GOLD, true);
-        more.setPadding(Ui.dp(this, 10), Ui.dp(this, 3), Ui.dp(this, 10), Ui.dp(this, 3));
+        more.setPadding(Ui.dp(this, 12), Ui.dp(this, 6), Ui.dp(this, 12), Ui.dp(this, 6));
         more.setBackground(Ui.round(this, Ui.GLASS, 14, 0));
         more.setOnClickListener(v -> command(Native.UNIT_DETAIL));
-        foot.addView(more);
-        col.addView(foot);
-        card.addView(col, new LinearLayout.LayoutParams(Ui.dp(this, 188), -2));
-        return card;
+        LinearLayout.LayoutParams mp = Ui.lp(-2, -2);
+        mp.leftMargin = Ui.dp(this, 8);
+        infoBar.addView(more, mp);
     }
 
     private View gauge(String label, int value, int max, int color) {
@@ -864,7 +894,8 @@ public class MainActivity extends Activity implements StageView.Listener {
         final boolean menu = isMenu;
         Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        dialog.setContentView(panelBody(panel, menu));
+        View body = panelBody(panel, menu);
+        dialog.setContentView(body, new ViewGroup.LayoutParams(-1, body.getTag() instanceof Integer ? (Integer) body.getTag() : -2));
         Window window = dialog.getWindow();
         window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0));
         window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - Ui.dp(this, 24), Ui.dp(this, 620)), ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -914,6 +945,7 @@ public class MainActivity extends Activity implements StageView.Listener {
         }
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout footerRow = null;
         if (!listed.isEmpty()) {
             LinearLayout rows = new LinearLayout(this);
             rows.setOrientation(LinearLayout.VERTICAL);
@@ -927,8 +959,10 @@ public class MainActivity extends Activity implements StageView.Listener {
             content.addView(rows, rp);
         }
         if (!footer.isEmpty()) {
+            // Long titles wrap badly side by side on a phone, so the buttons stack there.
+            boolean narrow = getResources().getConfiguration().screenWidthDp < 480;
             LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setOrientation(narrow ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
             for (int i = 0; i < footer.size(); i++) {
                 JSONObject a = footer.get(i);
                 String id = a.optString("id");
@@ -936,18 +970,27 @@ public class MainActivity extends Activity implements StageView.Listener {
                     || id.equals("dialogue") || id.equals("shop-next") || id.equals("retirement") || id.equals("item-next") || id.equals("new");
                 TextView b = Ui.pill(this, a.optString("title"), primary, a.optBoolean("enabled", true));
                 b.setOnClickListener(v -> perform(scope, id));
-                LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, -2, 1f);
-                p.leftMargin = i == 0 ? 0 : Ui.dp(this, 12);
+                LinearLayout.LayoutParams p = narrow ? new LinearLayout.LayoutParams(-1, -2) : new LinearLayout.LayoutParams(0, -2, 1f);
+                if (narrow) p.topMargin = i == 0 ? 0 : Ui.dp(this, 10); else p.leftMargin = i == 0 ? 0 : Ui.dp(this, 12);
                 row.addView(b, p);
             }
-            LinearLayout.LayoutParams fp = Ui.lp(-1, -2);
-            fp.topMargin = Ui.dp(this, 16);
-            content.addView(row, fp);
+            footerRow = row;
         }
         ScrollView scroll = new ScrollView(this);
         scroll.addView(content);
-        int max = (int) (getResources().getDisplayMetrics().heightPixels * 0.72f);
-        box.addView(new BoundedScroll(this, scroll, max), Ui.lp(-1, -2));
+        int screen = getResources().getDisplayMetrics().heightPixels;
+        if (!listed.isEmpty()) {
+            // A long list gets a sheet of fixed height; the list scrolls inside it and the buttons stay in view.
+            box.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+            box.setTag(Math.round(screen * 0.84f));
+        } else {
+            box.addView(new BoundedScroll(this, scroll, (int) (screen * 0.6f)), Ui.lp(-1, -2));
+        }
+        if (footerRow != null) {
+            LinearLayout.LayoutParams fp = Ui.lp(-1, -2);
+            fp.topMargin = Ui.dp(this, 16);
+            box.addView(footerRow, fp);
+        }
         return box;
     }
 
