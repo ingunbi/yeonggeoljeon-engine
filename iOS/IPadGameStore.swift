@@ -311,7 +311,11 @@ struct IPadPanel {
     }
     private func advanceCombat(_ seconds:Double) {
         guard var player = combatPlayer else {return}
-        for action in player.advance(seconds,soundBusy:false) {if case .sound(let id) = action {audio?.playEffect(id)}}
+        // The source holds each swing pose for 12 ticks (0.2 s). On a touch screen that reads as a stall, so held poses run
+        // through faster; running frames, result pages and anything waiting for a tap keep the source timing.
+        var pace = seconds
+        if let frame = player.frame,frame.ticks >= 6,!frame.skippable,frame.page == nil,!frame.waitsForSound {pace *= 3}
+        for action in player.advance(pace,soundBusy:false) {if case .sound(let id) = action {audio?.playEffect(id)}}
         if player.finished {
             combatPlayer = nil;combatImage = nil
             let rest = combatRest;combatRest = [];startCues(rest)
