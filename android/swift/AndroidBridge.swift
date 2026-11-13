@@ -101,6 +101,9 @@ private func pointer(_ text:UnsafePointer<CChar>?) -> String {text.map {String(c
                 state["around"] = ["units":others.sorted {$0.slot < $1.slot}.map {[$0.position.x,$0.position.y]},
                                    "reach":game.stripClearCells.filter {$0 != at}.sorted {$0.y == $1.y ? $0.x < $1.x : $0.y < $1.y}.map {[$0.x,$0.y]}] as [String:Any]
             }
+            state["notes"] = game.annotationEntries.map {entry -> [String:Any] in
+                ["k":entry.kind.rawValue,"x":entry.start.x,"y":entry.start.y,"x2":entry.end?.x ?? -1,"y2":entry.end?.y ?? -1,"t":entry.text,"s":entry.style.rawValue]
+            }
             state["mode"] = "battle";state["battle"] = ["cols":battle.width,"rows":battle.height] as [String:Any]
         } else {state["mode"] = game.host?.hasStarted == true ? "field" : "title"}
         // Sorted keys: Swift dictionaries iterate in a different order per instance, and the app compares these strings.

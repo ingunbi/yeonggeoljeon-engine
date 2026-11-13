@@ -519,6 +519,7 @@ struct IPadPanel {
                     result.append(action("coop","협공 계산",enabled:canAct) {[weak self] in self?.showCooperation(slot)})
                 }
             }
+            if annotationMarking {result.append(action("memo-cancel","메모 취소") {[weak self] in self?.cancelMarking()})}
             result.append(action("threat",threatOn ? "위험도 끄기" : "위험도") {[weak self] in self?.toggleThreat()})
             result.append(action("turn","턴 종료",enabled:canAct) {[weak self] in self?.confirmEndTurn()})
         } else if host.explorationInputReady {result.append(action("destinations","인물·목적지") {[weak self] in self?.showDestinations()})}
@@ -569,6 +570,7 @@ struct IPadPanel {
     func cellTapped(_ point:GridPoint) {
         guard canAct,let battle = session else {return}
         if !previewCells.isEmpty {previewCells = []}
+        if let mode = annotationMode {placeAnnotation(point,mode);return}
         run {
             let target = battle.units.values.first {$0.status == 2 && $0.position == point && (!$0.enemy || $0.scriptFlags&0x20 != 0)}
             if let slot = selectedSlot,let mode = targetMode {
@@ -846,6 +848,82 @@ struct IPadPanel {
         if !totals.complete {lines.append("이전 저장의 기록이 없어 일부 행동은 집계되지 않았습니다.")}
         menu = .init(title:summary.name,body:lines.joined(separator:"\n"),actions:[navAction {[weak self] in self?.showHistory()}])
     }
+    // MARK: Battle map notes (the desktop's pins, lines, arrows and short notes)
+    enum AnnotationMode {case pin,line,arrow,note(String)}
+    private var annotationMode:AnnotationMode?
+    private var annotationStart:GridPoint?
+    @Published private(set) var annotationsVisible = true
+    var annotationMarking:Bool {annotationMode != nil}
+    /// What the map draws: only this attempt's notes, and only while they are shown.
+    var annotationEntries:[BattleAnnotations.Entry] {
+        guard annotationsVisible,let battle = session,let notes = host?.extras.annotations,notes.matches(battle) else {return []}
+        return notes.entries
+    }
+    private func editAnnotations(_ body:(inout BattleAnnotations) throws -> Void) throws {
+        guard let host,let battle = session else {return}
+        var notes = host.extras.annotations
+        if notes == nil || notes?.matches(battle) != true {
+            notes = BattleAnnotations(battleID:battle.definition.id,attemptID:battle.resultLog.attemptID,width:battle.width,height:battle.height)
+        }
+        try body(&notes!)
+        host.extras.annotations = notes;revision += 1
+    }
+    private func beginMarking(_ mode:AnnotationMode,_ hint:String) {
+        annotationMode = mode;annotationStart = nil;menu = nil
+        saveNotice = hint;transientNoticeUntil = ProcessInfo.processInfo.systemUptime+8;revision += 1;refresh()
+    }
+    func cancelMarking() {annotationMode = nil;annotationStart = nil;saveNotice = nil;revision += 1;refresh()}
+    private func placeAnnotation(_ point:GridPoint,_ mode:AnnotationMode) {
+        run {
+            func entry(_ kind:BattleAnnotations.Kind,end:GridPoint? = nil,text:String = "",style:BattleAnnotations.Style = .gold) -> BattleAnnotations.Entry {
+                .init(id:UUID(),kind:kind,start:point,end:end,text:text,style:style)
+            }
+            switch mode {
+            case .pin:
+                try editAnnotations {try $0.upsert(entry(.pin))};annotationMode = nil
+            case .note(let text):
+                try editAnnotations {try $0.upsert(entry(.note,text:text,style:.blue))};annotationMode = nil
+            case .line,.arrow:
+                guard let start = annotationStart else {
+                    annotationStart = point;saveNotice = "끝 칸을 누르세요.";transientNoticeUntil = ProcessInfo.processInfo.systemUptime+8;refresh();return
+                }
+                let isArrow:Bool = {if case .arrow = mode {return true};return false}()
+                try editAnnotations {try $0.upsert(.init(id:UUID(),kind:isArrow ? .arrow : .line,start:start,end:point,text:"",style:isArrow ? .pink : .gold))}
+                annotationMode = nil;annotationStart = nil
+            }
+            saveNotice = "표시를 남겼습니다.";transientNoticeUntil = ProcessInfo.processInfo.systemUptime+3;refresh()
+        }
+    }
+    func showAnnotations() {
+        let count = annotationEntries.count
+        menu = .init(title:"작전 메모",body:"지도에 핀·방어선·화살표·짧은 메모를 남깁니다. 게임 진행에는 영향이 없고 저장에 함께 보관됩니다.",actions:[
+            action("pin","핀 놓기","칸 하나를 눌러 표시") {[weak self] in self?.beginMarking(.pin,"핀을 놓을 칸을 누르세요.")},
+            action("line","방어선 긋기","시작 칸과 끝 칸을 차례로") {[weak self] in self?.beginMarking(.line,"방어선의 시작 칸을 누르세요.")},
+            action("arrow","화살표 긋기","시작 칸에서 끝 칸으로") {[weak self] in self?.beginMarking(.arrow,"화살표의 시작 칸을 누르세요.")},
+            action("note","짧은 메모","문구를 고른 뒤 칸을 눌러 붙임") {[weak self] in self?.showNotePhrases()},
+            action("list","메모 목록","\(count)개 · 눌러서 지우기") {[weak self] in self?.showAnnotationList()},
+            action("visible",annotationsVisible ? "메모 숨기기" : "메모 보이기") {[weak self] in self?.annotationsVisible.toggle();self?.revision += 1;self?.showAnnotations()},
+            action("clear-notes","이 전투의 메모 모두 지우기",enabled:count > 0) {[weak self] in
+                self?.confirm("메모 지우기","이 전투에 남긴 메모를 모두 지웁니다.") {self?.run {try self?.editAnnotations {$0.clear()};self?.showAnnotations()}}
+            },
+            backAction()])
+    }
+    private func showNotePhrases() {
+        let phrases = ["집결","주의","공격 예정","후퇴","회복 필요","보호","함정?","대기"]
+        menu = .init(title:"짧은 메모",body:"붙일 문구를 고르세요.",actions:phrases.map {phrase in
+            action("phrase-\(phrase)",phrase) {[weak self] in self?.beginMarking(.note(phrase),"'\(phrase)'을 붙일 칸을 누르세요.")}
+        }+[navAction {[weak self] in self?.showAnnotations()}])
+    }
+    private func showAnnotationList() {
+        let entries = annotationEntries
+        let rows = entries.enumerated().map {index,entry -> IPadAction in
+            let place = entry.end.map {"(\(entry.start.x),\(entry.start.y)) → (\($0.x),\($0.y))"} ?? "(\(entry.start.x),\(entry.start.y))"
+            return action("note-\(index)",entry.kind.label+(entry.text.isEmpty ? "" : " · "+entry.text),place+" · 눌러서 지우기") {[weak self] in
+                self?.run {try self?.editAnnotations {$0.remove(entry.id)};self?.showAnnotationList()}
+            }
+        }
+        menu = .init(title:"메모 목록",body:entries.isEmpty ? "남긴 메모가 없습니다." : "눌러서 지웁니다.",actions:rows+[navAction {[weak self] in self?.showAnnotations()}])
+    }
     // MARK: Dialogue record and unit list
     private var rosterOptions = BattleRosterOptions()
     private var bookmarksOnly = false
@@ -1041,6 +1119,7 @@ struct IPadPanel {
         if let battle = session {
             rows.append(action("objective","승리조건") {[weak self] in self?.menu = .init(title:"승리조건",body:host.vm.state.objectiveText ?? "현재 목표 정보가 없습니다.",actions:[self?.backAction()].compactMap {$0})})
             rows.append(action("records","전투 결과 기록","현재 전투 \(battle.resultLog.entries.count)건") {[weak self] in self?.showResults()})
+            rows.append(action("memo","작전 메모","핀 · 방어선 · 화살표 · 짧은 메모") {[weak self] in self?.showAnnotations()})
             rows.append(action("roster","부대 목록","병력·상태 한눈에 · 눌러서 선택") {[weak self] in self?.showRoster()})
             if !enemyTurnChanges.isEmpty {rows.append(action("enemy-turn","적 턴 요약","지난 적 턴의 변화 \(enemyTurnChanges.count)건") {[weak self] in self?.showEnemyTurn()})}
             if let slot = selectedSlot {rows.append(action("officer","선택 장수 정보") {[weak self] in self?.showUnit(slot)})}

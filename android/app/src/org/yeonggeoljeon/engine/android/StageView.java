@@ -139,10 +139,65 @@ final class StageView extends View {
         matrix.invert(inverse);
     }
 
+    /** The player's map notes: {kind, x, y, x2, y2, text, style} per entry, drawn over the picture. */
+    private org.json.JSONArray notes;
+    private final Paint notePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    void setNotes(org.json.JSONArray value) { notes = value; invalidate(); }
+
+    private void drawNotes(Canvas canvas) {
+        if (notes == null || notes.length() == 0) return;
+        for (int i = 0; i < notes.length(); i++) {
+            org.json.JSONObject n = notes.optJSONObject(i);
+            if (n == null) continue;
+            String style = n.optString("s"), kind = n.optString("k");
+            int color = "blue".equals(style) ? 0xFF4DA3FF : "pink".equals(style) ? 0xFFFF6FA8 : 0xFFFFC857;
+            RectF a = cellRect(n.optInt("x"), n.optInt("y"));
+            float unit = a.width();
+            notePaint.setColor(color);
+            notePaint.setStrokeWidth(Math.max(3f, unit * 0.12f));
+            notePaint.setStyle(Paint.Style.STROKE);
+            notePaint.setPathEffect("blue".equals(style) ? new android.graphics.DashPathEffect(new float[]{unit * 0.3f, unit * 0.2f}, 0)
+                : "pink".equals(style) ? new android.graphics.DashPathEffect(new float[]{unit * 0.5f, unit * 0.15f}, 0) : null);
+            if ("line".equals(kind) || "arrow".equals(kind)) {
+                RectF b2 = cellRect(n.optInt("x2"), n.optInt("y2"));
+                float x1 = a.centerX(), y1 = a.centerY(), x2 = b2.centerX(), y2 = b2.centerY();
+                canvas.drawLine(x1, y1, x2, y2, notePaint);
+                if ("arrow".equals(kind)) {
+                    double angle = Math.atan2(y2 - y1, x2 - x1);
+                    float head = unit * 0.55f;
+                    notePaint.setPathEffect(null);
+                    for (int side = -1; side <= 1; side += 2) {
+                        double t = angle + Math.PI + side * 0.5;
+                        canvas.drawLine(x2, y2, x2 + (float) (Math.cos(t) * head), y2 + (float) (Math.sin(t) * head), notePaint);
+                    }
+                }
+            } else {
+                notePaint.setPathEffect(null);
+                notePaint.setStyle(Paint.Style.FILL);
+                float r = unit * 0.32f;
+                canvas.drawCircle(a.centerX(), a.centerY() - unit * 0.1f, r, notePaint);
+                notePaint.setColor(0xFF1B2133);
+                canvas.drawCircle(a.centerX(), a.centerY() - unit * 0.1f, r * 0.4f, notePaint);
+                String text = n.optString("t");
+                if (!text.isEmpty()) {
+                    notePaint.setTextSize(Math.max(22f, unit * 0.5f));
+                    notePaint.setTextAlign(Paint.Align.CENTER);
+                    float w = notePaint.measureText(text) + unit * 0.4f, top = a.top - unit * 0.55f;
+                    notePaint.setColor(0xDD0E1320);
+                    canvas.drawRoundRect(new RectF(a.centerX() - w / 2, top - unit * 0.55f, a.centerX() + w / 2, top + unit * 0.12f), 10f, 10f, notePaint);
+                    notePaint.setColor(color);
+                    canvas.drawText(text, a.centerX(), top, notePaint);
+                }
+            }
+        }
+        notePaint.setPathEffect(null);
+    }
+
     @Override protected void onDraw(Canvas canvas) {
         if (bitmap == null) return;
         layoutMatrix();
         canvas.drawBitmap(bitmap, matrix, paint);
+        if (battle) drawNotes(canvas);
         if (battle && transformListener != null) transformListener.run();
     }
 

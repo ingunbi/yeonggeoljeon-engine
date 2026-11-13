@@ -485,6 +485,9 @@ public class MainActivity extends Activity implements StageView.Listener {
 
         // Only the picture changes while a unit walks or the idle frame flips; rebuilding the buttons then would eat taps.
         s.remove("idle");
+        // The player's notes are drawn by the stage itself and must not rebuild the buttons either.
+        stage.setNotes(s.optJSONArray("notes"));
+        s.remove("notes");
         // The cells around the selected unit only steer where the strip sits; they must not rebuild the buttons.
         JSONObject around = s.optJSONObject("around");
         s.remove("around");
