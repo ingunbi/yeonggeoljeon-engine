@@ -373,7 +373,7 @@ private struct IPadCombatView:View {
                 Text(info.classLevel).font(.caption).foregroundStyle(.secondary)
                 row(info.valueLabel,"\(info.value)")
                 row("병력","\(info.troops)/\(info.maximum)")
-                row("사기","\(info.morale)")
+                if info.morale >= 0 {row("사기","\(info.morale)")}
                 if !info.extraLabel.isEmpty {row(info.extraLabel,info.extraText)}
             }
         }

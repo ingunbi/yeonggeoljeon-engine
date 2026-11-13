@@ -92,7 +92,7 @@ private func pointer(_ text:UnsafePointer<CChar>?) -> String {text.map {String(c
         }
         if let battle = game.session {
             // The map picture only changes by itself while an action plays or the source drives a phase.
-            state["busy"] = !game.animator.isIdle || game.combatPlayer != nil || game.flow?.acceptsManualInput != true
+            state["busy"] = !game.animator.isIdle || game.combatPlayer != nil || game.duelPlaying || game.flow?.acceptsManualInput != true
             state["idle"] = Int(game.idlePhase)
             if let slot = game.selectedSlot,let at = battle.units[slot]?.position {
                 state["selected"] = ["x":at.x,"y":at.y] as [String:Any]

@@ -104,6 +104,11 @@ struct IPadPanel {
     private var combatRest:[OriginalBattleCue] = []
     private var combatImage:(key:Int,image:CGImage)?
     private var hasPresentedCombat = false
+    /// A duel's steps while they play. The script waits at the duel opcode until the last one ends.
+    private var duelPlayer:OriginalDuelPlayer?
+    var duelPlaying:Bool {duelPlayer != nil}
+    private var duelSprites:OriginalBattleSpriteRenderer?
+    private var duelImage:(key:String,image:CGImage)?
     private var lineSeen:(text:String,since:TimeInterval)?
     private var skipPhase = 0
     private var renderer:Renderer?
@@ -130,7 +135,7 @@ struct IPadPanel {
     private enum TargetMode {case move,attack,strategy(Int),item(Int),give(Int)}
     var isBattle:Bool {host?.stage.palette == 3 && host?.battle != nil && host?.ending == nil}
     var session:OriginalBattleSession? {isBattle ? host?.battle : nil}
-    var canAct:Bool {active && animator.isIdle && afterCues == nil && combatPlayer == nil && error == nil && menu == nil && prompt == nil && host?.battleInputReady == true && flow?.acceptsManualInput == true && !suspendedRequest}
+    var canAct:Bool {active && animator.isIdle && afterCues == nil && combatPlayer == nil && duelPlayer == nil && error == nil && menu == nil && prompt == nil && host?.battleInputReady == true && flow?.acceptsManualInput == true && !suspendedRequest}
 
     /// Explicit roots and disabled timers let local verification inspect the
     /// real controller without touching a device's or a Mac user's saves.
@@ -195,10 +200,74 @@ struct IPadPanel {
         } else {startCues(policy.abbreviatedCues(for:snapshot)+rest)}
     }
     func skipCombatHold() {combatPlayer?.skip()}
-    func endCombat() {combatPlayer?.finish()}
+    func endCombat() {
+        if duelPlayer != nil {finishDuel();return}
+        combatPlayer?.finish()
+    }
+    /// The script holds at a duel opcode until its steps have played; a player who turned duel scenes off never waits.
+    private func startDuelIfReady() -> Bool {
+        guard let host,let steps = host.duelSteps else {return false}
+        if duelPlayer != nil {return true}
+        guard OriginalSettings.current.showDuelPresentation,!steps.isEmpty,combatArt != nil else {host.finishDuelSteps();return false}
+        duelPlayer = OriginalDuelPlayer(steps:steps);revision += 1
+        return true
+    }
+    private func advanceDuel(_ seconds:Double) {
+        guard var player = duelPlayer else {return}
+        for action in player.advance(seconds,soundBusy:audio?.effectPlaying ?? false) {
+            switch action {
+            case .sound(let id):audio?.playEffect(id)
+            case .stopSound:audio?.stopEffect()
+            }
+        }
+        if player.finished {finishDuel()} else {duelPlayer = player}
+        revision += 1
+    }
+    private func finishDuel() {
+        duelPlayer = nil;host?.finishDuelSteps();revision += 1
+    }
+    /// The duel window as the combat screen reads it: the composed scene and both fighters' cards.
+    private var duelState:IPadCombatState? {
+        guard let host,let art = combatArt,let stage = host.duelStage,
+              duelPlayer != nil || host.battle?.scriptActions.duel?.active == true,stage.panels.count == 2 else {return nil}
+        let picture = duelPlayer?.picture ?? stage.shown
+        let key = "\(stage.terrain)|\(stage.people)|\(picture)"
+        if duelImage?.key != key,let image = composeDuel(stage:stage,picture:picture,art:art) {duelImage = (key,image)}
+        let texts = art.catalog.texts,palette = host.stage.palette
+        let sides = stage.panels.map { panel -> IPadCombatSide in
+            let className = art.catalog.classNames.indices.contains(panel.classID) ? art.catalog.classNames[panel.classID] : ""
+            // A duel has no morale, so -1 keeps that row off the card.
+            return IPadCombatSide(name:personName(panel.person),classLevel:originalFormat(texts.level,[String(panel.level),className]),
+                valueLabel:texts.strength,value:panel.strength,troops:panel.troops,maximum:panel.maxTroops,morale:-1,
+                extraLabel:texts.duelExperience,extraText:String(panel.experience),portrait:portraitImage(person:panel.person,palette:palette))
+        }
+        return IPadCombatState(image:duelImage?.image,left:sides[0],right:sides[1],lines:[],gauges:[],notice:nil)
+    }
+    /// 2CB4:125E's scene window, 416x208: the terrain backdrop, then rider 1 and rider 0 at their grid cells.
+    private func composeDuel(stage:OriginalDuelStage,picture:OriginalDuelPicture,art:OriginalCombatArt) -> CGImage? {
+        let width = 416,height = 208
+        guard let context = CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,
+                                      space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue) else {return nil}
+        context.translateBy(x:0,y:CGFloat(height));context.scaleBy(x:1,y:-1)
+        func place(_ image:CGImage,_ rect:CGRect) {
+            context.saveGState()
+            context.translateBy(x:rect.minX,y:rect.maxY);context.scaleBy(x:1,y:-1)
+            context.draw(image,in:CGRect(x:0,y:0,width:rect.width,height:rect.height))
+            context.restoreGState()
+        }
+        context.setFillColor(CGColor(red:0,green:0,blue:0,alpha:1));context.fill(CGRect(x:0,y:0,width:width,height:height))
+        if let back = art.backdrop(terrain:stage.terrain,scroll:picture.camera) {place(back,CGRect(x:0,y:0,width:width,height:height))}
+        if duelSprites == nil,let root = data?.root {duelSprites = try? OriginalBattleSpriteRenderer(root:root)}
+        for side in OriginalDuelSprites.sourceDrawOrder {
+            guard let pose = picture.poses[side],stage.people.indices.contains(side),
+                  let image = try? duelSprites?.duelImage(person:stage.people[side],loadMode:pose.mode,frame:pose.frame) else {continue}
+            place(image,CGRect(x:pose.x*16,y:48,width:96,height:96))
+        }
+        return context.makeImage()
+    }
     /// The enlarged scene as the screen reads it: picture, both sides, the result window.
     var combatState:IPadCombatState? {
-        guard let player = combatPlayer,let art = combatArt else {return nil}
+        guard let player = combatPlayer,let art = combatArt else {return duelState}
         if let shown = player.picture {
             let key = shown.layers.hashValue^shown.scroll
             if combatImage?.key != key,let image = art.picture(shown,scene:player.scene) {combatImage = (key,image)}
@@ -270,7 +339,7 @@ struct IPadPanel {
         host = next;next.announcesItems = true
         // Results and dialogue are retained. The first touch release uses map
         // presentation; it does not change the source animation option/RNG word.
-        next.presentsDuels = false
+        next.presentsDuels = true
         flow = nil;capturedBattle = nil;pendingBattleStart = nil;lastAutoKey = nil;saveNotice = nil
         selectedSlot = nil;targetMode = nil;highlighted = [];queuedNotice = nil
         archive = data.map {BattleArchiveCoordinator(data:$0,root:saveRoot.appendingPathComponent("battle-archives",isDirectory:true))}
@@ -301,10 +370,11 @@ struct IPadPanel {
     private var idleClock = 0.0
     /// The enlarged combat scene plays on the source's 60 Hz tick, so a front end steps it twice as often as the rest.
     /// A unit walking across the map plays at that rate too, so a move reads as smooth as the screen allows.
-    var combatLive:Bool {(combatPlayer != nil || !animator.isIdle) && menu == nil && prompt == nil && error == nil}
+    var combatLive:Bool {(combatPlayer != nil || duelPlayer != nil || !animator.isIdle) && menu == nil && prompt == nil && error == nil}
     func tickCombat() {
         guard active,combatLive else {return}
         if combatPlayer != nil {advanceCombat(Double(speedFactor)/60);return}
+        if duelPlayer != nil {advanceDuel(Double(speedFactor)/60);return}
         for sound in animator.advance(Double(speedFactor)/60) {audio?.playEffect(sound)}
         if animator.isIdle,let done = afterCues {afterCues = nil;done()}
         revision += 1
@@ -334,6 +404,7 @@ struct IPadPanel {
             if menu == nil,paceDialogue() {return}
             guard menu == nil,prompt == nil else {return}
             if combatPlayer != nil {advanceCombat(Double(speedFactor)/30);return}
+            if startDuelIfReady() {advanceDuel(Double(speedFactor)/30);return}
             if !animator.isIdle {
                 for sound in animator.advance(Double(speedFactor)/30) {audio?.playEffect(sound)}
                 if animator.isIdle,let done = afterCues {afterCues = nil;done()}
@@ -375,7 +446,7 @@ struct IPadPanel {
             selectedSlot = battle.pendingMovementSlots.first
         }
         guard let flow,host.battleInputReady else {return}
-        if !animator.isIdle || afterCues != nil || combatPlayer != nil {return}
+        if !animator.isIdle || afterCues != nil || combatPlayer != nil || duelPlayer != nil {return}
         if battle.turns.stage == .unstarted {
             if capturedBattle != ObjectIdentifier(battle),var snapshot = try host.battleStartSnapshot() {
                 capturedBattle = ObjectIdentifier(battle)
@@ -866,7 +937,7 @@ struct IPadPanel {
     private func watchEnemyTurn() {
         guard let before = enemyTurnBefore,let battle = session,let flow else {return}
         if !flow.acceptsManualInput {enemyPhaseSeen = true;return}
-        guard enemyPhaseSeen,animator.isIdle,combatPlayer == nil else {return}
+        guard enemyPhaseSeen,animator.isIdle,combatPlayer == nil,duelPlayer == nil else {return}
         let changes = before.changes(to:EnemyTurnSnapshot(battle))
         enemyTurnBefore = nil;enemyTurnChanges = changes
         if !changes.isEmpty {

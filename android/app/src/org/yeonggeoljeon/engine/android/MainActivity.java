@@ -950,7 +950,7 @@ public class MainActivity extends Activity implements StageView.Listener {
         col.addView(Ui.text(this, side.optString("classLevel"), 12, Ui.MUTED, false));
         col.addView(statRow(side.optString("valueLabel"), String.valueOf(side.optInt("value"))));
         col.addView(statRow("병력", side.optInt("troops") + "/" + side.optInt("maximum")));
-        col.addView(statRow("사기", String.valueOf(side.optInt("morale"))));
+        if (side.optInt("morale", -1) >= 0) col.addView(statRow("사기", String.valueOf(side.optInt("morale"))));
         if (side.optString("extraLabel").length() > 0) col.addView(statRow(side.optString("extraLabel"), side.optString("extraText")));
         card.addView(col, new LinearLayout.LayoutParams(0, -2, 1f));
         return card;
