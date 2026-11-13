@@ -85,7 +85,9 @@ struct OriginalSettings:Codable,Equatable {
             guard let data = try? JSONEncoder().encode(newValue) else { return }
             UserDefaults.standard.set(data,forKey:key)
             AppControlRuntime.update(newValue.controls)
+            #if !os(Android)
             NotificationCenter.default.post(name:changed,object:nil)
+            #endif
         }
     }
     static let changed = Notification.Name("OriginalSettingsChanged")

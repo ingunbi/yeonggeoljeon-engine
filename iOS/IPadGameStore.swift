@@ -1422,6 +1422,14 @@ struct IPadPanel {
                 settings.combatPresentationMode = modes[next];OriginalSettings.current = settings;self?.showSettings()},
             action("setting-speed","진행 속도","\(speedFactor)× · 위쪽 버튼으로도 바꿉니다") {[weak self] in
                 self?.cycleSpeed();self?.showSettings()},
+            action("setting-text","글자 크기","\(OriginalSettings.current.controls.textPercent)% · 눌러서 100·125·150%") {[weak self] in
+                var settings = OriginalSettings.current
+                let sizes = AppControlPreferences.textPercents,at = sizes.firstIndex(of:settings.controls.textPercent) ?? 0
+                settings.controls.textPercent = sizes[(at+1)%sizes.count];OriginalSettings.current = settings
+                self?.revision += 1;self?.showSettings()},
+            action("setting-pattern","범위 무늬",OriginalSettings.current.controls.patternedRanges ? "켬 · 이동·공격 범위에 빗금" : "끔 · 색으로만 표시") {[weak self] in
+                var settings = OriginalSettings.current;settings.controls.patternedRanges.toggle();OriginalSettings.current = settings
+                self?.revision += 1;self?.showSettings()},
             backAction()])
     }
     private func showResults() {

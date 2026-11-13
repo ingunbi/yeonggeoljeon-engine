@@ -6,6 +6,46 @@
 import Foundation
 import Android
 
+// MARK: UserDefaults
+/// Foundation on Android has no working preferences store, so every setting written through it was lost on the next read.
+/// This keeps the values in one JSON file under the app's own folder (HOME) and rewrites it on every change.
+final class AndroidDefaults {
+    static let standard = AndroidDefaults()
+    private var values:[String:Data] = [:]
+    private let lock = NSLock()
+    private let url:URL
+    private init() {
+        let home = ProcessInfo.processInfo.environment["HOME"] ?? NSTemporaryDirectory()
+        url = URL(fileURLWithPath:home,isDirectory:true).appendingPathComponent("settings.json")
+        if let data = try? Data(contentsOf:url),let stored = try? JSONDecoder().decode([String:Data].self,from:data) {values = stored}
+    }
+    private func write() {
+        if let data = try? JSONEncoder().encode(values) {try? data.write(to:url,options:.atomic)}
+    }
+    private func store<T:Encodable>(_ value:T,_ key:String) {
+        lock.lock();defer {lock.unlock()}
+        if let data = try? JSONEncoder().encode([value]) {values[key] = data;write()}
+    }
+    private func load<T:Decodable>(_ type:T.Type,_ key:String) -> T? {
+        lock.lock();defer {lock.unlock()}
+        guard let data = values[key] else {return nil}
+        return (try? JSONDecoder().decode([T].self,from:data))?.first
+    }
+    func set(_ value:Data,forKey key:String) {store(value,key)}
+    func data(forKey key:String) -> Data? {load(Data.self,key)}
+    func set(_ value:Bool,forKey key:String) {store(value,key)}
+    func bool(forKey key:String) -> Bool {load(Bool.self,key) ?? false}
+    func set(_ value:Int,forKey key:String) {store(value,key)}
+    func integer(forKey key:String) -> Int {load(Int.self,key) ?? 0}
+    func set(_ value:Double,forKey key:String) {store(value,key)}
+    func double(forKey key:String) -> Double {load(Double.self,key) ?? 0}
+    func set(_ value:Float,forKey key:String) {store(Double(value),key)}
+    func set(_ value:String,forKey key:String) {store(value,key)}
+    func string(forKey key:String) -> String? {load(String.self,key)}
+    func removeObject(forKey key:String) {lock.lock();defer {lock.unlock()};values[key] = nil;write()}
+}
+typealias UserDefaults = AndroidDefaults
+
 // MARK: Observable markers (no UI framework observes them on Android)
 protocol ObservableObject:AnyObject {}
 @propertyWrapper struct Published<Value> {

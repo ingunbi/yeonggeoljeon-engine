@@ -72,6 +72,7 @@ public class MainActivity extends Activity implements StageView.Listener {
     private int selectedX = -1, selectedY = -1;
     private String lastUiKey = "";
     private String lastPicked = "";
+    private int lastTextPercent = 100;
     private String lastPlaceKey = "";
     private String lastAround = "";
     private int[][] aroundUnits = new int[0][], aroundReach = new int[0][];
@@ -469,6 +470,20 @@ public class MainActivity extends Activity implements StageView.Listener {
         String mode = s.optString("mode", "title");
         boolean battle = "battle".equals(mode);
         inBattle = battle;
+        // The text size setting: every label made from now on uses it, and the ones built once are resized here.
+        int percent = s.optInt("textPercent", 100);
+        if (percent != lastTextPercent) {
+            lastTextPercent = percent;
+            Ui.scale = percent / 100f;
+            title.setTextSize(18 * Ui.scale);
+            status.setTextSize(13 * Ui.scale);
+            speedButton.setTextSize(17 * Ui.scale);
+            menuButton.setTextSize(26 * Ui.scale);
+            hint.setTextSize(12 * Ui.scale);
+            // Views already on screen were built at the old size: rebuild them.
+            lastUiKey = "";
+            panelDialogKey = "";
+        }
         title.setText(s.optString("header", "영걸전"));
         String line = s.optString("status", "");
         status.setText(line.length() == 0 ? " " : line);

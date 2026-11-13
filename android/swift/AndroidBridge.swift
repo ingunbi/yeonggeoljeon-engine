@@ -70,7 +70,7 @@ private func pointer(_ text:UnsafePointer<CChar>?) -> String {text.map {String(c
 @_cdecl("yg_state") public func yg_state() -> UnsafeMutablePointer<CChar>? {
     onGameThread {
         guard let game = store else {return cString("{}")}
-        var state:[String:Any] = ["header":game.header,"status":game.status,"speed":game.speedFactor,
+        var state:[String:Any] = ["header":game.header,"status":game.status,"speed":game.speedFactor,"textPercent":OriginalSettings.current.controls.textPercent,
                                   "skipping":game.skipping,"auto":game.dialogueAuto,"started":game.host?.hasStarted == true,
                                   "fieldIsMap":game.fieldIsMap,"actions":game.actions.map(actionJSON)]
         if let message = game.error {state["error"] = message}
@@ -146,7 +146,7 @@ private func copyPixels(_ image:CGImage,into slot:inout UnsafeMutablePointer<UIn
     onGameThread {
         guard let game = store,let session = game.session,let data = game.data else {return nil}
         if battleRenderer == nil {battleRenderer = AndroidBattleRenderer()}
-        guard let image = battleRenderer?.render(session:session,data:data,selectedSlot:game.selectedSlot,highlighted:game.highlighted,animation:game.animator,idlePhase:game.idlePhase,threat:game.threatCounts,preview:game.previewCells) else {return nil}
+        guard let image = battleRenderer?.render(session:session,data:data,selectedSlot:game.selectedSlot,highlighted:game.highlighted,animation:game.animator,idlePhase:game.idlePhase,threat:game.threatCounts,preview:game.previewCells,pattern:OriginalSettings.current.controls.patternedRanges) else {return nil}
         return copyPixels(image,into:&battleBuffer,width,height)
     }
 }

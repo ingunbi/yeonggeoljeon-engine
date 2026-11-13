@@ -45,7 +45,7 @@ final class AndroidBattleRenderer {
         sprites = try? OriginalBattleSpriteRenderer(root:data.root)
     }
 
-    func render(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,animation:OriginalBattleAnimator,idlePhase:UInt8 = 0,threat:[GridPoint:Int] = [:],preview:Set<GridPoint> = []) -> CGImage? {
+    func render(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,animation:OriginalBattleAnimator,idlePhase:UInt8 = 0,threat:[GridPoint:Int] = [:],preview:Set<GridPoint> = [],pattern:Bool = false) -> CGImage? {
         if key != data.root.path+"/"+session.definition.id {prepare(session:session,data:data);base = nil}
         let width = session.width*cell,height = session.height*cell
         let pictures = session.pictureTiles ?? baseline,columns = session.width*2
@@ -81,6 +81,18 @@ final class AndroidBattleRenderer {
             let box = CGRect(x:point.x*cell,y:point.y*cell,width:cell,height:cell).insetBy(dx:1,dy:1)
             context.setFillColor(CGColor(red:0.2,green:0.8,blue:0.9,alpha:0.28));context.fill(box)
             context.setStrokeColor(CGColor(red:0.2,green:0.8,blue:0.9,alpha:0.8));context.setLineWidth(1);context.stroke(box)
+            // Range cells carry diagonal strokes too, so they read without relying on colour alone.
+            if pattern {
+                context.setFillColor(CGColor(red:0.05,green:0.3,blue:0.4,alpha:0.85))
+                var offset = 0
+                while offset < Int(box.width)+Int(box.height) {
+                    for step in stride(from:0,to:Int(box.height),by:2) {
+                        let x = Int(box.minX)+offset-step,y = Int(box.maxY)-step-2
+                        if x >= Int(box.minX),x+2 <= Int(box.maxX) {context.fill(CGRect(x:x,y:y,width:2,height:2))}
+                    }
+                    offset += 8
+                }
+            }
         }
         // What the selected unit could strike from the cell under a long press.
         for point in preview where point.x >= 0 && point.y >= 0 && point.x < session.width && point.y < session.height {

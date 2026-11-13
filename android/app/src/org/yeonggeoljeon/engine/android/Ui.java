@@ -14,6 +14,8 @@ import android.widget.TextView;
 final class Ui {
     static final int INK = 0xFF0E1320, SURFACE = 0xFF1B2133, GOLD = 0xFFF5C96B, ON_GOLD = 0xFF291C08, TEXT = 0xFFF2F2F5, MUTED = 0xFFA9ADBA,
         LINE = 0x33FFFFFF, GLASS = 0x18FFFFFF;
+    /** The player's text size setting (1.0, 1.25 or 1.5); every label is built at its size times this. */
+    static float scale = 1f;
     private Ui() {}
 
     static int dp(Context c, float value) {
@@ -29,7 +31,7 @@ final class Ui {
     static TextView text(Context c, String value, float sp, int color, boolean bold) {
         TextView t = new TextView(c);
         t.setText(value);
-        t.setTextSize(sp);
+        t.setTextSize(sp * scale);
         t.setTextColor(color);
         if (bold) t.setTypeface(t.getTypeface(), android.graphics.Typeface.BOLD);
         return t;
