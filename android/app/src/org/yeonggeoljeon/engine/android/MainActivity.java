@@ -68,6 +68,8 @@ public class MainActivity extends Activity implements StageView.Listener {
     private LinearLayout unitMenu;
     private int selectedX = -1, selectedY = -1;
     private String lastUiKey = "";
+    private String lastAround = "";
+    private int[][] aroundUnits = new int[0][], aroundReach = new int[0][];
     private static final java.util.Set<String> UNIT_COMMANDS = new java.util.HashSet<>(java.util.Arrays.asList("move", "attack", "strategies", "items", "wait", "cancel"));
     private final Runnable hideHint = () -> hint.setVisibility(View.GONE);
     private View loading;
@@ -447,6 +449,16 @@ public class MainActivity extends Activity implements StageView.Listener {
 
         // Only the picture changes while a unit walks or the idle frame flips; rebuilding the buttons then would eat taps.
         s.remove("idle");
+        // The cells around the selected unit only steer where the strip sits; they must not rebuild the buttons.
+        JSONObject around = s.optJSONObject("around");
+        s.remove("around");
+        String aroundKey = around == null ? "" : around.toString();
+        if (!aroundKey.equals(lastAround)) {
+            lastAround = aroundKey;
+            aroundUnits = cells(around == null ? null : around.optJSONArray("units"));
+            aroundReach = cells(around == null ? null : around.optJSONArray("reach"));
+            placeUnitMenu();
+        }
         String uiKey = s.toString();
         if (uiKey.equals(lastUiKey)) return;
         lastUiKey = uiKey;
@@ -491,32 +503,41 @@ public class MainActivity extends Activity implements StageView.Listener {
         showUnitMenu(unitActions, s.optJSONObject("selected"), blocked || s.optBoolean("busy"));
     }
 
-    /** The selected unit's commands float beside it instead of sitting in the bottom row. */
+    private static int[][] cells(JSONArray list) {
+        int n = list == null ? 0 : list.length();
+        int[][] out = new int[n][];
+        for (int i = 0; i < n; i++) {
+            JSONArray p = list.optJSONArray(i);
+            out[i] = new int[]{p == null ? -1 : p.optInt(0), p == null ? -1 : p.optInt(1)};
+        }
+        return out;
+    }
+
+    /** The selected unit's commands as one compact strip beside it instead of a row at the bottom. */
     private void showUnitMenu(JSONArray commands, JSONObject at, boolean hidden) {
         if (unitMenu != null) { stageHolder.removeView(unitMenu); unitMenu = null; }
         if (at == null || commands.length() == 0 || hidden) { selectedX = -1; return; }
         selectedX = at.optInt("x");
         selectedY = at.optInt("y");
         LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setBackground(Ui.round(this, 0xF01B2133, 16, Ui.LINE));
+        box.setOrientation(LinearLayout.HORIZONTAL);
+        box.setBackground(Ui.round(this, 0xF21B2133, 16, Ui.LINE));
         box.setPadding(Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4));
         for (int i = 0; i < commands.length(); i++) {
             JSONObject a = commands.optJSONObject(i);
             final String id = a.optString("id");
             boolean usable = a.optBoolean("enabled", true);
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 14), 0);
-            row.setAlpha(usable ? 1f : 0.35f);
-            row.addView(new IconView(this, id, Ui.GOLD), Ui.lp(Ui.dp(this, 22), Ui.dp(this, 22)));
-            TextView label = Ui.text(this, a.optString("title"), 15, Ui.GOLD, true);
-            label.setPadding(Ui.dp(this, 10), 0, 0, 0);
+            LinearLayout col = new LinearLayout(this);
+            col.setOrientation(LinearLayout.VERTICAL);
+            col.setGravity(Gravity.CENTER);
+            col.setAlpha(usable ? 1f : 0.35f);
+            col.addView(new IconView(this, id, "cancel".equals(id) ? Ui.MUTED : Ui.GOLD), Ui.lp(Ui.dp(this, 24), Ui.dp(this, 24)));
+            TextView label = Ui.text(this, a.optString("title"), 12, "cancel".equals(id) ? Ui.MUTED : Ui.GOLD, true);
+            label.setGravity(Gravity.CENTER);
             label.setSingleLine();
-            row.addView(label, Ui.lp(-2, -2));
-            if (usable) row.setOnClickListener(v -> perform(2, id));
-            box.addView(row, Ui.lp(Ui.dp(this, 128), Ui.dp(this, 46)));
+            col.addView(label, Ui.lp(-2, -2));
+            if (usable) col.setOnClickListener(v -> perform(2, id));
+            box.addView(col, Ui.lp(Ui.dp(this, 56), Ui.dp(this, 56)));
         }
         unitMenu = box;
         stageHolder.addView(box, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START));
@@ -524,18 +545,36 @@ public class MainActivity extends Activity implements StageView.Listener {
         placeUnitMenu();
     }
 
+    private static float overlap(RectF a, RectF b) {
+        float w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        float h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        return w > 0 && h > 0 ? w * h : 0;
+    }
+
+    /** Of the spots around the unit, takes the one covering the fewest other units and reachable cells. */
     private void placeUnitMenu() {
         if (unitMenu == null || selectedX < 0) return;
         RectF cell = stage.cellRect(selectedX, selectedY);
-        float w = unitMenu.getWidth() > 0 ? unitMenu.getWidth() : Ui.dp(this, 136);
-        float h = unitMenu.getHeight() > 0 ? unitMenu.getHeight() : Ui.dp(this, 6 * 46 + 8);
-        float gap = Ui.dp(this, 8), W = stage.getWidth(), H = stage.getHeight();
-        float x = cell.right + gap;
-        if (x + w > W - gap) x = cell.left - gap - w;
-        x = Math.max(gap, Math.min(x, W - w - gap));
-        float y = Math.max(gap, Math.min(cell.centerY() - h / 2f, H - h - gap));
-        if (unitMenu.getTranslationX() != x) unitMenu.setTranslationX(x);
-        if (unitMenu.getTranslationY() != y) unitMenu.setTranslationY(y);
+        float w = unitMenu.getWidth() > 0 ? unitMenu.getWidth() : Ui.dp(this, 6 * 56 + 8);
+        float h = unitMenu.getHeight() > 0 ? unitMenu.getHeight() : Ui.dp(this, 64);
+        float gap = Ui.dp(this, 6), W = stage.getWidth(), H = stage.getHeight();
+        float[][] spots = {
+            {cell.centerX() - w / 2, cell.top - gap - h}, {cell.left, cell.top - gap - h}, {cell.right - w, cell.top - gap - h},
+            {cell.centerX() - w / 2, cell.bottom + gap}, {cell.left, cell.bottom + gap}, {cell.right - w, cell.bottom + gap},
+            {cell.right + gap, cell.centerY() - h / 2}, {cell.left - gap - w, cell.centerY() - h / 2}};
+        float bestCost = Float.MAX_VALUE, bestX = spots[0][0], bestY = spots[0][1];
+        for (float[] spot : spots) {
+            float x = Math.max(gap, Math.min(spot[0], W - w - gap));
+            float y = Math.max(gap, Math.min(spot[1], H - h - gap));
+            RectF box = new RectF(x, y, x + w, y + h);
+            float cost = overlap(box, cell) * 8;
+            for (int[] u : aroundUnits) cost += overlap(box, stage.cellRect(u[0], u[1])) * 3;
+            for (int[] r : aroundReach) cost += overlap(box, stage.cellRect(r[0], r[1]));
+            // Strictly lower only: equal costs keep the earlier, preferred spot.
+            if (cost < bestCost) { bestCost = cost; bestX = x; bestY = y; }
+        }
+        if (unitMenu.getTranslationX() != bestX) unitMenu.setTranslationX(bestX);
+        if (unitMenu.getTranslationY() != bestY) unitMenu.setTranslationY(bestY);
     }
 
     private void renderOverlay(Frame frame, JSONObject s, boolean started, JSONObject prompt, JSONObject menu, JSONObject combat) {

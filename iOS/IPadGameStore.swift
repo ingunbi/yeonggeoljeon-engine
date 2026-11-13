@@ -305,10 +305,15 @@ struct IPadPanel {
                 if animator.isIdle,let done = afterCues {afterCues = nil;done()}
                 revision += 1;return
             }
-            for step in 0..<speedFactor {
+            // The source marches an army across the world map at 0.3 s a cell, three
+            // times slower than a town walk; on a touch screen that reads as sluggish,
+            // so the march runs at the town pace. Battles and towns keep the source pace.
+            let marching = host.vm.state.packedMap>>12 == 1 && host.stage.batch != nil && host.stage.dialogue == nil
+            let steps = speedFactor*(marching ? 3 : 1)
+            for step in 0..<steps {
                 try host.advance(microseconds:33_333)
                 try synchronizeBattle()
-                if step+1 < speedFactor,prompt != nil {break}
+                if step+1 < steps,prompt != nil {break}
             }
             if pendingBattleStart != nil {saveBattleStart()}
             if let notice = host.takeClosingNotice() {

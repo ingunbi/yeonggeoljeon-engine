@@ -10,7 +10,7 @@ struct IPadBattleCanvas:UIViewRepresentable {
     let session:OriginalBattleSession
     let data:DataSet
     let selectedSlot:Int?
-    var onAnchor:(CGRect?)->Void = {_ in}
+    var onAnchor:(IPadUnitAnchor?)->Void = {_ in}
     let highlighted:Set<GridPoint>
     let animation:OriginalBattleAnimator
     var idlePhase:UInt8 = 0
@@ -31,15 +31,22 @@ struct IPadBattleCanvas:UIViewRepresentable {
     }
 }
 
+/// The selected unit's cell and what lies around it, in the canvas's own frame.
+struct IPadUnitAnchor:Equatable {
+    var rect:CGRect
+    var units:[CGRect]
+    var cells:[CGRect]
+}
+
 final class IPadBattleScrollView:UIScrollView,UIScrollViewDelegate,UIGestureRecognizerDelegate {
     fileprivate let board = IPadBattleDrawingView()
     private var currentSession:ObjectIdentifier?
     private var lastSelection:Int?
     private var pendingFocus:GridPoint?
     private var tapGate = IPadBattleTapGate()
-    var onAnchor:(CGRect?)->Void = {_ in}
+    var onAnchor:(IPadUnitAnchor?)->Void = {_ in}
     private var anchorCell:GridPoint?
-    private var lastAnchor:CGRect?
+    private var lastAnchor:IPadUnitAnchor?
     private let issueLabel = UILabel()
     override init(frame:CGRect) {
         super.init(frame:frame)
@@ -100,10 +107,11 @@ final class IPadBattleScrollView:UIScrollView,UIScrollViewDelegate,UIGestureReco
     /// The selected unit's cell in this view's own frame (scroll and zoom
     /// applied), so a command popup can sit beside the unit.
     private func reportAnchor() {
-        var next:CGRect? = nil
+        var next:IPadUnitAnchor? = nil
         if let cell = anchorCell,bounds.width > 0 {
-            let box = board.convert(board.geometry.rect(cell),to:self)
-            next = box.offsetBy(dx:-bounds.minX,dy:-bounds.minY)
+            func place(_ point:GridPoint)->CGRect {board.convert(board.geometry.rect(point),to:self).offsetBy(dx:-bounds.minX,dy:-bounds.minY)}
+            let others = board.obstacleCells(excluding:cell)
+            next = IPadUnitAnchor(rect:place(cell),units:others.units.map(place),cells:others.cells.map(place))
         }
         guard next != lastAnchor else {return}
         lastAnchor = next
@@ -224,6 +232,11 @@ final class IPadBattleDrawingView:UIView {
                 enemy:unit.enemy,flags:unit.scriptFlags,image:picture,walking:walker.map {CGPoint(x:$0.x,y:$0.y)})
         }
         updateAccessibility();setNeedsDisplay()
+    }
+    /// Cells a popup beside the selected unit should avoid covering: the other
+    /// units and the highlighted (reachable or targetable) cells.
+    fileprivate func obstacleCells(excluding cell:GridPoint)->(units:[GridPoint],cells:[GridPoint]) {
+        (units.map(\.point).filter {$0 != cell},highlighted.filter {$0 != cell}.sorted {$0.y == $1.y ? $0.x < $1.x : $0.y < $1.y})
     }
     private func updateAccessibility() {
         isAccessibilityElement = false

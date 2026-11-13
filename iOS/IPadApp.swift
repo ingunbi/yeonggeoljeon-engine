@@ -98,7 +98,7 @@ private struct IPadGameScreen:View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var importing = false
     @State private var sheetHeight:CGFloat = 420
-    @State private var unitAnchor:CGRect?
+    @State private var unitAnchor:IPadUnitAnchor?
 
     var body:some View {
         GeometryReader {geometry in
@@ -257,38 +257,50 @@ private struct IPadGameScreen:View {
     }
 }
 
-/// The selected unit's commands, floating beside its cell: right of it when
-/// there is room, left otherwise, kept inside the stage.
+/// The selected unit's commands as one compact strip next to its cell. Of
+/// the spots around the unit it takes the one that covers the fewest other
+/// units and reachable cells, so a move can still be planned beneath it.
 private struct IPadUnitMenu:View {
     let actions:[IPadAction]
-    let anchor:CGRect
-    private let width:CGFloat = 132,row:CGFloat = 44,gap:CGFloat = 8
+    let anchor:IPadUnitAnchor
+    private let button:CGFloat = 50,height:CGFloat = 54,gap:CGFloat = 6
     var body:some View {
-        GeometryReader {proxy in menu(in:proxy.size)}
+        GeometryReader {proxy in menu(at:origin(in:proxy.size))}
     }
-    @ViewBuilder private func menu(in stage:CGSize) -> some View {
-        let height = row*CGFloat(actions.count)+12
-        let fitsRight = anchor.maxX+gap+width <= stage.width-6
-        let x = fitsRight ? anchor.maxX+gap : max(6,anchor.minX-gap-width)
-        let y = max(6,min(stage.height-height-6,anchor.midY-height/2))
-        VStack(spacing:0) {
+    private var width:CGFloat {button*CGFloat(actions.count)+8}
+    private func origin(in stage:CGSize) -> CGPoint {
+        let a = anchor.rect,w = width,h = height
+        func clamp(_ p:CGPoint)->CGPoint {CGPoint(x:max(6,min(stage.width-w-6,p.x)),y:max(6,min(stage.height-h-6,p.y)))}
+        let candidates = [
+            CGPoint(x:a.midX-w/2,y:a.minY-gap-h),CGPoint(x:a.minX,y:a.minY-gap-h),CGPoint(x:a.maxX-w,y:a.minY-gap-h),
+            CGPoint(x:a.midX-w/2,y:a.maxY+gap),CGPoint(x:a.minX,y:a.maxY+gap),CGPoint(x:a.maxX-w,y:a.maxY+gap),
+            CGPoint(x:a.maxX+gap,y:a.midY-h/2),CGPoint(x:a.minX-gap-w,y:a.midY-h/2)].map(clamp)
+        func cost(_ p:CGPoint)->CGFloat {
+            let box = CGRect(x:p.x,y:p.y,width:w,height:h)
+            func area(_ r:CGRect)->CGFloat {let i = box.intersection(r);return i.isNull ? 0 : i.width*i.height}
+            return area(a)*8+anchor.units.reduce(0) {$0+area($1)}*3+anchor.cells.reduce(0) {$0+area($1)}
+        }
+        // min(by:) keeps the first of equal costs, so the order above is the preference.
+        return candidates.min {cost($0) < cost($1)} ?? candidates[0]
+    }
+    private func menu(at point:CGPoint) -> some View {
+        HStack(spacing:0) {
             ForEach(actions) {action in
                 Button(action:action.perform) {
-                    HStack(spacing:8) {
-                        if let symbol = IPadTheme.symbol(for:action.title) {Image(systemName:symbol).frame(width:22)}
-                        Text(action.title).font(.callout.weight(.semibold))
-                        Spacer(minLength:0)
+                    VStack(spacing:2) {
+                        if let symbol = IPadTheme.symbol(for:action.title) {Image(systemName:symbol).font(.system(size:19))}
+                        Text(action.title).font(.system(size:11,weight:.semibold))
                     }
-                    .padding(.horizontal,12).frame(height:row)
+                    .frame(width:button,height:height-8)
                     .foregroundStyle(action.id == "cancel" ? Color.secondary : IPadTheme.gold)
                     .contentShape(Rectangle())
                 }.buttonStyle(.plain).disabled(!action.enabled).opacity(action.enabled ? 1 : 0.4)
             }
         }
-        .padding(.vertical,6).frame(width:width)
-        .background(IPadTheme.ink.opacity(0.94),in:RoundedRectangle(cornerRadius:14))
+        .padding(4).frame(width:width,height:height)
+        .background(IPadTheme.ink.opacity(0.95),in:RoundedRectangle(cornerRadius:14))
         .overlay(RoundedRectangle(cornerRadius:14).stroke(IPadTheme.gold.opacity(0.45),lineWidth:1))
-        .position(x:x+width/2,y:y+height/2)
+        .position(x:point.x+width/2,y:point.y+height/2)
     }
 }
 
