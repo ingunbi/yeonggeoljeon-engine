@@ -599,7 +599,11 @@ struct IPadPanel {
         run {
             guard let battle = session else {return};_ = try battle.requireManualUnit(slot)
             let targets = battle.units.values.filter {$0.status == 2 && $0.enemy && $0.scriptFlags&0x20 != 0 && (try? OriginalAttackOperation.begin(in:battle,attackerSlot:slot,targetSlot:$0.slot)) != nil}
-            guard !targets.isEmpty else {throw BattleError.illegalAction("공격 사거리 안에 적이 없습니다.")}
+            // A plain hint, not an error window: nothing is wrong, there is just nobody to hit from here.
+            guard !targets.isEmpty else {
+                saveNotice = "공격 사거리 안에 적이 없습니다. 먼저 이동하세요.";transientNoticeUntil = ProcessInfo.processInfo.systemUptime+4
+                return
+            }
             targetMode = .attack;highlighted = Set(targets.map(\.position))
         }
     }
