@@ -25,6 +25,7 @@ final class Native {
     static native void fieldTap(double x, double y);
     static native void fieldScroll(int dx, int dy);
     static native void cellTap(int x, int y);
+    static native void cellLongPress(int x, int y);
     static native void command(int code);
     static native void audioPull(float[] out, int count);
     static native int audioRate();

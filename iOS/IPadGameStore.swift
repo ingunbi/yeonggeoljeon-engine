@@ -67,6 +67,9 @@ struct IPadPanel {
     private(set) var flow:OriginalBattleFlow?
     @Published var selectedSlot:Int?
     @Published private(set) var highlighted:Set<GridPoint> = []
+    /// The desktop's reading aids: where the enemy can strike, and what a unit could hit from a cell it has not moved to yet.
+    @Published private(set) var threatOn = false
+    @Published private(set) var previewCells:Set<GridPoint> = []
     /// The cells of the enemies the pending attack can hit; `highlighted` also holds the rest of the range.
     private var attackTargets:Set<GridPoint> = []
     @Published private(set) var fieldImage:CGImage?
@@ -512,6 +515,7 @@ struct IPadPanel {
             } else {
                 result.append(action("next","다음 부대",enabled:canAct && !(session.map(actionableUnits)?.isEmpty ?? true)) {[weak self] in self?.nextUnit()})
             }
+            result.append(action("threat",threatOn ? "위험도 끄기" : "위험도") {[weak self] in self?.toggleThreat()})
             result.append(action("turn","턴 종료",enabled:canAct) {[weak self] in self?.confirmEndTurn()})
         } else if host.explorationInputReady {result.append(action("destinations","인물·목적지") {[weak self] in self?.showDestinations()})}
         return result
@@ -560,6 +564,7 @@ struct IPadPanel {
     }
     func cellTapped(_ point:GridPoint) {
         guard canAct,let battle = session else {return}
+        if !previewCells.isEmpty {previewCells = []}
         run {
             let target = battle.units.values.first {$0.status == 2 && $0.position == point && (!$0.enemy || $0.scriptFlags&0x20 != 0)}
             if let slot = selectedSlot,let mode = targetMode {
@@ -597,7 +602,7 @@ struct IPadPanel {
         if target.scriptFlags&0x40 != 0 {return}
         highlighted = Set(try battle.reachable(target.slot));targetMode = .move
     }
-    private func clearSelection() {selectedSlot = nil;targetMode = nil;highlighted = []}
+    private func clearSelection() {selectedSlot = nil;targetMode = nil;highlighted = [];previewCells = []}
     private func cancelSelection() {
         run {
             if let slot = selectedSlot,let battle = session,battle.pendingMovementSlots.contains(slot) {
@@ -748,6 +753,40 @@ struct IPadPanel {
         autoEndClock = 0
         try flow.finishManual();clearSelection();try synchronizeBattle();refresh()
         return true
+    }
+    private var threatCache:(key:[Int],counts:[GridPoint:Int])?
+    /// Cells the visible enemy units can reach with a blow or a strategy, with how many of them can.
+    var threatCounts:[GridPoint:Int] {
+        guard threatOn,let battle = session else {return [:]}
+        let key = battle.units.values.sorted {$0.slot < $1.slot}.flatMap {[$0.slot,$0.position.x,$0.position.y,$0.status,Int($0.scriptFlags)]}
+        if let cached = threatCache,cached.key == key {return cached.counts}
+        var counts:[GridPoint:Int] = [:]
+        if let map = try? BattleProjection(battle).threats() {for point in map.cells {counts[point] = map.sources(point).count}}
+        threatCache = (key,counts);return counts
+    }
+    func toggleThreat() {
+        threatOn.toggle();revision += 1
+        saveNotice = threatOn ? "빨간 칸은 적이 공격할 수 있는 곳입니다. 진할수록 많은 적이 닿습니다." : nil
+        transientNoticeUntil = threatOn ? ProcessInfo.processInfo.systemUptime+5 : nil;refresh()
+    }
+    /// A long press on a reachable cell: what the unit would cost to move there and could strike from it. Nothing moves.
+    func previewCell(_ point:GridPoint) {
+        guard canAct,let battle = session,let slot = selectedSlot,case .move? = targetMode,highlighted.contains(point) else {return}
+        run {
+            let detail = try BattleAssistance.movement(in:battle,slot:slot,to:point)
+            let view = try BattleProjection(battle).preview(slot,at:point)
+            previewCells = view.attackCells
+            let commands = host?.story.screens?.battle.commands
+            let terrains = commands?.terrain.names ?? []
+            var parts:[String] = []
+            if let cost = detail.totalCost {parts.append("이동 \(cost)/\(detail.budget)")}
+            if let id = detail.terrain,terrains.indices.contains(id) {parts.append(terrains[id])}
+            let names = view.attackTargets.compactMap {battle.units[$0].flatMap {try? battle.people.person($0.person).name}}
+            parts.append(names.isEmpty ? "여기서 칠 수 있는 적 없음" : "여기서 공격 가능: "+names.joined(separator:", "))
+            let strategies = view.strategies.values.filter {!$0.isEmpty}.count
+            if strategies > 0 {parts.append("책략 \(strategies)종 사용 가능")}
+            saveNotice = parts.joined(separator:" · ");transientNoticeUntil = ProcessInfo.processInfo.systemUptime+8;revision += 1;refresh()
+        }
     }
     private var footprintCache:(key:[Int],cells:Set<GridPoint>)?
     /// Cells a floating command strip should stay off: the highlighted ones while a move or target is being picked,

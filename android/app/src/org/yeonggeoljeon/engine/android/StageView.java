@@ -18,6 +18,7 @@ final class StageView extends View {
         void onFieldTap(double x, double y);
         void onFieldScroll(int dx, int dy);
         void onCellTap(int x, int y);
+        void onCellLongPress(int x, int y);
     }
 
     private static final int CELL = 32;
@@ -45,6 +46,7 @@ final class StageView extends View {
         gestures = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener() {
             @Override public boolean onDown(MotionEvent e) { carriedX = 0; carriedY = 0; return true; }
             @Override public boolean onSingleTapUp(MotionEvent e) { tapped(e.getX(), e.getY()); return true; }
+            @Override public void onLongPress(MotionEvent e) { longPressed(e.getX(), e.getY()); }
             @Override public boolean onScroll(MotionEvent a, MotionEvent b, float dx, float dy) { scrolled(dx, dy); return true; }
         });
         scaler = new ScaleGestureDetector(context, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -158,6 +160,15 @@ final class StageView extends View {
         if (p[0] < 0 || p[1] < 0 || p[0] >= bitmap.getWidth() || p[1] >= bitmap.getHeight()) return;
         if (battle) listener.onCellTap((int) (p[0] / CELL), (int) (p[1] / CELL));
         else listener.onFieldTap(p[0] / bitmap.getWidth(), p[1] / bitmap.getHeight());
+    }
+
+    private void longPressed(float x, float y) {
+        if (bitmap == null || listener == null || !touchable || !battle) return;
+        layoutMatrix();
+        float[] p = {x, y};
+        inverse.mapPoints(p);
+        if (p[0] < 0 || p[1] < 0 || p[0] >= bitmap.getWidth() || p[1] >= bitmap.getHeight()) return;
+        listener.onCellLongPress((int) (p[0] / CELL), (int) (p[1] / CELL));
     }
 
     private void scrolled(float dx, float dy) {

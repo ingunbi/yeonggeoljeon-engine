@@ -45,7 +45,7 @@ final class AndroidBattleRenderer {
         sprites = try? OriginalBattleSpriteRenderer(root:data.root)
     }
 
-    func render(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,animation:OriginalBattleAnimator,idlePhase:UInt8 = 0) -> CGImage? {
+    func render(session:OriginalBattleSession,data:DataSet,selectedSlot:Int?,highlighted:Set<GridPoint>,animation:OriginalBattleAnimator,idlePhase:UInt8 = 0,threat:[GridPoint:Int] = [:],preview:Set<GridPoint> = []) -> CGImage? {
         if key != data.root.path+"/"+session.definition.id {prepare(session:session,data:data);base = nil}
         let width = session.width*cell,height = session.height*cell
         let pictures = session.pictureTiles ?? baseline,columns = session.width*2
@@ -72,10 +72,21 @@ final class AndroidBattleRenderer {
             }
             base = context.makeImage();basePictures = pictures
         }
+        // Where the enemy can strike: a red wash that deepens with the number of units that reach the cell.
+        for (point,count) in threat where point.x >= 0 && point.y >= 0 && point.x < session.width && point.y < session.height {
+            let box = CGRect(x:point.x*cell,y:point.y*cell,width:cell,height:cell)
+            context.setFillColor(CGColor(red:0.95,green:0.15,blue:0.1,alpha:min(0.55,0.16+0.1*CGFloat(count))));context.fill(box)
+        }
         for point in highlighted where point.x >= 0 && point.y >= 0 && point.x < session.width && point.y < session.height {
             let box = CGRect(x:point.x*cell,y:point.y*cell,width:cell,height:cell).insetBy(dx:1,dy:1)
             context.setFillColor(CGColor(red:0.2,green:0.8,blue:0.9,alpha:0.28));context.fill(box)
             context.setStrokeColor(CGColor(red:0.2,green:0.8,blue:0.9,alpha:0.8));context.setLineWidth(1);context.stroke(box)
+        }
+        // What the selected unit could strike from the cell under a long press.
+        for point in preview where point.x >= 0 && point.y >= 0 && point.x < session.width && point.y < session.height {
+            let box = CGRect(x:point.x*cell,y:point.y*cell,width:cell,height:cell).insetBy(dx:1,dy:1)
+            context.setFillColor(CGColor(red:1,green:0.6,blue:0.1,alpha:0.34));context.fill(box)
+            context.setStrokeColor(CGColor(red:1,green:0.7,blue:0.2,alpha:0.9));context.setLineWidth(1);context.stroke(box)
         }
         let walker = animation.walker
         for unit in session.units.values.sorted(by:{$0.slot < $1.slot}) {

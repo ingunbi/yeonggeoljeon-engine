@@ -7,6 +7,7 @@
 
 extern int32_t yg_create(const char *data, const char *saves);
 extern void yg_tick(void);
+extern void yg_cell_long_press(int32_t x, int32_t y);
 extern int32_t yg_combat_live(void);
 extern void yg_tick_combat(void);
 extern void yg_set_active(int32_t value);
@@ -91,6 +92,7 @@ JNIEXPORT void JNICALL NATIVE(perform)(JNIEnv *env, jclass cls, jint scope, jstr
 JNIEXPORT void JNICALL NATIVE(fieldTap)(JNIEnv *env, jclass cls, jdouble x, jdouble y) { yg_field_tap(x, y); }
 JNIEXPORT void JNICALL NATIVE(fieldScroll)(JNIEnv *env, jclass cls, jint dx, jint dy) { yg_field_scroll(dx, dy); }
 JNIEXPORT void JNICALL NATIVE(cellTap)(JNIEnv *env, jclass cls, jint x, jint y) { yg_cell_tap(x, y); }
+JNIEXPORT void JNICALL NATIVE(cellLongPress)(JNIEnv *env, jclass cls, jint x, jint y) { yg_cell_long_press(x, y); }
 JNIEXPORT void JNICALL NATIVE(command)(JNIEnv *env, jclass cls, jint code) {
     switch (code) {
     case 0: yg_advance_dialogue(); break;

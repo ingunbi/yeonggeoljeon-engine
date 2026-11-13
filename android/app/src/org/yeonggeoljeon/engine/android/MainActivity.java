@@ -333,6 +333,7 @@ public class MainActivity extends Activity implements StageView.Listener {
     @Override public void onFieldTap(double x, double y) { call(() -> Native.fieldTap(x, y)); }
     @Override public void onFieldScroll(int dx, int dy) { call(() -> Native.fieldScroll(dx, dy)); }
     @Override public void onCellTap(int x, int y) { call(() -> Native.cellTap(x, y)); }
+    @Override public void onCellLongPress(int x, int y) { call(() -> Native.cellLongPress(x, y)); }
 
     // ---- Screen ----
 

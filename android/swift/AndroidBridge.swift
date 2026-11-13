@@ -63,6 +63,7 @@ private func pointer(_ text:UnsafePointer<CChar>?) -> String {text.map {String(c
 @_cdecl("yg_tick") public func yg_tick() {onGameThread {store?.tick()}}
 @_cdecl("yg_combat_live") public func yg_combat_live() -> Int32 {onGameThread {store?.combatLive == true ? 1 : 0}}
 @_cdecl("yg_tick_combat") public func yg_tick_combat() {onGameThread {store?.tickCombat()}}
+@_cdecl("yg_cell_long_press") public func yg_cell_long_press(_ x:Int32,_ y:Int32) {onGameThread {store?.previewCell(.init(x:Int(x),y:Int(y)))}}
 @_cdecl("yg_set_active") public func yg_set_active(_ value:Int32) {onGameThread {store?.setActive(value != 0)}}
 @_cdecl("yg_revision") public func yg_revision() -> Int32 {onGameThread {Int32(truncatingIfNeeded:store?.revision ?? 0)}}
 
@@ -135,7 +136,7 @@ private func copyPixels(_ image:CGImage,into slot:inout UnsafeMutablePointer<UIn
     onGameThread {
         guard let game = store,let session = game.session,let data = game.data else {return nil}
         if battleRenderer == nil {battleRenderer = AndroidBattleRenderer()}
-        guard let image = battleRenderer?.render(session:session,data:data,selectedSlot:game.selectedSlot,highlighted:game.highlighted,animation:game.animator,idlePhase:game.idlePhase) else {return nil}
+        guard let image = battleRenderer?.render(session:session,data:data,selectedSlot:game.selectedSlot,highlighted:game.highlighted,animation:game.animator,idlePhase:game.idlePhase,threat:game.threatCounts,preview:game.previewCells) else {return nil}
         return copyPixels(image,into:&battleBuffer,width,height)
     }
 }

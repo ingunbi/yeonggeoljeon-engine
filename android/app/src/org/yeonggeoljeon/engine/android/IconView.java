@@ -78,6 +78,11 @@ final class IconView extends View {
                 path.moveTo(12, 6); path.lineTo(18, 12); path.lineTo(12, 18);
                 c.drawPath(path, line);
                 break;
+            case "threat": // a warning ring with a mark
+                c.drawCircle(12, 12, 9, line);
+                c.drawLine(12, 7, 12, 13, line);
+                c.drawCircle(12, 16.5f, 0.8f, fill);
+                break;
             case "destinations": // a map pin
                 c.drawCircle(12, 10, 4, line);
                 path.reset(); path.moveTo(6, 11); path.lineTo(12, 21); path.lineTo(18, 11);
