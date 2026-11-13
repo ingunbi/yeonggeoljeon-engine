@@ -305,6 +305,7 @@ struct IPadPanel {
                 if animator.isIdle,let done = afterCues {afterCues = nil;done()}
                 revision += 1;return
             }
+            if try autoEndTurnIfDone() {return}
             // The source marches an army across the world map at 0.3 s a cell, three
             // times slower than a town walk; on a touch screen that reads as sluggish,
             // so the march runs at the town pace. Battles and towns keep the source pace.
@@ -480,13 +481,13 @@ struct IPadPanel {
                 // A unit the source plays itself (an ally AI unit, an acted unit) can only be looked at.
                 let canAct = self.canAct && (try? session?.requireManualUnit(slot)) != nil
                 result += [action("move","이동",enabled:canAct && unit.scriptFlags&0x40 == 0) {[weak self] in self?.beginMove(slot)},
-                    action("attack","공격",enabled:canAct) {[weak self] in self?.beginAttack(slot)},
+                    action("attack","공격",enabled:canAct && hasAttackTarget(slot)) {[weak self] in self?.beginAttack(slot)},
                     action("strategies","책략",enabled:canAct) {[weak self] in self?.showStrategies(slot)},
                     action("items","도구",enabled:canAct) {[weak self] in self?.showItems(slot)},
                     action("wait","대기",enabled:canAct) {[weak self] in self?.run {try self?.flow?.manualWait(slot);self?.clearSelection()}},
                     action("cancel","취소",enabled:canAct) {[weak self] in self?.cancelSelection()}]
             } else {
-                result.append(action("next","다음 부대",enabled:canAct) {[weak self] in self?.nextUnit()})
+                result.append(action("next","다음 부대",enabled:canAct && !(session.map(actionableUnits)?.isEmpty ?? true)) {[weak self] in self?.nextUnit()})
             }
             result.append(action("turn","턴 종료",enabled:canAct) {[weak self] in self?.confirmEndTurn()})
         } else if host.explorationInputReady {result.append(action("destinations","인물·목적지") {[weak self] in self?.showDestinations()})}
@@ -702,6 +703,36 @@ struct IPadPanel {
             guard try self?.giveTargets(slot).contains(where:{$0.slot == target}) == true else {throw BattleError.illegalAction("전달할 수 있는 아군이 아닙니다.")}
             guard try self?.flow?.manualGive(slot,to:target,item:item) == true else {throw BattleError.illegalAction("받는 장수의 소지품이 가득 찼습니다.")};self?.clearSelection()
         }}
+    }
+    /// Friendly units that can still be commanded this turn.
+    private func actionableUnits(_ battle:OriginalBattleSession) -> [OriginalLiveUnit] {
+        battle.units.values.filter {$0.status == 2 && OriginalBattleCommand.denial($0) == nil}
+    }
+    private var autoEndClock = 0.0
+    /// Once the player has acted and no friendly unit can act any more, the turn ends by itself
+    /// after a short beat (so the last result stays readable). Nothing happens if nobody has acted yet.
+    private func autoEndTurnIfDone() throws -> Bool {
+        guard isBattle,canAct,let battle = session,let flow else {autoEndClock = 0;return false}
+        let mine = battle.units.values.filter {$0.status == 2 && !$0.enemy}
+        guard mine.contains(where:{$0.scriptFlags&0x80 != 0}),actionableUnits(battle).isEmpty,battle.pendingMovementSlots.isEmpty else {
+            autoEndClock = 0;return false
+        }
+        if autoEndClock == 0 {saveNotice = "모든 부대가 행동을 마쳤습니다. 턴을 종료합니다.";transientNoticeUntil = ProcessInfo.processInfo.systemUptime+4;refresh()}
+        autoEndClock += 1.0/30
+        guard autoEndClock >= 0.9 else {return false}
+        autoEndClock = 0
+        try flow.finishManual();clearSelection();try synchronizeBattle();refresh()
+        return true
+    }
+    private var attackProbe:(slot:Int,point:GridPoint,enemies:Int,result:Bool)?
+    /// True when the unit has an enemy in reach from where it stands. Cached per unit, place and enemy count.
+    private func hasAttackTarget(_ slot:Int) -> Bool {
+        guard let battle = session,let unit = battle.units[slot] else {return false}
+        let foes = battle.units.values.filter {$0.status == 2 && $0.enemy && $0.scriptFlags&0x20 != 0}
+        if let probe = attackProbe,probe.slot == slot,probe.point == unit.position,probe.enemies == foes.count {return probe.result}
+        let result = foes.contains {(try? OriginalAttackOperation.begin(in:battle,attackerSlot:slot,targetSlot:$0.slot)) != nil}
+        attackProbe = (slot,unit.position,foes.count,result)
+        return result
     }
     private func confirmEndTurn() {
         guard canAct else {return}
