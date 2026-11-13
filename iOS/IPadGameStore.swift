@@ -579,6 +579,9 @@ struct IPadPanel {
                         play([.walk(slot:slot,path:path,sound:try? battle.walkSound(slot))])
                         return
                     }
+                    if target == nil,let reason = try? BattleAssistance.movement(in:battle,slot:slot,to:point).reason {
+                        saveNotice = reason.text;transientNoticeUntil = ProcessInfo.processInfo.systemUptime+5;refresh()
+                    }
                 case .attack:if let target,attackTargets.contains(point) {confirmAttack(slot,target.slot);return}
                 case .strategy(let ability):if let target,highlighted.contains(point) {confirmStrategy(slot,ability,target.slot);return}
                 case .item(let item):if let target,highlighted.contains(point) {confirmItem(slot,item,target.slot);return}
@@ -696,7 +699,9 @@ struct IPadPanel {
             let person = try battle.people.person(unit.person)
             let rain = battle.combat.strategyEnvironmentLookup[Int(battle.turns.weatherIndex)] == 2
             let rows = OriginalBattleCommand.strategyRows(classID:person.classID,level:person.level,mp:unit.mp,rain:rain,levels:levels,costs:costs)
-            menu = .init(title:person.name+" · 책략",body:rows.isEmpty ? "MP \(unit.mp) · 아직 쓸 수 있는 책략이 없습니다. 습득표에서 배우는 레벨을 확인하세요." : "MP \(unit.mp) · 책략을 선택한 뒤 지도에서 대상을 선택하세요.",actions:rows.map {row in action("strategy-\(row.ability)",strategyName(row.ability),"MP \(row.cost)",enabled:row.enabled) {[weak self] in self?.selectStrategy(slot,row.ability)}}+[action("learn","책략 습득표") {[weak self] in self?.showLearning(slot)},backAction()])
+            menu = .init(title:person.name+" · 책략",body:rows.isEmpty ? "MP \(unit.mp) · 아직 쓸 수 있는 책략이 없습니다. 습득표에서 배우는 레벨을 확인하세요." : "MP \(unit.mp) · 책략을 선택한 뒤 지도에서 대상을 선택하세요.",actions:rows.map {row in
+                let why = BattleAssistance.strategyReasons(ability:row.ability,cost:row.cost,mp:unit.mp,rain:rain).map(\.text).joined(separator:" · ")
+                return action("strategy-\(row.ability)",strategyName(row.ability),"MP \(row.cost)"+(why.isEmpty ? "" : " · "+why),enabled:row.enabled) {[weak self] in self?.selectStrategy(slot,row.ability)}}+[action("learn","책략 습득표") {[weak self] in self?.showLearning(slot)},backAction()])
         }
     }
     private func selectStrategy(_ slot:Int,_ ability:Int) {
@@ -925,7 +930,18 @@ struct IPadPanel {
     func showSelectedUnit() {if let slot = selectedSlot {showUnit(slot)}}
     private func showUnit(_ slot:Int) {
         guard let battle = session,let unit = battle.units[slot],let person = try? battle.people.person(unit.person) else {return}
-        menu = .init(title:person.name,body:"Lv.\(person.level) · 병력 \(person.rawTroops) · 사기 \(unit.morale) · MP \(unit.mp)",actions:[action("learning","책략 습득표") {[weak self] in self?.showLearning(slot)},backAction()])
+        let conditions = (try? BattleAssistance.conditions(in:battle,slot:slot)) ?? []
+        menu = .init(title:person.name,body:"Lv.\(person.level) · 병력 \(person.rawTroops) · 사기 \(unit.morale) · MP \(unit.mp)",actions:[
+            action("conditions","상태 설명",conditions.map(\.title).joined(separator:" · ")) {[weak self] in self?.showConditions(slot)},
+            action("learning","책략 습득표") {[weak self] in self?.showLearning(slot)},backAction()])
+    }
+    private func showConditions(_ slot:Int) {
+        guard let battle = session,let unit = battle.units[slot] else {return}
+        let conditions = (try? BattleAssistance.conditions(in:battle,slot:slot)) ?? []
+        let text = conditions.map {condition in
+            ([condition.title,condition.body]+condition.facts.map {"· \($0.label): \($0.value)"}).joined(separator:"\n")
+        }.joined(separator:"\n\n")
+        menu = .init(title:personName(unit.person)+" · 상태",body:text.isEmpty ? "확인할 상태가 없습니다." : text,actions:[navAction {[weak self] in self?.showUnit(slot)}])
     }
     private func showLearning(_ slot:Int) {
         run {
