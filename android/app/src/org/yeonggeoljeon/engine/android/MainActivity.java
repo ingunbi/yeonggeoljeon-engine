@@ -524,8 +524,8 @@ public class MainActivity extends Activity implements StageView.Listener {
         selectedY = at.optInt("y");
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.HORIZONTAL);
-        box.setBackground(Ui.round(this, 0xF21B2133, 16, Ui.LINE));
-        box.setPadding(Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4));
+        box.setBackground(Ui.round(this, 0xCC1B2133, 14, Ui.LINE));
+        box.setPadding(Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3));
         for (int i = 0; i < commands.length(); i++) {
             JSONObject a = commands.optJSONObject(i);
             final String id = a.optString("id");
@@ -534,13 +534,13 @@ public class MainActivity extends Activity implements StageView.Listener {
             col.setOrientation(LinearLayout.VERTICAL);
             col.setGravity(Gravity.CENTER);
             col.setAlpha(usable ? 1f : 0.35f);
-            col.addView(new IconView(this, id, "cancel".equals(id) ? Ui.MUTED : Ui.GOLD), Ui.lp(Ui.dp(this, 24), Ui.dp(this, 24)));
-            TextView label = Ui.text(this, a.optString("title"), 12, "cancel".equals(id) ? Ui.MUTED : Ui.GOLD, true);
+            col.addView(new IconView(this, id, "cancel".equals(id) ? Ui.MUTED : Ui.GOLD), Ui.lp(Ui.dp(this, 20), Ui.dp(this, 20)));
+            TextView label = Ui.text(this, a.optString("title"), 11, "cancel".equals(id) ? Ui.MUTED : Ui.GOLD, true);
             label.setGravity(Gravity.CENTER);
             label.setSingleLine();
             col.addView(label, Ui.lp(-2, -2));
             if (usable) col.setOnClickListener(v -> perform(2, id));
-            box.addView(col, Ui.lp(Ui.dp(this, 56), Ui.dp(this, 56)));
+            box.addView(col, Ui.lp(Ui.dp(this, 46), Ui.dp(this, 46)));
         }
         unitMenu = box;
         stageHolder.addView(box, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START));
@@ -558,8 +558,8 @@ public class MainActivity extends Activity implements StageView.Listener {
     private void placeUnitMenu() {
         if (unitMenu == null || selectedX < 0) return;
         RectF cell = stage.cellRect(selectedX, selectedY);
-        float w = unitMenu.getWidth() > 0 ? unitMenu.getWidth() : Ui.dp(this, 6 * 56 + 8);
-        float h = unitMenu.getHeight() > 0 ? unitMenu.getHeight() : Ui.dp(this, 64);
+        float w = unitMenu.getWidth() > 0 ? unitMenu.getWidth() : Ui.dp(this, 6 * 46 + 6);
+        float h = unitMenu.getHeight() > 0 ? unitMenu.getHeight() : Ui.dp(this, 52);
         float gap = Ui.dp(this, 6), W = stage.getWidth(), H = stage.getHeight();
         float[][] spots = {
             {cell.centerX() - w / 2, cell.top - gap - h}, {cell.left, cell.top - gap - h}, {cell.right - w, cell.top - gap - h},
@@ -647,19 +647,19 @@ public class MainActivity extends Activity implements StageView.Listener {
     private View unitCard(Frame frame, JSONObject u) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.HORIZONTAL);
-        card.setPadding(Ui.dp(this, 10), Ui.dp(this, 10), Ui.dp(this, 10), Ui.dp(this, 10));
-        card.setBackground(Ui.round(this, 0xEB0E1320, 14, Ui.LINE));
+        card.setPadding(Ui.dp(this, 8), Ui.dp(this, 7), Ui.dp(this, 8), Ui.dp(this, 7));
+        card.setBackground(Ui.round(this, 0xB80E1320, 14, Ui.LINE));
         Bitmap portrait = frame.images.get(u.optString("portrait"));
         if (portrait != null) {
-            ImageView image = portraitView(portrait, 52, 65);
-            ((LinearLayout.LayoutParams) image.getLayoutParams()).rightMargin = Ui.dp(this, 10);
+            ImageView image = portraitView(portrait, 40, 50);
+            ((LinearLayout.LayoutParams) image.getLayoutParams()).rightMargin = Ui.dp(this, 8);
             card.addView(image);
         }
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         LinearLayout top = new LinearLayout(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        top.addView(Ui.text(this, u.optString("name"), 17, u.optBoolean("enemy") ? 0xFFFF8C80 : Ui.GOLD, true));
+        top.addView(Ui.text(this, u.optString("name"), 15, u.optBoolean("enemy") ? 0xFFFF8C80 : Ui.GOLD, true));
         TextView cls = Ui.text(this, "  " + u.optString("className") + " Lv." + u.optInt("level"), 12, Ui.MUTED, false);
         top.addView(cls);
         col.addView(top);
@@ -671,12 +671,12 @@ public class MainActivity extends Activity implements StageView.Listener {
         TextView terrain = Ui.text(this, "지형 " + u.optString("terrain") + (u.optBoolean("confused") ? " · 혼란" : ""), 12, Ui.MUTED, false);
         foot.addView(terrain, new LinearLayout.LayoutParams(0, -2, 1f));
         TextView more = Ui.text(this, "상세", 13, Ui.GOLD, true);
-        more.setPadding(Ui.dp(this, 14), Ui.dp(this, 6), Ui.dp(this, 14), Ui.dp(this, 6));
+        more.setPadding(Ui.dp(this, 10), Ui.dp(this, 3), Ui.dp(this, 10), Ui.dp(this, 3));
         more.setBackground(Ui.round(this, Ui.GLASS, 14, 0));
         more.setOnClickListener(v -> command(Native.UNIT_DETAIL));
         foot.addView(more);
         col.addView(foot);
-        card.addView(col, new LinearLayout.LayoutParams(Ui.dp(this, 240), -2));
+        card.addView(col, new LinearLayout.LayoutParams(Ui.dp(this, 188), -2));
         return card;
     }
 
@@ -689,7 +689,7 @@ public class MainActivity extends Activity implements StageView.Listener {
         bar.setMax(Math.max(1, max));
         bar.setProgress(Math.max(0, Math.min(value, Math.max(1, max))));
         bar.getProgressDrawable().setColorFilter(color, android.graphics.PorterDuff.Mode.SRC_IN);
-        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(0, Ui.dp(this, 8), 1f);
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(0, Ui.dp(this, 6), 1f);
         row.addView(bar, bp);
         TextView number = Ui.text(this, String.valueOf(value), 11, Ui.TEXT, false);
         number.setGravity(Gravity.END);
@@ -821,8 +821,8 @@ public class MainActivity extends Activity implements StageView.Listener {
     private View combatSide(Frame frame, JSONObject side) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.HORIZONTAL);
-        card.setPadding(Ui.dp(this, 10), Ui.dp(this, 10), Ui.dp(this, 10), Ui.dp(this, 10));
-        card.setBackground(Ui.round(this, 0xEB0E1320, 14, Ui.LINE));
+        card.setPadding(Ui.dp(this, 8), Ui.dp(this, 7), Ui.dp(this, 8), Ui.dp(this, 7));
+        card.setBackground(Ui.round(this, 0xB80E1320, 14, Ui.LINE));
         if (side == null) return card;
         Bitmap portrait = frame.images.get(side.optString("portrait"));
         if (portrait != null) {

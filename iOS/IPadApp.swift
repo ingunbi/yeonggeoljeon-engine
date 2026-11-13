@@ -263,11 +263,11 @@ private struct IPadGameScreen:View {
 private struct IPadUnitMenu:View {
     let actions:[IPadAction]
     let anchor:IPadUnitAnchor
-    private let button:CGFloat = 50,height:CGFloat = 54,gap:CGFloat = 6
+    private let button:CGFloat = 44,height:CGFloat = 46,gap:CGFloat = 6
     var body:some View {
         GeometryReader {proxy in menu(at:origin(in:proxy.size))}
     }
-    private var width:CGFloat {button*CGFloat(actions.count)+8}
+    private var width:CGFloat {button*CGFloat(actions.count)+6}
     private func origin(in stage:CGSize) -> CGPoint {
         let a = anchor.rect,w = width,h = height
         func clamp(_ p:CGPoint)->CGPoint {CGPoint(x:max(6,min(stage.width-w-6,p.x)),y:max(6,min(stage.height-h-6,p.y)))}
@@ -288,17 +288,17 @@ private struct IPadUnitMenu:View {
             ForEach(actions) {action in
                 Button(action:action.perform) {
                     VStack(spacing:2) {
-                        if let symbol = IPadTheme.symbol(for:action.title) {Image(systemName:symbol).font(.system(size:19))}
-                        Text(action.title).font(.system(size:11,weight:.semibold))
+                        if let symbol = IPadTheme.symbol(for:action.title) {Image(systemName:symbol).font(.system(size:17))}
+                        Text(action.title).font(.system(size:10,weight:.semibold))
                     }
-                    .frame(width:button,height:height-8)
+                    .frame(width:button,height:height-6)
                     .foregroundStyle(action.id == "cancel" ? Color.secondary : IPadTheme.gold)
                     .contentShape(Rectangle())
                 }.buttonStyle(.plain).disabled(!action.enabled).opacity(action.enabled ? 1 : 0.4)
             }
         }
-        .padding(4).frame(width:width,height:height)
-        .background(IPadTheme.ink.opacity(0.95),in:RoundedRectangle(cornerRadius:14))
+        .padding(3).frame(width:width,height:height)
+        .background(IPadTheme.ink.opacity(0.8),in:RoundedRectangle(cornerRadius:14))
         .overlay(RoundedRectangle(cornerRadius:14).stroke(IPadTheme.gold.opacity(0.45),lineWidth:1))
         .position(x:point.x+width/2,y:point.y+height/2)
     }
@@ -383,11 +383,11 @@ private struct IPadUnitCard:View {
         return HStack(alignment:.top,spacing:10) {
             if let portrait = info.portrait {
                 Image(decorative:portrait,scale:1).resizable().interpolation(.none).aspectRatio(contentMode:.fit)
-                    .frame(width:52,height:65).clipShape(RoundedRectangle(cornerRadius:6))
+                    .frame(width:40,height:50).clipShape(RoundedRectangle(cornerRadius:6))
             }
             VStack(alignment:.leading,spacing:5) {
                 HStack(spacing:6) {
-                    Text(info.name).font(.headline).foregroundStyle(accent)
+                    Text(info.name).font(.subheadline.weight(.semibold)).foregroundStyle(accent)
                     Text("\(info.className) Lv.\(info.level)").font(.caption).foregroundStyle(.secondary)
                 }
                 gauge("병력",info.troops,info.maxTroops,Color(red:0.45,green:0.8,blue:0.5))
@@ -400,8 +400,8 @@ private struct IPadUnitCard:View {
                 }
             }
         }
-        .padding(10).frame(width:290)
-        .background(IPadTheme.ink.opacity(0.92),in:RoundedRectangle(cornerRadius:14))
+        .padding(8).frame(width:222)
+        .background(IPadTheme.ink.opacity(0.74),in:RoundedRectangle(cornerRadius:14))
         .overlay(RoundedRectangle(cornerRadius:14).stroke(Color.white.opacity(0.2),lineWidth:1))
         .accessibilityElement(children:.combine)
         .accessibilityLabel("\(info.name), \(info.className) 레벨 \(info.level), 병력 \(info.troops) 중 \(info.maxTroops), 사기 \(info.morale), MP \(info.mp)")
