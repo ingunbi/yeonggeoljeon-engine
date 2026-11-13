@@ -331,6 +331,7 @@ struct IPadPanel {
                 if animator.isIdle,let done = afterCues {afterCues = nil;done()}
                 revision += 1;return
             }
+            watchEnemyTurn()
             if try autoEndTurnIfDone() {return}
             // The source marches an army across the world map at 0.3 s a cell, three
             // times slower than a town walk; on a touch screen that reads as sluggish,
@@ -790,8 +791,62 @@ struct IPadPanel {
         autoEndClock += 1.0/30
         guard autoEndClock >= 0.9 else {return false}
         autoEndClock = 0
-        try flow.finishManual();clearSelection();try synchronizeBattle();refresh()
+        beginEnemyTurnWatch();try flow.finishManual();clearSelection();try synchronizeBattle();refresh()
         return true
+    }
+    // MARK: Enemy turn summary, battle history (the desktop's records, as menus)
+    private var enemyTurnBefore:EnemyTurnSnapshot?
+    private var enemyPhaseSeen = false
+    private(set) var enemyTurnChanges:[EnemyTurnSnapshot.Change] = []
+    private func beginEnemyTurnWatch() {
+        guard let battle = session else {return}
+        enemyTurnBefore = EnemyTurnSnapshot(battle);enemyPhaseSeen = false
+    }
+    /// Once the enemy phase has run and control is back, compare what was public before and after.
+    private func watchEnemyTurn() {
+        guard let before = enemyTurnBefore,let battle = session,let flow else {return}
+        if !flow.acceptsManualInput {enemyPhaseSeen = true;return}
+        guard enemyPhaseSeen,animator.isIdle,combatPlayer == nil else {return}
+        let changes = before.changes(to:EnemyTurnSnapshot(battle))
+        enemyTurnBefore = nil;enemyTurnChanges = changes
+        if !changes.isEmpty {
+            saveNotice = "적 턴에 \(changes.count)부대의 변화가 있었습니다. 메뉴 → 적 턴 요약에서 볼 수 있습니다."
+            transientNoticeUntil = ProcessInfo.processInfo.systemUptime+6;refresh()
+        }
+    }
+    private func showEnemyTurn() {
+        let rows = enemyTurnChanges.map {change in action("change-\(change.person)",change.name,change.detail) {}}
+        menu = .init(title:"적 턴 요약",body:rows.isEmpty ? "확인된 변화가 없습니다." : "적 턴 전후에 공개된 부대의 변화입니다. 중간 공격 순서는 전투 결과 기록에서 볼 수 있습니다.",
+                     actions:rows+[navAction {[weak self] in self?.showMenu()}])
+    }
+    private func showHistory() {
+        guard let host else {return}
+        let summaries = Array(host.extras.journal.summaries.reversed())
+        let rows = summaries.enumerated().map {index,summary in
+            action("summary-\(index)",summary.name,"\(summary.label) · \(summary.turns)턴 · 아군 피해 \(summary.totals.damageByPlayer)") {[weak self] in self?.showSummary(summary)}
+        }
+        menu = .init(title:"누적 전적",body:summaries.isEmpty ? "기록된 전투가 없습니다." : "저장한 진행에 속한 확정 결과입니다. 최근 \(summaries.count)전투.",
+                     actions:rows+[navAction {[weak self] in self?.showMenu()}])
+    }
+    private func showSummary(_ summary:BattleSummary) {
+        let totals = summary.totals
+        var lines = [summary.label+(summary.endingReason.map {" · "+$0} ?? ""),"소요 턴 \(summary.turns)",
+                     "아군 피해 \(totals.damageByPlayer) · 적군 피해 \(totals.damageByEnemy) · 아군 회복 \(totals.recoveredByPlayer)",
+                     "경험치 행동 \(totals.actionExperience.values.reduce(0,+)) · 승리 \(totals.victoryExperience.values.reduce(0,+))"]
+        if !totals.retiredPeople.isEmpty {
+            lines.append("퇴각: "+totals.retiredPeople.map {(try? host?.people.person($0).name) ?? "인물 \($0)"}.joined(separator:", "))
+        }
+        let money = (totals.sourceRewards?.moneyChange ?? 0)+(totals.afterBattleRewards?.moneyChange ?? 0)
+        if money != 0 {lines.append("금 \(money > 0 ? "+" : "")\(money)")}
+        if !totals.complete {lines.append("이전 저장의 기록이 없어 일부 행동은 집계되지 않았습니다.")}
+        menu = .init(title:summary.name,body:lines.joined(separator:"\n"),actions:[navAction {[weak self] in self?.showHistory()}])
+    }
+    private func showJourney() {
+        guard let host else {return}
+        let entries = Array(host.extras.journal.journey.suffix(40).reversed())
+        let rows = entries.enumerated().map {index,entry in action("journey-\(index)",entry.kind,entry.text) {}}
+        menu = .init(title:"여정",body:entries.isEmpty ? "이 저장 이전의 여정은 없습니다." : "실제 방문과 확정한 선택만 표시합니다. 최근 \(entries.count)건.",
+                     actions:rows+[navAction {[weak self] in self?.showMenu()}])
     }
     private var threatCache:(key:[Int],counts:[GridPoint:Int])?
     /// Cells the visible enemy units can reach with a blow or a strategy, with how many of them can.
@@ -841,7 +896,7 @@ struct IPadPanel {
     }
     private func confirmEndTurn() {
         guard canAct else {return}
-        confirm("턴 종료","아직 행동하지 않은 부대가 있어도 적의 턴으로 넘어갑니다.") {[weak self] in self?.run {try self?.flow?.finishManual();self?.clearSelection()}}
+        confirm("턴 종료","아직 행동하지 않은 부대가 있어도 적의 턴으로 넘어갑니다.") {[weak self] in self?.run {self?.beginEnemyTurnWatch();try self?.flow?.finishManual();self?.clearSelection()}}
     }
     private func confirm(_ title:String,_ body:String,_ accepted:@escaping()->Void) {
         menu = .init(title:title,body:body,actions:[action("confirm","확인") {[weak self] in self?.menu = nil;accepted()},backAction()])
@@ -918,8 +973,11 @@ struct IPadPanel {
         if let battle = session {
             rows.append(action("objective","승리조건") {[weak self] in self?.menu = .init(title:"승리조건",body:host.vm.state.objectiveText ?? "현재 목표 정보가 없습니다.",actions:[self?.backAction()].compactMap {$0})})
             rows.append(action("records","전투 결과 기록","현재 전투 \(battle.resultLog.entries.count)건") {[weak self] in self?.showResults()})
+            if !enemyTurnChanges.isEmpty {rows.append(action("enemy-turn","적 턴 요약","지난 적 턴의 변화 \(enemyTurnChanges.count)건") {[weak self] in self?.showEnemyTurn()})}
             if let slot = selectedSlot {rows.append(action("officer","선택 장수 정보") {[weak self] in self?.showUnit(slot)})}
         }
+        rows.append(action("history","누적 전적","끝낸 전투의 결과·경험치·퇴각") {[weak self] in self?.showHistory()})
+        rows.append(action("journey","여정","방문한 곳과 확정한 선택") {[weak self] in self?.showJourney()})
         rows.append(action("manage","장수·물품","장수 정보 · 소지품 · 전달 · 보호") {[weak self] in self?.showManagement()})
         rows.append(action("settings","설정","소리 · 대사 속도 · 진행 속도") {[weak self] in self?.showSettings()})
         if let battle = session,flow?.acceptsManualInput == true,flow?.retreatAllowed == true,let texts = host.framework?.battleMenu {
