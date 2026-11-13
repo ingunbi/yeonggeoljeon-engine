@@ -396,7 +396,7 @@ public class MainActivity extends Activity implements StageView.Listener {
 
         stage = new StageView(this);
         stage.setListener(this);
-        stage.setFillTall(isPhone());
+        stage.setFillTall(true);
         stage.setOnTransform(this::placeUnitMenu);
         // Cards, dialogue and banners sit over the picture only, never over the header or buttons.
         stageHolder = new FrameLayout(this);
@@ -473,7 +473,11 @@ public class MainActivity extends Activity implements StageView.Listener {
             combatBitmap = null;
         }
 
-        if (battle) { if (frame.battle != null) stage.show(frame.battle, true, !blocked, frame.newMap); }
+        if (battle) {
+            JSONObject info = s.optJSONObject("battle");
+            if (info != null && info.has("fx")) stage.setFocus((float) info.optDouble("fx"), (float) info.optDouble("fy"));
+            if (frame.battle != null) stage.show(frame.battle, true, !blocked, frame.newMap);
+        }
         else stage.show(frame.field, false, !blocked && s.optBoolean("fieldIsMap"), false);
         if (!battle) hint.setVisibility(View.GONE);
         else if (frame.newMap) {

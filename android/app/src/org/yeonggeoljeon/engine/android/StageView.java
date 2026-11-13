@@ -33,6 +33,9 @@ final class StageView extends View {
     private boolean fitted;
     /** A tall, narrow view (a phone held upright) starts zoomed in so the map is not a thin strip between black bars. */
     private boolean fillOnFit, fillTall;
+    private float focusX = -1f, focusY = -1f;
+    /** The cell a freshly opened, zoomed-in map is centred on; set before the map is shown. */
+    void setFocus(float x, float y) { focusX = x; focusY = y; }
     /** Only a phone held upright asks for the zoomed-in start; a tablet keeps the whole map in view. */
     void setFillTall(boolean value) { fillTall = value; }
     private float carriedX, carriedY;
@@ -117,7 +120,10 @@ final class StageView extends View {
         if (battle) {
             if (!fitted) {
                 if (fillOnFit) {
-                    zoom = Math.max(1f, Math.min(2.2f, getHeight() / (bitmap.getHeight() * fit)));
+                    // A map whose shape does not match the screen (a tall map on a wide screen) would leave wide black bars;
+                    // fill the screen instead and let the player scroll the other way.
+                    float cover = Math.max(getWidth() / (float) bitmap.getWidth(), getHeight() / (float) bitmap.getHeight()) / fit;
+                    zoom = cover >= 1.3f ? Math.min(3f, cover) : 1f;
                     fillOnFit = false;
                     scale = fit * zoom;
                     shownW = bitmap.getWidth() * scale;
@@ -125,6 +131,11 @@ final class StageView extends View {
                 }
                 panX = (getWidth() - shownW) / 2f;
                 panY = (getHeight() - shownH) / 2f;
+                // Open on our own side of the map, where the player will be acting.
+                if (zoom > 1f && focusX >= 0) {
+                    panX = getWidth() / 2f - (focusX * CELL + CELL / 2f) * scale;
+                    panY = getHeight() / 2f - (focusY * CELL + CELL / 2f) * scale;
+                }
                 fitted = true;
             }
             // Keep the map from leaving the view completely.

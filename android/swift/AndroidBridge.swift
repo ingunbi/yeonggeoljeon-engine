@@ -104,7 +104,14 @@ private func pointer(_ text:UnsafePointer<CChar>?) -> String {text.map {String(c
             state["notes"] = game.annotationEntries.map {entry -> [String:Any] in
                 ["k":entry.kind.rawValue,"x":entry.start.x,"y":entry.start.y,"x2":entry.end?.x ?? -1,"y2":entry.end?.y ?? -1,"t":entry.text,"s":entry.style.rawValue]
             }
-            state["mode"] = "battle";state["battle"] = ["cols":battle.width,"rows":battle.height] as [String:Any]
+            var info:[String:Any] = ["cols":battle.width,"rows":battle.height]
+            // Where our units stand, so a map that opens zoomed in is centred on the action.
+            let mine = battle.units.values.filter {!$0.enemy && $0.status == 2}
+            if !mine.isEmpty {
+                info["fx"] = Double(mine.map(\.position.x).reduce(0,+))/Double(mine.count)
+                info["fy"] = Double(mine.map(\.position.y).reduce(0,+))/Double(mine.count)
+            }
+            state["mode"] = "battle";state["battle"] = info
         } else {state["mode"] = game.host?.hasStarted == true ? "field" : "title"}
         // Sorted keys: Swift dictionaries iterate in a different order per instance, and the app compares these strings.
         let data = (try? JSONSerialization.data(withJSONObject:state,options:[.sortedKeys])) ?? Data("{}".utf8)
