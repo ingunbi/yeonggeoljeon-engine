@@ -158,7 +158,10 @@ def build_apk(data: Path, products: Path) -> Path:
     (stage / "dex").mkdir()
     (stage / "lib/lib/arm64-v8a").mkdir(parents=True)
     (stage / "assets").mkdir()
-    shutil.copytree(ROOT / "android/app/res", stage / "res", dirs_exist_ok=True)
+    # A fresh clone has no tracked resources (git keeps no empty folders); the generated icon fills res/.
+    (stage / "res").mkdir(parents=True, exist_ok=True)
+    if (ROOT / "android/app/res").is_dir():
+        shutil.copytree(ROOT / "android/app/res", stage / "res", dirs_exist_ok=True)
     make_icon(stage)
     engine = products / "libyeonggeoljeon.so"
     jni = build_jni(products)
