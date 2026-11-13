@@ -514,6 +514,9 @@ struct IPadPanel {
                     action("cancel","취소",enabled:canAct) {[weak self] in self?.cancelSelection()}]
             } else {
                 result.append(action("next","다음 부대",enabled:canAct && !(session.map(actionableUnits)?.isEmpty ?? true)) {[weak self] in self?.nextUnit()})
+                if let slot = selectedSlot,let unit = session?.units[slot],unit.enemy,unit.status == 2 {
+                    result.append(action("coop","협공 계산",enabled:canAct) {[weak self] in self?.showCooperation(slot)})
+                }
             }
             result.append(action("threat",threatOn ? "위험도 끄기" : "위험도") {[weak self] in self?.toggleThreat()})
             result.append(action("turn","턴 종료",enabled:canAct) {[weak self] in self?.confirmEndTurn()})
@@ -641,13 +644,49 @@ struct IPadPanel {
     private func confirmAttack(_ slot:Int,_ target:Int) {
         guard let battle = session else {return}
         let forecast = try? battle.attackForecast(slot,target:target)
-        confirm("공격",personName(battle.units[target]?.person)+" 공격"+(forecast.map {" · 예상 피해 \($0.damage)"} ?? "")) {[weak self] in
+        var lines = [personName(battle.units[target]?.person)+" 공격"+(forecast.map {" · 예상 피해 \($0.damage)"} ?? "")]
+        // The factors behind the number, from the engine's own physical result: attack, the defense after class and terrain, what is left.
+        if let result = try? BattleProjection(battle).physical(slot,target:target) {
+            lines.append("공격력 \(result.attack) · 방어력 \(result.defense)"+(result.adjustedDefense != result.defense ? " → 지형·병과 보정 후 \(result.adjustedDefense)" : ""))
+            lines.append("피해 \(result.damage) → 남은 병력 \(result.remainingTroops) · 사기 -\(result.moraleLoss)")
+        }
+        if let forecast {
+            if forecast.defeats {lines.append("격파할 수 있습니다.")}
+            else if forecast.counterPercent > 0 {lines.append("반격 가능성 \(forecast.counterPercent)%")}
+        }
+        confirm("공격",lines.joined(separator:"\n")) {[weak self] in
             self?.run {
                 guard let self,let flow = self.flow else {return}
                 let cues = try flow.beginManualAttack(slot,target:target)
                 self.clearSelection()
                 self.play(cues) {[weak self] in self?.run {_ = try self?.flow?.finishManualOperation()}}
             }
+        }
+    }
+    private func unitName(_ slot:Int) -> String {
+        guard let battle = session,let unit = battle.units[slot] else {return "부대"}
+        return personName(unit.person)
+    }
+    /// The desktop's cooperation calculator: which of our units can bring this enemy down, and in what order.
+    func showCooperation(_ target:Int) {
+        run {
+            guard let battle = session else {return}
+            let search = try BattleProjection(battle).cooperation(target:target)
+            var rows:[IPadAction] = [],seen = Set<String>()
+            for candidate in search.candidates {
+                let names = candidate.steps.map {unitName($0.actor)+($0.action == .attack ? "" : "(책략)")}.joined(separator:" → ")
+                // The same units in the same order only differ by where they stand; the first, best-ranked one is enough.
+                guard seen.insert(names).inserted else {continue}
+                if rows.count >= 6 {break}
+                let label = candidate.guaranteed ? "확정 격파" : candidate.defeats ? "격파 가능" : "격파 불가"
+                let left = candidate.remaining.lowerBound == candidate.remaining.upperBound ? "\(candidate.remaining.lowerBound)" : "\(candidate.remaining.lowerBound)~\(candidate.remaining.upperBound)"
+                let counter = candidate.counterLoss.upperBound > 0 ? " · 반격 손실 \(candidate.counterLoss.lowerBound)~\(candidate.counterLoss.upperBound)" : ""
+                let moves = candidate.steps.map {$0.movementCost > 0 ? "\(unitName($0.actor)) 이동 \($0.movementCost)칸" : nil}.compactMap {$0}.joined(separator:", ")
+                rows.append(action("coop-\(rows.count)",names,"\(label) · 남은 병력 \(left)\(counter)"+(moves.isEmpty ? "" : " · "+moves)) {})
+            }
+            let body = search.candidates.isEmpty ? "지금 이 적에게 닿을 수 있는 아군이 없습니다." :
+                "\(unitName(target))에게 이번 턴 닿는 아군의 공격·책략 조합입니다. 결과는 난수에 따른 범위이며, 실제 명령은 직접 내립니다."+(search.limited ? "\n후보가 많아 일부만 비교했습니다." : "")
+            menu = .init(title:"협공 계산",body:body,actions:rows+[backAction()])
         }
     }
     private func showStrategies(_ slot:Int) {

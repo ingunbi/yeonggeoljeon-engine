@@ -40,6 +40,7 @@ final class IconView extends View {
                 path.reset(); path.moveTo(10, 6); path.lineTo(18, 6); path.lineTo(18, 14);
                 c.drawPath(path, line);
                 break;
+            case "coop":
             case "attack": // crossed swords
                 c.drawLine(5, 5, 19, 19, line);
                 c.drawLine(19, 5, 5, 19, line);
