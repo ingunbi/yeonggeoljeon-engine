@@ -1317,17 +1317,38 @@ struct IPadPanel {
             menu = .init(title:c.itemName+" 전직 미리보기",body:lines.joined(separator:"\n"),actions:[navAction {[weak self] in self?.showPromotionList(id)}])
         }
     }
+    private var inventoryFilter = InventoryOverview.Filter.all
+    private var inventoryHolder:Int?
+    /// Everyone's belongings in one list, narrowed by kind and by holder, with each officer's free slots.
     private func showInventory() {
         run {
             guard let host else {return}
             let people = try host.people.companions().map {try host.people.person($0)}
-            let entries = try InventoryOverview.entries(people:people,combat:host.source.combat,extras:host.extras)
-            let rows = entries.map {entry in
-                action("stock-\(entry.personID)-\(entry.itemID)",entry.itemName,"\(entry.personName) · \(entry.count)개"+(entry.protected ? " · 보호" : "")) {[weak self] in
+            if let holder = inventoryHolder,!people.contains(where:{$0.id == holder}) {inventoryHolder = nil}
+            let shown = inventoryHolder.map {id in people.filter {$0.id == id}} ?? people
+            let entries = try InventoryOverview.entries(people:shown,combat:host.source.combat,extras:host.extras,filter:inventoryFilter)
+            let filters = InventoryOverview.Filter.allCases
+            var rows:[IPadAction] = [
+                action("inv-kind","분류: "+inventoryFilter.title,"눌러서 다음 분류로") {[weak self] in
+                    guard let self else {return}
+                    let next = (filters.firstIndex(of:self.inventoryFilter) ?? 0)+1
+                    self.inventoryFilter = filters[next % filters.count];self.showInventory()
+                },
+                action("inv-holder","보유 장수: "+(inventoryHolder.map {self.personName($0)} ?? "모두"),"눌러서 다음 장수로") {[weak self] in
+                    guard let self else {return}
+                    let ids = [nil]+people.map {Optional($0.id)}
+                    let at = ids.firstIndex(where:{$0 == self.inventoryHolder}) ?? 0
+                    self.inventoryHolder = ids[(at+1) % ids.count];self.showInventory()
+                }]
+            rows += entries.map {entry in
+                let free = 8-entry.occupiedSlots
+                return action("stock-\(entry.personID)-\(entry.itemID)",entry.itemName,"\(entry.personName) · \(entry.count)개 · 빈칸 \(free)"+(entry.protected ? " · 보호" : "")) {[weak self] in
                     self?.showItemOptions(giver:entry.personID,item:entry.itemID,back:{self?.showInventory()})
                 }
             }
-            menu = .init(title:"소지품 모아 보기",body:entries.isEmpty ? "소지품이 없습니다." : "장수별 소지품입니다. 고르면 전달이나 보호를 정할 수 있습니다.",actions:rows+[navAction {[weak self] in self?.showManagement()}])
+            let summary = shown.map {"\($0.name) \($0.itemIDs.filter {$0 != 255}.count)/8"}.joined(separator:" · ")
+            menu = .init(title:"소지품 모아 보기",body:(entries.isEmpty ? "조건에 맞는 소지품이 없습니다." : "고르면 설명과 전달·보호를 정할 수 있습니다.")+"\n"+summary,
+                         actions:rows+[navAction {[weak self] in self?.showManagement()}])
         }
     }
     private func showItemOptions(giver:Int,item:Int,back:@escaping()->Void) {
