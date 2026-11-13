@@ -188,7 +188,7 @@ private struct IPadGameScreen:View {
                         Spacer(minLength:0)
                     }.padding(24)
                 }
-                if game.prompt == nil,game.menu == nil,let anchor = unitAnchor,!unitCommands.isEmpty {
+                if game.prompt == nil,game.menu == nil,let anchor = unitAnchor,unitCommands.contains(where:{$0.enabled}) {
                     IPadUnitMenu(actions:unitCommands,anchor:anchor)
                 }
                 if game.prompt == nil,let info = game.unitInfo {

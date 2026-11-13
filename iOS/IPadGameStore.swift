@@ -377,7 +377,19 @@ struct IPadPanel {
         guard let host else {revision += 1;return}
         header = isBattle ? host.battle?.definition.name ?? "전투" : "영걸전"
         if suspendedRequest {status = suspendContinues ? "중단 저장 대기 중 · 현재 명령을 마치면 저장합니다." : "중단 저장 대기 중 · 현재 명령을 마치면 저장하고 타이틀로 이동합니다."}
-        else if let battle = session {status = "\(battle.turns.roundIndex+1)턴 · "+(flow?.acceptsManualInput == true ? "부대를 선택하세요." : "부대의 행동을 진행하고 있습니다.")}
+        else if let battle = session {
+            status = "\(battle.turns.roundIndex+1)턴 · "+(flow?.acceptsManualInput == true ? "부대를 선택하세요." : "부대의 행동을 진행하고 있습니다.")
+            // Say why a selected friendly unit gives no commands, instead of showing dead buttons.
+            if flow?.acceptsManualInput == true,let slot = selectedSlot,let unit = battle.units[slot],let why = OriginalBattleCommand.denial(unit) {
+                let name = personName(unit.person)
+                switch why {
+                case "cannotControl":status = "\(name) · 자동으로 움직이는 부대라 직접 명령할 수 없습니다."
+                case "confused":status = "\(name) · 혼란 상태라 명령할 수 없습니다."
+                case "finished":status = "\(name) · 이미 행동을 마쳤습니다."
+                default:break
+                }
+            }
+        }
         else {status = host.playerStatus ?? host.notice ?? (host.explorationInputReady ? "목적지나 인물을 선택하세요." : "")}
         if let saveNotice {status += " · "+saveNotice}
         if !isBattle {
@@ -529,22 +541,37 @@ struct IPadPanel {
             if let slot = selectedSlot,let mode = targetMode {
                 switch mode {
                 case .move:
-                    guard highlighted.contains(point) else {return}
-                    let path = try battle.move(slot,to:point);accepted(.init(kind:.battleMove,slot:slot,x:point.x,y:point.y));targetMode = nil;highlighted = []
-                    play([.walk(slot:slot,path:path,sound:try? battle.walkSound(slot))])
-                case .attack:if let target,highlighted.contains(point) {confirmAttack(slot,target.slot)}
-                case .strategy(let ability):if let target,highlighted.contains(point) {confirmStrategy(slot,ability,target.slot)}
-                case .item(let item):if let target,highlighted.contains(point) {confirmItem(slot,item,target.slot)}
-                case .give(let item):if let target,!target.enemy,highlighted.contains(point) {confirmGive(slot,item,target.slot)}
+                    if highlighted.contains(point) {
+                        let path = try battle.move(slot,to:point);accepted(.init(kind:.battleMove,slot:slot,x:point.x,y:point.y));targetMode = nil;highlighted = []
+                        play([.walk(slot:slot,path:path,sound:try? battle.walkSound(slot))])
+                        return
+                    }
+                case .attack:if let target,highlighted.contains(point) {confirmAttack(slot,target.slot);return}
+                case .strategy(let ability):if let target,highlighted.contains(point) {confirmStrategy(slot,ability,target.slot);return}
+                case .item(let item):if let target,highlighted.contains(point) {confirmItem(slot,item,target.slot);return}
+                case .give(let item):if let target,!target.enemy,highlighted.contains(point) {confirmGive(slot,item,target.slot);return}
                 }
+                // Not a target of the current command: a touch on another unit picks that unit instead of being dropped.
+                guard let target,target.slot != slot else {return}
+                try selectUnit(target,battle)
                 return
             }
             guard let target else {clearSelection();return}
-            selectedSlot = target.slot;highlighted = []
-            if target.enemy || OriginalBattleCommand.denial(target) != nil {return}
-            if target.scriptFlags&0x40 != 0 {targetMode = nil;return}
-            highlighted = Set(try battle.reachable(target.slot));targetMode = .move
+            try selectUnit(target,battle)
         }
+    }
+    /// Picks a unit and, if it can still move, shows its reach. A unit that has already
+    /// moved keeps the turn's command until it acts or cancels, so another touch returns to it.
+    private func selectUnit(_ target:OriginalLiveUnit,_ battle:OriginalBattleSession) throws {
+        if !target.enemy,let pending = battle.pendingMovementSlots.first(where:{$0 != target.slot}) {
+            selectedSlot = pending;targetMode = nil;highlighted = []
+            saveNotice = "이동한 부대의 명령을 먼저 마치거나 취소하세요";transientNoticeUntil = ProcessInfo.processInfo.systemUptime+4
+            return
+        }
+        selectedSlot = target.slot;highlighted = [];targetMode = nil
+        if target.enemy || OriginalBattleCommand.denial(target) != nil {return}
+        if target.scriptFlags&0x40 != 0 {return}
+        highlighted = Set(try battle.reachable(target.slot));targetMode = .move
     }
     private func clearSelection() {selectedSlot = nil;targetMode = nil;highlighted = []}
     private func cancelSelection() {
@@ -557,6 +584,11 @@ struct IPadPanel {
     }
     private func nextUnit() {
         guard canAct,let battle = session else {return}
+        if let pending = battle.pendingMovementSlots.first {
+            selectedSlot = pending;targetMode = nil;highlighted = []
+            saveNotice = "이동한 부대의 명령을 먼저 마치거나 취소하세요";transientNoticeUntil = ProcessInfo.processInfo.systemUptime+4
+            refresh();return
+        }
         let slots = battle.units.values.filter {$0.status == 2 && OriginalBattleCommand.denial($0) == nil}.map(\.slot).sorted()
         guard !slots.isEmpty else {return}
         let index = selectedSlot.flatMap {slots.firstIndex(of:$0)}.map {($0+1)%slots.count} ?? 0

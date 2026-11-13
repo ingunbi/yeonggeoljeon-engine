@@ -516,7 +516,10 @@ public class MainActivity extends Activity implements StageView.Listener {
     /** The selected unit's commands as one compact strip beside it instead of a row at the bottom. */
     private void showUnitMenu(JSONArray commands, JSONObject at, boolean hidden) {
         if (unitMenu != null) { stageHolder.removeView(unitMenu); unitMenu = null; }
-        if (at == null || commands.length() == 0 || hidden) { selectedX = -1; return; }
+        boolean anyUsable = false;
+        for (int i = 0; i < commands.length(); i++) anyUsable |= commands.optJSONObject(i).optBoolean("enabled", true);
+        // A unit the game plays itself (or one already done) has nothing to offer; the status line says why.
+        if (at == null || commands.length() == 0 || hidden || !anyUsable) { selectedX = -1; return; }
         selectedX = at.optInt("x");
         selectedY = at.optInt("y");
         LinearLayout box = new LinearLayout(this);
