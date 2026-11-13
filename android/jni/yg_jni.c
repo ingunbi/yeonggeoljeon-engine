@@ -7,6 +7,8 @@
 
 extern int32_t yg_create(const char *data, const char *saves);
 extern void yg_tick(void);
+extern int32_t yg_combat_live(void);
+extern void yg_tick_combat(void);
 extern void yg_set_active(int32_t value);
 extern int32_t yg_revision(void);
 extern char *yg_state(void);
@@ -48,6 +50,8 @@ JNIEXPORT jint JNICALL NATIVE(create)(JNIEnv *env, jclass cls, jstring data, jst
     return result;
 }
 JNIEXPORT void JNICALL NATIVE(tick)(JNIEnv *env, jclass cls) { yg_tick(); }
+JNIEXPORT jboolean JNICALL NATIVE(combatLive)(JNIEnv *env, jclass cls) { return yg_combat_live() != 0; }
+JNIEXPORT void JNICALL NATIVE(tickCombat)(JNIEnv *env, jclass cls) { yg_tick_combat(); }
 JNIEXPORT void JNICALL NATIVE(setActive)(JNIEnv *env, jclass cls, jboolean value) { yg_set_active(value ? 1 : 0); }
 JNIEXPORT jint JNICALL NATIVE(revision)(JNIEnv *env, jclass cls) { return yg_revision(); }
 JNIEXPORT jstring JNICALL NATIVE(state)(JNIEnv *env, jclass cls) {

@@ -126,7 +126,7 @@ public class MainActivity extends Activity implements StageView.Listener {
         game.post(loop);
     }
 
-    private static final long STEP_NANOS = 33_333_000L;
+    private static final long STEP_NANOS = 33_333_000L, FINE_NANOS = 16_666_000L;
     private long clock;
     private long accumulated;
     private long statsStart, statsTicks, statsCaptureNanos, statsFrames, statsLate;
@@ -144,11 +144,14 @@ public class MainActivity extends Activity implements StageView.Listener {
             if (clock == 0) clock = now;
             accumulated += now - clock;
             clock = now;
-            accumulated = Math.min(accumulated, 4 * STEP_NANOS);
+            // The enlarged combat scene is drawn on the source's 60 Hz tick; everything else keeps 30 Hz.
+            final boolean fine = Native.combatLive();
+            final long step = fine ? FINE_NANOS : STEP_NANOS;
+            accumulated = Math.min(accumulated, 4 * step);
             int steps = 0;
-            while (accumulated >= STEP_NANOS) {
-                Native.tick();
-                accumulated -= STEP_NANOS;
+            while (accumulated >= step) {
+                if (fine) Native.tickCombat(); else Native.tick();
+                accumulated -= step;
                 steps++;
             }
             statsTicks += steps;
@@ -174,7 +177,7 @@ public class MainActivity extends Activity implements StageView.Listener {
                     statsTicks / seconds, statsFrames / seconds, statsFrames == 0 ? 0.0 : statsCaptureNanos / 1e6 / statsFrames, statsLate));
                 statsStart = now; statsTicks = 0; statsCaptureNanos = 0; statsFrames = 0; statsLate = 0;
             }
-            long next = STEP_NANOS - (System.nanoTime() - clock) - accumulated;
+            long next = step - (System.nanoTime() - clock) - accumulated;
             game.postDelayed(this, Math.max(1L, next / 1_000_000L));
         }
     };
@@ -194,7 +197,8 @@ public class MainActivity extends Activity implements StageView.Listener {
         forceFrame = false;
         lastStateJson = json;
         if ("battle".equals(mode)) {
-            frame.battle = bitmapOf(Native.battleImage(size), size);
+            // The combat scene covers the map, so its picture is not copied for every combat frame.
+            if (frame.state.optJSONObject("combat") == null) frame.battle = bitmapOf(Native.battleImage(size), size);
             JSONObject battle = frame.state.optJSONObject("battle");
             String key = battle == null ? "" : battle.optInt("cols") + "x" + battle.optInt("rows") + frame.state.optString("header");
             frame.newMap = !key.equals(lastMapKey);
@@ -456,8 +460,19 @@ public class MainActivity extends Activity implements StageView.Listener {
         menuButton.setVisibility(started ? View.VISIBLE : View.GONE);
         JSONObject prompt = s.optJSONObject("prompt"), menu = s.optJSONObject("menu"), combat = s.optJSONObject("combat");
         boolean blocked = prompt != null || (menu != null && started) || combat != null;
+        // Only the picture changes from frame to frame while the combat scene plays; swap it in place rather than rebuilding the views.
+        if (combat != null) {
+            Bitmap shown = frame.images.get(combat.optString("image"));
+            combat.remove("image");
+            if (shown != null) {
+                combatBitmap = shown;
+                if (combatImageView != null) combatImageView.setImageDrawable(pixelDrawable(shown));
+            }
+        } else {
+            combatBitmap = null;
+        }
 
-        if (battle) stage.show(frame.battle, true, !blocked, frame.newMap);
+        if (battle) { if (frame.battle != null) stage.show(frame.battle, true, !blocked, frame.newMap); }
         else stage.show(frame.field, false, !blocked && s.optBoolean("fieldIsMap"), false);
         if (!battle) hint.setVisibility(View.GONE);
         else if (frame.newMap) {
@@ -622,8 +637,18 @@ public class MainActivity extends Activity implements StageView.Listener {
         if (unitMenu.getTranslationY() != bestY) unitMenu.setTranslationY(bestY);
     }
 
+    private Bitmap combatBitmap;
+    private ImageView combatImageView;
+
+    private BitmapDrawable pixelDrawable(Bitmap bitmap) {
+        BitmapDrawable drawable = new BitmapDrawable(getResources(), bitmap);
+        drawable.setFilterBitmap(false);
+        return drawable;
+    }
+
     private void renderOverlay(Frame frame, JSONObject s, boolean started, JSONObject prompt, JSONObject menu, JSONObject combat) {
         overlay.removeAllViews();
+        combatImageView = null;
         boolean dialogue = prompt != null && prompt.optBoolean("dialogue");
         JSONObject unit = s.optJSONObject("unit");
         JSONObject banner = s.optJSONObject("banner");
@@ -815,16 +840,15 @@ public class MainActivity extends Activity implements StageView.Listener {
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(Ui.dp(this, 14), Ui.dp(this, 14), Ui.dp(this, 14), Ui.dp(this, 14));
-        Bitmap picture = frame.images.get(c.optString("image"));
+        Bitmap picture = combatBitmap;
         // The picture takes whatever height the cards leave, so nothing is pushed off the screen.
         FrameLayout shot = new FrameLayout(this);
         if (picture != null) {
             ImageView image = new ImageView(this);
-            BitmapDrawable drawable = new BitmapDrawable(getResources(), picture);
-            drawable.setFilterBitmap(false);
-            image.setImageDrawable(drawable);
+            image.setImageDrawable(pixelDrawable(picture));
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
             shot.addView(image, new FrameLayout.LayoutParams(-1, -1));
+            combatImageView = image;
         }
         if (c.has("notice")) {
             TextView n = Ui.text(this, c.optString("notice"), 15, Ui.TEXT, true);

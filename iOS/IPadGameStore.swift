@@ -67,6 +67,8 @@ struct IPadPanel {
     private(set) var flow:OriginalBattleFlow?
     @Published var selectedSlot:Int?
     @Published private(set) var highlighted:Set<GridPoint> = []
+    /// The cells of the enemies the pending attack can hit; `highlighted` also holds the rest of the range.
+    private var attackTargets:Set<GridPoint> = []
     @Published private(set) var fieldImage:CGImage?
     /// True while the image is the cropped map window, so touches can act on it.
     private(set) var fieldIsMap = false
@@ -294,6 +296,21 @@ struct IPadPanel {
     /// The original flips every waiting unit between two frames (research: battle idle phase).
     private(set) var idlePhase:UInt8 = 0
     private var idleClock = 0.0
+    /// The enlarged combat scene plays on the source's 60 Hz tick, so a front end steps it twice as often as the rest.
+    var combatLive:Bool {combatPlayer != nil && menu == nil && prompt == nil && error == nil}
+    func tickCombat() {
+        guard active,combatLive else {return}
+        advanceCombat(Double(speedFactor)/60)
+    }
+    private func advanceCombat(_ seconds:Double) {
+        guard var player = combatPlayer else {return}
+        for action in player.advance(seconds,soundBusy:false) {if case .sound(let id) = action {audio?.playEffect(id)}}
+        if player.finished {
+            combatPlayer = nil;combatImage = nil
+            let rest = combatRest;combatRest = [];startCues(rest)
+        } else {combatPlayer = player}
+        revision += 1
+    }
     func tick() {
         guard active,error == nil,let host else {return}
         if let until = transientNoticeUntil,ProcessInfo.processInfo.systemUptime >= until {transientNoticeUntil = nil;saveNotice = nil;refresh()}
@@ -305,14 +322,7 @@ struct IPadPanel {
             if try completeSuspendIfReady() {return}
             if menu == nil,paceDialogue() {return}
             guard menu == nil,prompt == nil else {return}
-            if var player = combatPlayer {
-                for action in player.advance(Double(speedFactor)/30,soundBusy:false) {if case .sound(let id) = action {audio?.playEffect(id)}}
-                if player.finished {
-                    combatPlayer = nil;combatImage = nil
-                    let rest = combatRest;combatRest = [];startCues(rest)
-                } else {combatPlayer = player}
-                revision += 1;return
-            }
+            if combatPlayer != nil {advanceCombat(Double(speedFactor)/30);return}
             if !animator.isIdle {
                 for sound in animator.advance(Double(speedFactor)/30) {audio?.playEffect(sound)}
                 if animator.isIdle,let done = afterCues {afterCues = nil;done()}
@@ -494,7 +504,7 @@ struct IPadPanel {
                 // A unit the source plays itself (an ally AI unit, an acted unit) can only be looked at.
                 let canAct = self.canAct && (try? session?.requireManualUnit(slot)) != nil
                 result += [action("move","이동",enabled:canAct && unit.scriptFlags&0x40 == 0) {[weak self] in self?.beginMove(slot)},
-                    action("attack","공격",enabled:canAct && hasAttackTarget(slot)) {[weak self] in self?.beginAttack(slot)},
+                    action("attack","공격",enabled:canAct) {[weak self] in self?.beginAttack(slot)},
                     action("strategies","책략",enabled:canAct) {[weak self] in self?.showStrategies(slot)},
                     action("items","도구",enabled:canAct) {[weak self] in self?.showItems(slot)},
                     action("wait","대기",enabled:canAct) {[weak self] in self?.run {try self?.flow?.manualWait(slot);self?.clearSelection()}},
@@ -560,7 +570,7 @@ struct IPadPanel {
                         play([.walk(slot:slot,path:path,sound:try? battle.walkSound(slot))])
                         return
                     }
-                case .attack:if let target,highlighted.contains(point) {confirmAttack(slot,target.slot);return}
+                case .attack:if let target,attackTargets.contains(point) {confirmAttack(slot,target.slot);return}
                 case .strategy(let ability):if let target,highlighted.contains(point) {confirmStrategy(slot,ability,target.slot);return}
                 case .item(let item):if let target,highlighted.contains(point) {confirmItem(slot,item,target.slot);return}
                 case .give(let item):if let target,!target.enemy,highlighted.contains(point) {confirmGive(slot,item,target.slot);return}
@@ -613,12 +623,14 @@ struct IPadPanel {
         run {
             guard let battle = session else {return};_ = try battle.requireManualUnit(slot)
             let targets = battle.units.values.filter {$0.status == 2 && $0.enemy && $0.scriptFlags&0x20 != 0 && (try? OriginalAttackOperation.begin(in:battle,attackerSlot:slot,targetSlot:$0.slot)) != nil}
+            // The whole striking range is shown, so the player sees where a target would have to stand; only enemies in it can be picked.
+            let range = battle.units[slot].flatMap {try? BattleProjection(battle).preview(slot,at:$0.position).attackCells} ?? []
+            attackTargets = Set(targets.map(\.position))
+            targetMode = .attack;highlighted = range.union(attackTargets)
             // A plain hint, not an error window: nothing is wrong, there is just nobody to hit from here.
-            guard !targets.isEmpty else {
+            if targets.isEmpty {
                 saveNotice = "공격 사거리 안에 적이 없습니다. 먼저 이동하세요.";transientNoticeUntil = ProcessInfo.processInfo.systemUptime+4
-                return
             }
-            targetMode = .attack;highlighted = Set(targets.map(\.position))
         }
     }
     private func confirmAttack(_ slot:Int,_ target:Int) {
@@ -748,18 +760,6 @@ struct IPadPanel {
         footprintCache = (key,cells)
         // Both together, so the strip does not jump when a move turns into a target pick.
         return cells.union(highlighted)
-    }
-    private var attackProbe:(slot:Int,point:GridPoint,foes:[Int],result:Bool)?
-    /// True when the unit has an enemy in reach from where it stands. Cached per unit, place and where every enemy stands,
-    /// so an enemy that walks up to the unit is noticed.
-    private func hasAttackTarget(_ slot:Int) -> Bool {
-        guard let battle = session,let unit = battle.units[slot] else {return false}
-        let foes = battle.units.values.filter {$0.status == 2 && $0.enemy && $0.scriptFlags&0x20 != 0}.sorted {$0.slot < $1.slot}
-        let signature = foes.flatMap {[$0.slot,$0.position.x,$0.position.y]}
-        if let probe = attackProbe,probe.slot == slot,probe.point == unit.position,probe.foes == signature {return probe.result}
-        let result = foes.contains {(try? OriginalAttackOperation.begin(in:battle,attackerSlot:slot,targetSlot:$0.slot)) != nil}
-        attackProbe = (slot,unit.position,signature,result)
-        return result
     }
     private func confirmEndTurn() {
         guard canAct else {return}

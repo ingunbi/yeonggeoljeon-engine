@@ -61,6 +61,8 @@ private func pointer(_ text:UnsafePointer<CChar>?) -> String {text.map {String(c
     }
 }
 @_cdecl("yg_tick") public func yg_tick() {onGameThread {store?.tick()}}
+@_cdecl("yg_combat_live") public func yg_combat_live() -> Int32 {onGameThread {store?.combatLive == true ? 1 : 0}}
+@_cdecl("yg_tick_combat") public func yg_tick_combat() {onGameThread {store?.tickCombat()}}
 @_cdecl("yg_set_active") public func yg_set_active(_ value:Int32) {onGameThread {store?.setActive(value != 0)}}
 @_cdecl("yg_revision") public func yg_revision() -> Int32 {onGameThread {Int32(truncatingIfNeeded:store?.revision ?? 0)}}
 

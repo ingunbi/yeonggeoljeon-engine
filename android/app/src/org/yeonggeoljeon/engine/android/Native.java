@@ -13,6 +13,8 @@ final class Native {
     static native void setHome(String path);
     static native int create(String data, String saves);
     static native void tick();
+    static native boolean combatLive();
+    static native void tickCombat();
     static native void setActive(boolean active);
     static native int revision();
     static native String state();
