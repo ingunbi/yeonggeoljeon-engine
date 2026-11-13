@@ -129,7 +129,7 @@ public class MainActivity extends Activity implements StageView.Listener {
     private static final long STEP_NANOS = 33_333_000L, FINE_NANOS = 16_666_000L;
     private long clock;
     private long accumulated;
-    private long statsStart, statsTicks, statsCaptureNanos, statsFrames, statsLate;
+    private long statsStart, statsTicks, statsCaptureNanos, statsFrames, statsLate, statsStateNanos, statsImageNanos, statsTickNanos, statsRenderNanos, statsRenders, statsDropped, statsCaptures, statsLongRender;
     private final java.util.concurrent.atomic.AtomicBoolean framePending = new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /**
@@ -150,12 +150,15 @@ public class MainActivity extends Activity implements StageView.Listener {
             accumulated = Math.min(accumulated, 4 * step);
             int steps = 0;
             while (accumulated >= step) {
+                long tT = System.nanoTime();
                 if (fine) Native.tickCombat(); else Native.tick();
+                statsTickNanos += System.nanoTime() - tT;
                 accumulated -= step;
                 steps++;
             }
             statsTicks += steps;
             if (steps > 1) statsLate++;
+            if (steps > 0 && framePending.get() && Native.revision() != lastRevision) statsDropped++;
             if (steps > 0 && !framePending.get()) {
                 int revision = Native.revision();
                 if (revision != lastRevision) {
@@ -166,15 +169,26 @@ public class MainActivity extends Activity implements StageView.Listener {
                         statsCaptureNanos += System.nanoTime() - t0;
                         statsFrames++;
                         framePending.set(true);
-                        ui.post(() -> { render(frame); framePending.set(false); });
+                        ui.post(() -> {
+                            long r0 = System.nanoTime();
+                            render(frame);
+                            long took = System.nanoTime() - r0;
+                            statsRenderNanos += took; statsRenders++;
+                            if (took > 20_000_000L) statsLongRender++;
+                            framePending.set(false);
+                        });
                     }
                 }
             }
             if (statsStart == 0) statsStart = now;
             if (now - statsStart >= 2_000_000_000L) {
                 double seconds = (now - statsStart) / 1e9;
-                android.util.Log.d("yg-pace", String.format(java.util.Locale.US, "ticks/s=%.1f frames/s=%.1f capture=%.1fms catchup=%d",
-                    statsTicks / seconds, statsFrames / seconds, statsFrames == 0 ? 0.0 : statsCaptureNanos / 1e6 / statsFrames, statsLate));
+                android.util.Log.d("yg-pace", String.format(java.util.Locale.US, "ticks/s=%.1f shown/s=%.1f dropped=%d captures=%d state=%.1fms image=%.1fms render=%.1fms (>20ms: %d)",
+                    statsTicks / seconds, statsFrames / seconds, statsDropped, statsCaptures,
+                    statsCaptures == 0 ? 0.0 : statsStateNanos / 1e6 / statsCaptures, statsFrames == 0 ? 0.0 : statsImageNanos / 1e6 / statsFrames,
+                    statsRenders == 0 ? 0.0 : statsRenderNanos / 1e6 / statsRenders, statsLongRender));
+                statsRenderNanos = 0; statsRenders = 0; statsDropped = 0; statsCaptures = 0; statsLongRender = 0;
+                statsStateNanos = 0; statsImageNanos = 0; statsTickNanos = 0;
                 statsStart = now; statsTicks = 0; statsCaptureNanos = 0; statsFrames = 0; statsLate = 0;
             }
             long next = step - (System.nanoTime() - clock) - accumulated;
@@ -185,7 +199,10 @@ public class MainActivity extends Activity implements StageView.Listener {
     /** Null when nothing on screen can have changed since the last frame. */
     private Frame capture() {
         Frame frame = new Frame();
+        statsCaptures++;
+        long tA = System.nanoTime();
         String json = Native.state();
+        statsStateNanos += System.nanoTime() - tA;
         try {
             frame.state = new JSONObject(json);
         } catch (Exception e) {
@@ -198,7 +215,9 @@ public class MainActivity extends Activity implements StageView.Listener {
         lastStateJson = json;
         if ("battle".equals(mode)) {
             // The combat scene covers the map, so its picture is not copied for every combat frame.
+            long tB = System.nanoTime();
             if (frame.state.optJSONObject("combat") == null) frame.battle = bitmapOf(Native.battleImage(size), size);
+            statsImageNanos += System.nanoTime() - tB;
             JSONObject battle = frame.state.optJSONObject("battle");
             String key = battle == null ? "" : battle.optInt("cols") + "x" + battle.optInt("rows") + frame.state.optString("header");
             frame.newMap = !key.equals(lastMapKey);

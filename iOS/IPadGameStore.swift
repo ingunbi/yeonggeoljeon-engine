@@ -300,10 +300,14 @@ struct IPadPanel {
     private(set) var idlePhase:UInt8 = 0
     private var idleClock = 0.0
     /// The enlarged combat scene plays on the source's 60 Hz tick, so a front end steps it twice as often as the rest.
-    var combatLive:Bool {combatPlayer != nil && menu == nil && prompt == nil && error == nil}
+    /// A unit walking across the map plays at that rate too, so a move reads as smooth as the screen allows.
+    var combatLive:Bool {(combatPlayer != nil || !animator.isIdle) && menu == nil && prompt == nil && error == nil}
     func tickCombat() {
         guard active,combatLive else {return}
-        advanceCombat(Double(speedFactor)/60)
+        if combatPlayer != nil {advanceCombat(Double(speedFactor)/60);return}
+        for sound in animator.advance(Double(speedFactor)/60) {audio?.playEffect(sound)}
+        if animator.isIdle,let done = afterCues {afterCues = nil;done()}
+        revision += 1
     }
     private func advanceCombat(_ seconds:Double) {
         guard var player = combatPlayer else {return}
