@@ -724,14 +724,28 @@ struct IPadPanel {
         try flow.finishManual();clearSelection();try synchronizeBattle();refresh()
         return true
     }
-    private var attackProbe:(slot:Int,point:GridPoint,enemies:Int,result:Bool)?
-    /// True when the unit has an enemy in reach from where it stands. Cached per unit, place and enemy count.
+    private var footprintCache:(key:[Int],cells:Set<GridPoint>)?
+    /// Cells a floating command strip should stay off: the highlighted ones while a move or target is being picked,
+    /// otherwise (for example right after a move) where the selected unit could strike.
+    var stripClearCells:Set<GridPoint> {
+        guard let battle = session,let slot = selectedSlot,let at = battle.units[slot]?.position else {return highlighted}
+        let key = [slot,at.x,at.y]+battle.units.values.sorted {$0.slot < $1.slot}.flatMap {[$0.slot,$0.position.x,$0.position.y,$0.status]}
+        if let cached = footprintCache,cached.key == key {return cached.cells.union(highlighted)}
+        let cells = (try? BattleProjection(battle).preview(slot,at:at).attackCells) ?? []
+        footprintCache = (key,cells)
+        // Both together, so the strip does not jump when a move turns into a target pick.
+        return cells.union(highlighted)
+    }
+    private var attackProbe:(slot:Int,point:GridPoint,foes:[Int],result:Bool)?
+    /// True when the unit has an enemy in reach from where it stands. Cached per unit, place and where every enemy stands,
+    /// so an enemy that walks up to the unit is noticed.
     private func hasAttackTarget(_ slot:Int) -> Bool {
         guard let battle = session,let unit = battle.units[slot] else {return false}
-        let foes = battle.units.values.filter {$0.status == 2 && $0.enemy && $0.scriptFlags&0x20 != 0}
-        if let probe = attackProbe,probe.slot == slot,probe.point == unit.position,probe.enemies == foes.count {return probe.result}
+        let foes = battle.units.values.filter {$0.status == 2 && $0.enemy && $0.scriptFlags&0x20 != 0}.sorted {$0.slot < $1.slot}
+        let signature = foes.flatMap {[$0.slot,$0.position.x,$0.position.y]}
+        if let probe = attackProbe,probe.slot == slot,probe.point == unit.position,probe.foes == signature {return probe.result}
         let result = foes.contains {(try? OriginalAttackOperation.begin(in:battle,attackerSlot:slot,targetSlot:$0.slot)) != nil}
-        attackProbe = (slot,unit.position,foes.count,result)
+        attackProbe = (slot,unit.position,signature,result)
         return result
     }
     private func confirmEndTurn() {

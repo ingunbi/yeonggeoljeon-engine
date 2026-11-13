@@ -96,7 +96,7 @@ private func pointer(_ text:UnsafePointer<CChar>?) -> String {text.map {String(c
                 // What the command strip should keep clear: other units and reachable cells, as [x,y] pairs.
                 let others = battle.units.values.filter {$0.slot != slot && $0.status == 2 && (!$0.enemy || $0.scriptFlags&0x20 != 0)}
                 state["around"] = ["units":others.sorted {$0.slot < $1.slot}.map {[$0.position.x,$0.position.y]},
-                                   "reach":game.highlighted.filter {$0 != at}.sorted {$0.y == $1.y ? $0.x < $1.x : $0.y < $1.y}.map {[$0.x,$0.y]}] as [String:Any]
+                                   "reach":game.stripClearCells.filter {$0 != at}.sorted {$0.y == $1.y ? $0.x < $1.x : $0.y < $1.y}.map {[$0.x,$0.y]}] as [String:Any]
             }
             state["mode"] = "battle";state["battle"] = ["cols":battle.width,"rows":battle.height] as [String:Any]
         } else {state["mode"] = game.host?.hasStarted == true ? "field" : "title"}

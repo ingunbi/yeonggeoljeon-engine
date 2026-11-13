@@ -391,6 +391,7 @@ public class MainActivity extends Activity implements StageView.Listener {
 
         stage = new StageView(this);
         stage.setListener(this);
+        stage.setFillTall(isPhone());
         stage.setOnTransform(this::placeUnitMenu);
         // Cards, dialogue and banners sit over the picture only, never over the header or buttons.
         stageHolder = new FrameLayout(this);

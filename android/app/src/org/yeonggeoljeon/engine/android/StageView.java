@@ -31,7 +31,9 @@ final class StageView extends View {
     private float zoom = 1f, panX = 0f, panY = 0f;
     private boolean fitted;
     /** A tall, narrow view (a phone held upright) starts zoomed in so the map is not a thin strip between black bars. */
-    private boolean fillOnFit;
+    private boolean fillOnFit, fillTall;
+    /** Only a phone held upright asks for the zoomed-in start; a tablet keeps the whole map in view. */
+    void setFillTall(boolean value) { fillTall = value; }
     private float carriedX, carriedY;
     private final GestureDetector gestures;
     private final ScaleGestureDetector scaler;
@@ -78,7 +80,7 @@ final class StageView extends View {
         bitmap = image;
         battle = battleMode;
         touchable = canTouch;
-        if (newMap || !battleMode) { zoom = 1f; panX = 0f; panY = 0f; fitted = false; fillOnFit = battleMode; }
+        if (newMap || !battleMode) { zoom = 1f; panX = 0f; panY = 0f; fitted = false; fillOnFit = battleMode && fillTall; }
         invalidate();
     }
 
