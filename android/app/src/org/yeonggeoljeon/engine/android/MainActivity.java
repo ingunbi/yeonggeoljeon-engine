@@ -72,6 +72,7 @@ public class MainActivity extends Activity implements StageView.Listener {
     private int selectedX = -1, selectedY = -1;
     private String lastUiKey = "";
     private String lastPicked = "";
+    private String lastPlaceKey = "";
     private String lastAround = "";
     private int[][] aroundUnits = new int[0][], aroundReach = new int[0][];
     private static final java.util.Set<String> UNIT_COMMANDS = new java.util.HashSet<>(java.util.Arrays.asList("move", "attack", "strategies", "items", "wait", "cancel"));
@@ -540,6 +541,7 @@ public class MainActivity extends Activity implements StageView.Listener {
     /** The selected unit's commands as one compact strip beside it instead of a row at the bottom. */
     private void showUnitMenu(JSONArray commands, JSONObject at, boolean hidden) {
         if (unitMenu != null) { stageHolder.removeView(unitMenu); unitMenu = null; }
+        lastPlaceKey = "";
         boolean anyUsable = false;
         for (int i = 0; i < commands.length(); i++) anyUsable |= commands.optJSONObject(i).optBoolean("enabled", true);
         // A unit the game plays itself (or one already done) has nothing to offer; the status line says why.
@@ -585,20 +587,35 @@ public class MainActivity extends Activity implements StageView.Listener {
         float w = unitMenu.getWidth() > 0 ? unitMenu.getWidth() : Ui.dp(this, 6 * 46 + 6);
         float h = unitMenu.getHeight() > 0 ? unitMenu.getHeight() : Ui.dp(this, 52);
         float gap = Ui.dp(this, 6), W = stage.getWidth(), H = stage.getHeight();
-        float[][] spots = {
-            {cell.centerX() - w / 2, cell.top - gap - h}, {cell.left, cell.top - gap - h}, {cell.right - w, cell.top - gap - h},
-            {cell.centerX() - w / 2, cell.bottom + gap}, {cell.left, cell.bottom + gap}, {cell.right - w, cell.bottom + gap},
-            {cell.right + gap, cell.centerY() - h / 2}, {cell.left - gap - w, cell.centerY() - h / 2}};
-        float bestCost = Float.MAX_VALUE, bestX = spots[0][0], bestY = spots[0][1];
+        float unit = Math.max(1f, cell.width());
+        // The search below is only worth running when the cell, the picture or the highlighted cells moved.
+        String placeKey = cell.toShortString() + "|" + W + "x" + H + "|" + w + "x" + h + "|" + lastAround;
+        if (placeKey.equals(lastPlaceKey)) return;
+        lastPlaceKey = placeKey;
+        RectF[] others = new RectF[aroundUnits.length], reach = new RectF[aroundReach.length];
+        for (int i = 0; i < others.length; i++) others[i] = stage.cellRect(aroundUnits[i][0], aroundUnits[i][1]);
+        for (int i = 0; i < reach.length; i++) reach[i] = stage.cellRect(aroundReach[i][0], aroundReach[i][1]);
+        // Candidates: the spots right beside the unit, then a grid over the whole map so the strip can leave the move range.
+        java.util.List<float[]> spots = new java.util.ArrayList<>(java.util.Arrays.asList(
+            new float[]{cell.centerX() - w / 2, cell.top - gap - h}, new float[]{cell.left, cell.top - gap - h}, new float[]{cell.right - w, cell.top - gap - h},
+            new float[]{cell.centerX() - w / 2, cell.bottom + gap}, new float[]{cell.left, cell.bottom + gap}, new float[]{cell.right - w, cell.bottom + gap},
+            new float[]{cell.right + gap, cell.centerY() - h / 2}, new float[]{cell.left - gap - w, cell.centerY() - h / 2}));
+        for (float y = gap; y <= H - h - gap + 0.5f; y += unit / 2) {
+            for (float x = gap; x <= W - w - gap + 0.5f; x += unit / 2) spots.add(new float[]{x, y});
+        }
+        float bestCost = Float.MAX_VALUE, bestX = spots.get(0)[0], bestY = spots.get(0)[1];
+        float cellArea = unit * unit;
         for (float[] spot : spots) {
             float x = Math.max(gap, Math.min(spot[0], W - w - gap));
             float y = Math.max(gap, Math.min(spot[1], H - h - gap));
             RectF box = new RectF(x, y, x + w, y + h);
-            float cost = overlap(box, cell) * 8;
-            for (int[] u : aroundUnits) cost += overlap(box, stage.cellRect(u[0], u[1])) * 3;
-            for (int[] r : aroundReach) cost += overlap(box, stage.cellRect(r[0], r[1]));
-            // Strictly lower only: equal costs keep the earlier, preferred spot.
-            if (cost < bestCost) { bestCost = cost; bestX = x; bestY = y; }
+            // Covered area in cells: the unit itself counts most; other units and the cells it could move to or hit count a lot too.
+            float cost = overlap(box, cell) / cellArea * 10;
+            for (RectF r : others) cost += overlap(box, r) / cellArea * 6;
+            for (RectF r : reach) cost += overlap(box, r) / cellArea * 6;
+            // Staying near the unit is a mild preference, never worth hiding a target for.
+            cost += (float) Math.hypot(box.centerX() - cell.centerX(), box.centerY() - cell.centerY()) / unit * 0.6f;
+            if (cost < bestCost - 1e-3f) { bestCost = cost; bestX = x; bestY = y; }
         }
         if (unitMenu.getTranslationX() != bestX) unitMenu.setTranslationX(bestX);
         if (unitMenu.getTranslationY() != bestY) unitMenu.setTranslationY(bestY);

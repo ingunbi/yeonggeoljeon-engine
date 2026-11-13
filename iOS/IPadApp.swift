@@ -269,19 +269,31 @@ private struct IPadUnitMenu:View {
     }
     private var width:CGFloat {button*CGFloat(actions.count)+6}
     private func origin(in stage:CGSize) -> CGPoint {
-        let a = anchor.rect,w = width,h = height
+        let a = anchor.rect,w = width,h = height,unit = max(1,a.width)
         func clamp(_ p:CGPoint)->CGPoint {CGPoint(x:max(6,min(stage.width-w-6,p.x)),y:max(6,min(stage.height-h-6,p.y)))}
-        let candidates = [
+        // The spots right beside the unit come first, then a grid over the whole map so the strip can leave the move range.
+        var candidates = [
             CGPoint(x:a.midX-w/2,y:a.minY-gap-h),CGPoint(x:a.minX,y:a.minY-gap-h),CGPoint(x:a.maxX-w,y:a.minY-gap-h),
             CGPoint(x:a.midX-w/2,y:a.maxY+gap),CGPoint(x:a.minX,y:a.maxY+gap),CGPoint(x:a.maxX-w,y:a.maxY+gap),
             CGPoint(x:a.maxX+gap,y:a.midY-h/2),CGPoint(x:a.minX-gap-w,y:a.midY-h/2)].map(clamp)
+        var y = CGFloat(6)
+        while y <= stage.height-h-6+0.5 {
+            var x = CGFloat(6)
+            while x <= stage.width-w-6+0.5 {candidates.append(CGPoint(x:x,y:y));x += unit/2}
+            y += unit/2
+        }
+        let cellArea = unit*unit
         func cost(_ p:CGPoint)->CGFloat {
             let box = CGRect(x:p.x,y:p.y,width:w,height:h)
-            func area(_ r:CGRect)->CGFloat {let i = box.intersection(r);return i.isNull ? 0 : i.width*i.height}
-            return area(a)*8+anchor.units.reduce(0) {$0+area($1)}*3+anchor.cells.reduce(0) {$0+area($1)}
+            func area(_ r:CGRect)->CGFloat {let i = box.intersection(r);return i.isNull ? 0 : i.width*i.height/cellArea}
+            // Covered area in cells: the unit itself counts most; other units and cells it could move to or hit count a lot too.
+            let covered = area(a)*10+anchor.units.reduce(0) {$0+area($1)}*6+anchor.cells.reduce(0) {$0+area($1)}*6
+            // Staying near the unit is a mild preference, never worth hiding a target for.
+            return covered+hypot(box.midX-a.midX,box.midY-a.midY)/unit*0.6
         }
-        // min(by:) keeps the first of equal costs, so the order above is the preference.
-        return candidates.min {cost($0) < cost($1)} ?? candidates[0]
+        var best = candidates[0],bestCost = cost(best)
+        for candidate in candidates.dropFirst() {let c = cost(candidate);if c < bestCost-0.001 {best = candidate;bestCost = c}}
+        return best
     }
     private func menu(at point:CGPoint) -> some View {
         HStack(spacing:0) {
