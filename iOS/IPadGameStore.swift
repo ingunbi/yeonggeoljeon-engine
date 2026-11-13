@@ -706,7 +706,12 @@ struct IPadPanel {
                 return action("strategy-\(row.ability)",strategyName(row.ability),"MP \(row.cost)"+(why.isEmpty ? "" : " · "+why),enabled:row.enabled) {[weak self] in self?.selectStrategy(slot,row.ability)}}+[action("learn","책략 습득표") {[weak self] in self?.showLearning(slot)},backAction()])
         }
     }
-    private func selectStrategy(_ slot:Int,_ ability:Int) {
+    /// An area strategy first shows where it would hit the most, as the desktop's placement advice does; the choice stays the player's.
+    private func selectStrategy(_ slot:Int,_ ability:Int,advised:Bool = false) {
+        if !advised,BattleProjection.isAreaStrategy(ability),let battle = session,
+           let search = try? BattleProjection(battle).areaAdvice(slot,ability:ability),!search.candidates.isEmpty {
+            showStrategyAdvice(slot,ability,search,battle);return
+        }
         run {
             guard let battle = session else {return}
             let board = try battle.board()
@@ -717,6 +722,28 @@ struct IPadPanel {
             menu = nil;targetMode = .strategy(ability);highlighted = Set(legal.compactMap {battle.units[$0]?.position})
             if ability >= 30 {confirmStrategy(slot,ability,nil)}
         }
+    }
+    private func showStrategyAdvice(_ slot:Int,_ ability:Int,_ search:BattleProjection.AreaSearch,_ battle:OriginalBattleSession) {
+        let here = battle.units[slot]?.position
+        var rows:[IPadAction] = []
+        for candidate in search.candidates.prefix(5) {
+            let place = candidate.origin == here ? "제자리" : "(\(candidate.origin.x),\(candidate.origin.y))로 이동 \(candidate.movementCost)칸"
+            let around = candidate.center.map {unitName($0)+" 중심"} ?? "범위 내 전체"
+            let range = candidate.troops.lowerBound == candidate.troops.upperBound ? "\(candidate.troops.lowerBound)" : "\(candidate.troops.lowerBound)~\(candidate.troops.upperBound)"
+            let note = candidate.limitation == nil ? "" : " · 일부는 확정할 수 없음"
+            rows.append(action("advice-\(rows.count)","\(place) · \(around)","효과 대상 \(candidate.usefulTargets)명 · 병력 변화 \(range)"+note) {[weak self] in
+                guard let self else {return}
+                var cells:Set<GridPoint> = [candidate.origin]
+                for target in candidate.targets {if let at = battle.units[target]?.position {cells.insert(at)}}
+                self.menu = nil;self.previewCells = cells
+                self.saveNotice = candidate.origin == here ? "주황 칸이 이 위치의 효과 범위입니다. 중심 대상을 눌러 시전하세요." : "(\(candidate.origin.x),\(candidate.origin.y))로 이동한 뒤 시전하는 것을 추천합니다. 주황 칸이 효과 범위입니다."
+                self.transientNoticeUntil = ProcessInfo.processInfo.systemUptime+10
+                self.selectStrategy(slot,ability,advised:true)
+            })
+        }
+        rows.append(action("advice-skip","추천 없이 직접 고르기") {[weak self] in self?.selectStrategy(slot,ability,advised:true)})
+        menu = .init(title:strategyName(ability)+" · 추천 위치",body:"맞는 대상이 많은 순서입니다. 결과는 난수에 따른 범위이며 시전은 직접 확정합니다."+(search.limited ? "\n후보가 많아 일부만 비교했습니다." : ""),
+                     actions:rows+[navAction {[weak self] in self?.showStrategies(slot)}])
     }
     private func confirmStrategy(_ slot:Int,_ ability:Int,_ target:Int?) {
         let details = session.flatMap {try? StrategyGuideDetails.describe(abilityID:ability,profile:$0.movement)}
