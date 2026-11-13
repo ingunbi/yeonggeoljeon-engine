@@ -1256,7 +1256,57 @@ struct IPadPanel {
                     })
                 }
             }
+            let plans = (try? PromotionPlanning.candidates(person:person)) ?? []
+            if !plans.isEmpty {
+                rows.append(action("promotion","전직 미리보기","\(plans.count)가지 · 도구가 없어도 볼 수 있습니다") {[weak self] in self?.showPromotionList(id)})
+            }
             menu = .init(title:person.name,body:body,actions:rows+[navAction {[weak self] in self?.showOfficers()}])
+        }
+    }
+    /// The desktop's promotion planner: what a class change or promotion would do, without using the tool or an action.
+    private func showPromotionList(_ id:Int) {
+        run {
+            guard let host else {return}
+            let person = try host.people.person(id)
+            let classes = host.story.screens?.battle.commands.classNames ?? []
+            let rows = try PromotionPlanning.candidates(person:person).map {candidate -> IPadAction in
+                let target = classes.indices.contains(candidate.targetClass) ? classes[candidate.targetClass] : "병과 \(candidate.targetClass)"
+                let have = person.itemIDs.contains(candidate.itemID) ? "소지" : "미소지"
+                let need = candidate.requiredLevel.map {person.level >= $0 ? "Lv.\($0) 충족" : "Lv.\($0) 필요"} ?? "레벨 제한 없음"
+                return action("promo-\(candidate.itemID)",itemName(candidate.itemID)+" → "+target,"\(have) · \(need)") {[weak self] in self?.showPromotion(id,candidate)}
+            }
+            menu = .init(title:person.name+" · 전직",body:"병과가 바뀌면 어떻게 달라지는지 미리 봅니다. 아무것도 소모하지 않습니다.",actions:rows+[navAction {[weak self] in self?.showOfficer(id)}])
+        }
+    }
+    private func showPromotion(_ id:Int,_ candidate:PromotionPlanning.Candidate) {
+        run {
+            guard let host else {return}
+            let person = try host.people.person(id)
+            let battle = host.story.screens?.battle.commands
+            let plan = try PromotionPlanning.build(person:person,item:candidate.itemID,combat:host.source.combat,movement:host.source.movement,
+                classNames:battle?.classNames ?? [],strategyNames:battle?.strategyNames ?? [],terrainNames:battle?.terrain.names ?? [])
+            let c = plan.comparison
+            func delta(_ label:String,_ old:Int,_ new:Int) -> String {"\(label) \(old) → \(new)"+(new == old ? "" : new > old ? " (+\(new-old))" : " (\(new-old))")}
+            var lines = ["\(c.beforeClass) → \(c.afterClass) · Lv.\(c.level)",
+                delta("공격력",c.before.attack,c.after.attack),delta("방어력",c.before.defense,c.after.defense),
+                delta("최대 병력",c.before.maximumTroops,c.after.maximumTroops),delta("최대 책략치",c.before.maximumMP,c.after.maximumMP),
+                delta("이동력",c.before.movement,c.after.movement),
+                "공격 범위 "+PromotionPreview.rangeText(c.before.attackOffsets).replacingOccurrences(of:"\n",with:" ")+" → "+PromotionPreview.rangeText(c.after.attackOffsets).replacingOccurrences(of:"\n",with:" ")]
+            if !c.terrainChanges.isEmpty {
+                lines.append("지형 이동 비용: "+c.terrainChanges.map {"\($0.name) \($0.before == 255 ? "불가" : "\($0.before)") → \($0.after == 255 ? "불가" : "\($0.after)")"}.joined(separator:" · "))
+            }
+            if !c.strategyChanges.isEmpty {
+                // Gained, lost and shifted strategies on their own lines: one long paragraph is unreadable.
+                func level(_ n:Int?)->String {n.map {"Lv.\($0)"} ?? "없음"}
+                let gained = c.strategyChanges.filter {$0.beforeLevel == nil && $0.afterLevel != nil}
+                let lost = c.strategyChanges.filter {$0.beforeLevel != nil && $0.afterLevel == nil}
+                let moved = c.strategyChanges.filter {$0.beforeLevel != nil && $0.afterLevel != nil}
+                if !gained.isEmpty {lines.append("새로 배우는 책략 \(gained.count)개: "+gained.prefix(8).map {"\($0.name)(\(level($0.afterLevel)))"}.joined(separator:" ")+(gained.count > 8 ? " 외 \(gained.count-8)개" : ""))}
+                if !lost.isEmpty {lines.append("잃는 책략: "+lost.map {"\($0.name)(\(level($0.beforeLevel)))"}.joined(separator:" "))}
+                if !moved.isEmpty {lines.append("배우는 레벨이 바뀌는 책략: "+moved.map {"\($0.name) \(level($0.beforeLevel)) → \(level($0.afterLevel))"}.joined(separator:" · "))}
+            }
+            lines += plan.candidate.conditions
+            menu = .init(title:c.itemName+" 전직 미리보기",body:lines.joined(separator:"\n"),actions:[navAction {[weak self] in self?.showPromotionList(id)}])
         }
     }
     private func showInventory() {
