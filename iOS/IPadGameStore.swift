@@ -647,6 +647,22 @@ struct IPadPanel {
             }
         }
     }
+    /// The desktop's growth helper: what this command would earn, whether it would raise a level, and what comes next.
+    private func growthLines(_ slot:Int,target:Int?,ability:Int?) -> [String] {
+        guard let battle = session else {return []}
+        let names = host?.story.screens?.battle.commands.strategyNames ?? []
+        guard let forecast = try? BattleProjection(battle).growth(slot,target:target,ability:ability,names:names) else {return []}
+        let current = (try? battle.people.person(battle.units[slot]?.person ?? 0).level) ?? 0
+        var lines:[String] = []
+        for branch in forecast.branches {
+            let grew = branch.level > current ? " · 레벨 \(current) → \(branch.level) 상승" : ""
+            lines.append("\(branch.condition): 경험치 +\(branch.total)"+grew)
+            if let next = branch.nextStrategies.first {
+                lines.append("다음 책략: "+branch.nextStrategies.map(\.name).joined(separator:"·")+" (Lv.\(next.requiredLevel))")
+            }
+        }
+        return lines
+    }
     private func confirmAttack(_ slot:Int,_ target:Int) {
         guard let battle = session else {return}
         let forecast = try? battle.attackForecast(slot,target:target)
@@ -660,6 +676,7 @@ struct IPadPanel {
             if forecast.defeats {lines.append("격파할 수 있습니다.")}
             else if forecast.counterPercent > 0 {lines.append("반격 가능성 \(forecast.counterPercent)%")}
         }
+        lines += growthLines(slot,target:target,ability:nil)
         confirm("공격",lines.joined(separator:"\n")) {[weak self] in
             self?.run {
                 guard let self,let flow = self.flow else {return}
@@ -749,7 +766,8 @@ struct IPadPanel {
         let details = session.flatMap {try? StrategyGuideDetails.describe(abilityID:ability,profile:$0.movement)}
         let recipient = target.map {" → "+personName(session?.units[$0]?.person)} ?? " · 범위 내 대상 전체"
         let description = details.map {"\n"+$0.effect+"\n사거리: "+$0.range+"\n적용 범위: "+$0.area} ?? ""
-        let body = strategyName(ability)+recipient+description
+        let growth = growthLines(slot,target:target,ability:ability)
+        let body = strategyName(ability)+recipient+description+(growth.isEmpty ? "" : "\n"+growth.joined(separator:"\n"))
         confirm("책략 사용",body) {[weak self] in self?.run {_ = try self?.flow?.manualStrategy(slot,abilityID:ability,target:target);self?.clearSelection()}}
     }
     private func showItems(_ slot:Int) {
