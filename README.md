@@ -1,5 +1,26 @@
 # Yeonggeoljeon Engine · 영걸전 자체 엔진
 
+![게임·XR·웹 개발을 표현한 공통 컨셉 표지](https://raw.githubusercontent.com/ingunbi/Unity_ClickerGame_Tutorial/main/docs/images/developer-workshop.png)
+
+<sub>공통 소개 이미지 · AI로 제작한 컨셉 아트이며 실제 프로젝트 실행 화면이 아닙니다.</sub>
+
+**원작 자료의 해석부터 전투 규칙과 캠페인 실행까지, Swift로 만드는 자체 SRPG 엔진.**
+
+한국어 DOS/V판 삼국지 영걸전을 연구하며 자료 해독기, 게임 상태와 규칙, 네이티브 화면을 연결합니다. 공개 코드는 연구 개발 중이며, 전체 캠페인의 사람에 의한 완주 검증은 아직 없습니다.
+
+| 살펴볼 부분 | 내용 |
+| --- | --- |
+| 자료 해석 | Python 도구로 원본 형식을 읽고 로컬 실행 자료 생성 |
+| 엔진 | Swift로 전투 계산·AI·책략·캠페인 상태 처리 |
+| 화면 | macOS AppKit 화면과 별도 iPad 화면 개발 |
+| 검증 | 원작 자료 없는 합성 검사와 선택적 실물 검사 구분 |
+
+[실행 준비](#macos-빌드) · [개발 계획](BACKLOG.md) · [구현 근거](research/README.md) · [iPad 개발](docs/ipad-testing.md)
+
+**공개 범위:** 새 엔진 코드·문서·합성 테스트입니다. 원작 게임 자료와 이를 포함한 앱은 배포하지 않습니다. 실행에는 사용자가 보유한 자료가 필요합니다. 새 코드는 GPL-3.0-only이며 원작 콘텐츠 권리는 포함하지 않습니다.
+
+## 개발·실행 상세
+
 [![Engine source checks](https://github.com/ingunbi/yeonggeoljeon-engine/actions/workflows/verify.yml/badge.svg)](https://github.com/ingunbi/yeonggeoljeon-engine/actions/workflows/verify.yml)
 
 한국어 DOS/V판 삼국지 영걸전의 원본 자료와 정적 분석을 바탕으로 만드는
@@ -180,3 +201,7 @@ swift run yeonggeoljeon-engine --data /path/to/GameData --list-campaign
 이전 공개 엔진 소스를 본 이력이 있으므로 격리된 클린룸 개발이라고 주장하지
 않습니다. 새 코드는 [GPL-3.0-only](LICENSE)로 공개하며 원작 콘텐츠의 권리는
 이 코드 라이선스에 포함되지 않습니다. 원작 자료를 넣어 만든 로컬 앱은 공개 배포하지 않습니다.
+
+---
+
+[김인권 · GitHub](https://github.com/ingunbi) · [전체 프로젝트](https://inkwonworks.ingunbi.workers.dev/) · [IceCubeLab](https://www.icecubelab.com/)
